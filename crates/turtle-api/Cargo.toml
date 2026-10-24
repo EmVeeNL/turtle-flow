@@ -1,0 +1,18 @@
+[package]
+name = "turtle-api"
+description = "Axum HTTP API, auth, SSE and embedded dashboard assets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turtle-domain = { workspace = true }
+turtle-workflow = { workspace = true }
+turtle-policy = { workspace = true }
+turtle-store = { workspace = true }

@@ -32,7 +32,32 @@ turtle approvals
 
 ## Status
 
-**Design phase. No application code yet.** The architecture and product documentation package is in [`docs/`](docs/README.md):
+**Early development (milestones M0/M1).** Turtle Flow is not usable yet. What exists so far:
+
+- the Cargo workspace (13 crates)
+- core domain types
+- a process runner that scrubs the environment, enforces timeouts and kills whole process groups
+- a Git version check
+- provider CLI discovery
+- parsers for Claude Code and Codex output, tested against real recorded transcripts ([spike report](spikes/S-1-S-2-provider-cli-report.md))
+- `turtle doctor`
+
+There is no workflow engine or daemon yet.
+
+### Development
+
+```bash
+cargo test --workspace                                  # all tests
+cargo clippy --workspace --all-targets -- -D warnings   # lints (enforced in CI)
+cargo run -p turtle-flow -- doctor                      # check Git and provider CLIs
+cargo deny check                                        # licenses, advisories, sources
+```
+
+The toolchain is pinned in `rust-toolchain.toml`. Crates live in `crates/turtle-*` (see [docs/ARCHITECTURE.md §4.1](docs/ARCHITECTURE.md#41-crate-responsibilities-and-boundaries)). Provider CLI fixtures are in `spikes/fixtures/`.
+
+### Documentation
+
+The architecture and product documentation package is in [`docs/`](docs/README.md):
 
 | Start here | |
 |---|---|

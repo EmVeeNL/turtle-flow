@@ -337,7 +337,7 @@ Generated weekly or on demand, each with evidence and estimated saving:
 
 ## 14. Quota and Rate-Limit Handling
 
-- No CLI is assumed to expose remaining quota (A-03). `quota_visibility` defaults to `Unknown`.
+- `quota_visibility` is discovered per provider ([spike S-1/S-2](../spikes/S-1-S-2-provider-cli-report.md)). **Claude Code** (subscription auth) emits `rate_limit_event` with utilization fractions and reset times for the 5-hour and 7-day windows, so visibility is `Partial`. Show it as "% of provider window" and never as tokens. The scheduler avoids starting long runs when a window is ≥ 90% used (configurable). **Codex** only reports a usage-limit error with a local-time retry hint, so visibility is `Unknown` until a limit is hit. Absolute remaining tokens are unavailable for both.
 - Rate-limit observations are recorded (`provider_limits_observed`: time, provider, model, message, retry hint, resolved_at). From these, Turtle Flow learns *empirical* safe concurrency per provider (e.g. reduce per-provider `max_concurrent_runs` by 1 after 3 rate-limit events in 30 min; restore after 2 h without events).
 - The dashboard shows "Rate limited — reset unknown" or "until 14:05 (provider hint)" and never a fabricated remaining count.
 

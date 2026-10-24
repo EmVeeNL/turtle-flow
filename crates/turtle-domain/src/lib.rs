@@ -1,0 +1,21 @@
+//! Core domain types for Turtle Flow: typed IDs, job keys, workflow states, roles,
+//! token usage with provenance, and provider quota observations.
+//!
+//! This crate performs no IO. See `docs/DOMAIN-MODEL.md` for the full model and invariants.
+
+pub mod hash;
+pub mod ids;
+pub mod job;
+pub mod quota;
+pub mod roles;
+pub mod usage;
+
+pub use hash::{HashParseError, Sha256};
+pub use ids::{
+    ApprovalId, ArtifactId, BudgetId, EffectId, EventId, JobId, ProjectId, ReservationId, RunId,
+    TaskId,
+};
+pub use job::{JobKey, JobKeyError, JobState, JobType, Priority};
+pub use quota::{QuotaStatus, QuotaWindow, WindowStatus};
+pub use roles::{Actor, Complexity, Role, TrustLevel};
+pub use usage::{TokenUsage, UsageProvenance, UsageValue};

@@ -1,0 +1,18 @@
+[package]
+name = "turtle-exec"
+description = "The only crate that spawns OS processes: env allowlist, process groups, timeouts, output caps."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turtle-domain = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+nix = { version = "0.31", features = ["signal", "process"] }

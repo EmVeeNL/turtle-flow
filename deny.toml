@@ -1,0 +1,39 @@
+# cargo-deny configuration (SEC-020). Run locally: `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on known vulnerabilities and unmaintained crates in the dependency tree.
+unmaintained = "workspace"
+yanked = "deny"
+
+[licenses]
+# Permissive licenses only; copyleft dependencies need an explicit decision (see OQ-02).
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# Keep common permissive licenses allowed even before a dependency uses them.
+unused-allowed-license = "allow"
+# Workspace crates are unpublished and carry a placeholder license until OQ-02 is decided.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# Architecture decision ADR-009: no libgit2.
+deny = [{ crate = "git2" }, { crate = "libgit2-sys" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

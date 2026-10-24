@@ -1,7 +1,7 @@
 %% Source: ARCHITECTURE.md — keep in sync (extracted from the Markdown document)
 flowchart TB
     subgraph interfaces["Interfaces"]
-        CLI["turtle-cli<br/>(Clap commands)"]
+        CLI["turtle-flow<br/>(binary turtle, Clap)"]
         API["turtle-api<br/>(Axum routes, SSE, auth,<br/>embedded dashboard)"]
     end
     subgraph core["Turtle Flow Core"]
