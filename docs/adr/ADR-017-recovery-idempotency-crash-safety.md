@@ -57,6 +57,23 @@ Outbox + probes is a proven pattern for exactly-once *effects* over at-least-onc
 - **Crash injection.** `CrashPlan` marks every step boundary (after claim, after execution, around every decision and commit). The test harness crashes at boundary N, boots a fresh instance on the same on-disk database, and compares the finished job's event history and effect set with an uninterrupted run, for every N and for pairs of crashes. It runs in-process (a "crash" is the scheduler dropping all state and a new instance recovering from the file); a real `kill -9` harness is still planned.
 - **Mutation-checked.** Replacing the atomic completion with two transactions fails the harness, and so does disabling recovery.
 - **Not yet covered** (no code exists for them yet): orphaned agent processes, reservation and ledger reconciliation, recovery refs for interrupted agent work, and the effect-specific completion probes (worktree, commit, delivery). The generic protocol is proven; each executor must bring its own probe test when it is added.
+## Executor probes (2026-10-25)
+
+`FactoryExecutor` gives every effect kind its own completion probe, and the end-to-end crash test (`turtle-scheduler/tests/e2e.rs`) crashes at **every** "effect executed" boundary plus a spread of the others, with real Git:
+
+| Effect | Probe | What a crash would otherwise cause |
+|---|---|---|
+| `create_worktree` | base commit recorded in the job first; worktree on the expected branch at that base; setup marker inside the Git directory | a second worktree, or setup skipped or repeated |
+| `dispatch_ready_tasks` | commit with the task's `Turtle-Task: <plan revision>/<task>` trailer | the implementer is paid for twice |
+| start run (spec, plan, review, verification) | a scheduler-authored artifact revision created after the effect | the agent is paid for twice |
+| `run_gates` | none (harmless to repeat) | extra gate-result revision only |
+| `request_approval` | identical pending approval | a second approval |
+| `deliver` | commit with the job's `Turtle-Job` trailer on the target, or the parked `refs/turtle/delivery/<job>` | a second, empty squash commit |
+| `cleanup_worktree` | removing a missing worktree succeeds | none |
+
+The crash test asserts, for every sampled boundary: exactly one delivery commit, exactly one commit per task, the same artifact revisions as a clean run, the same stage transitions, **and exactly one agent call per role**. Removing the delivery probe, the task probe, or the artifact-reuse probe each fails it with a specific message.
+
+Known gaps: a task whose agent run produced no change leaves no commit, so it is re-run after a crash; gate output beyond the last 4000 characters is not kept; `terminate_runs` cannot yet stop a run that is still executing (no run supervisor).
 ## Related ADRs
 
 [ADR-004](ADR-004-sqlite-persistence-event-logging.md), [ADR-005](ADR-005-workflow-state-machine.md), [ADR-009](ADR-009-git-worktree-isolation.md), [ADR-011](ADR-011-job-scheduling-concurrency.md)

@@ -794,3 +794,168 @@ async fn removing_a_worktree_prunes_it_and_branch_deletion_is_prefix_guarded() {
     );
     assert_eq!(f.repo.branch_tip("main").await.expect("tip"), Some(base));
 }
+
+#[tokio::test]
+async fn other_jobs_activity_during_a_run_is_not_a_violation() {
+    let f = fixture().await;
+    let base = f.repo.head().await.expect("head");
+    let a = spec(&f, "API-20", &base);
+    f.repo.ensure_worktree(&a).await.expect("create a");
+    let wt_a = f.repo.at(a.path().expect("path"));
+    let before = wt_a.snapshot().await.expect("snapshot");
+
+    // While job A's agent runs, job B is created and commits, and a delivery ref and a recovery
+    // ref appear. None of that is A's agent misbehaving.
+    let b = spec(&f, "API-21", &base);
+    f.repo.ensure_worktree(&b).await.expect("create b");
+    let wt_b = f.repo.at(b.path().expect("path"));
+    write(wt_b.path(), "b.txt", "b\n");
+    wt_b.commit_all("feat(API-21): b", "", &trailers("API-21", "RB"))
+        .await
+        .expect("commit b");
+    f.repo
+        .run(&["update-ref", "refs/turtle/delivery/API-9", &base])
+        .await
+        .expect("delivery ref");
+    f.repo
+        .run(&["update-ref", "refs/turtle/recovery/OTHER", &base])
+        .await
+        .expect("recovery ref");
+
+    let check = wt_a.check_policy(&before).await.expect("check");
+    assert!(check.is_ok(), "{:?}", check.violations());
+}
+
+#[tokio::test]
+async fn quarantine_preserves_and_undoes_everything_a_misbehaving_agent_did() {
+    let f = fixture().await;
+    let base = f.repo.head().await.expect("head");
+    let s = spec(&f, "API-22", &base);
+    f.repo.ensure_worktree(&s).await.expect("create");
+    let wt = f.repo.at(s.path().expect("path"));
+    write(wt.path(), "legit.txt", "legit\n");
+    wt.commit_all("feat(API-22): legit", "", &trailers("API-22", "R0"))
+        .await
+        .expect("c");
+    let before = wt.snapshot().await.expect("snapshot");
+
+    // The agent commits, tags, creates a branch, switches to it, and leaves an untracked file.
+    write(wt.path(), "sneaky.txt", "sneaky\n");
+    wt.run(&["add", "-A"]).await.expect("add");
+    wt.run(&["commit", "-q", "-m", "agent commit"])
+        .await
+        .expect("commit");
+    wt.run(&["tag", "agent-tag"]).await.expect("tag");
+    wt.run(&["switch", "-q", "-c", "agent-branch"])
+        .await
+        .expect("switch");
+    write(wt.path(), "leftover.txt", "untracked\n");
+    let check = wt.check_policy(&before).await.expect("check");
+    assert!(!check.is_ok());
+
+    let saved = wt.quarantine("RUN22", &before).await.expect("quarantine");
+
+    // Everything the agent did is preserved...
+    assert_eq!(
+        f.repo.rev("refs/turtle/recovery/RUN22").await.expect("ref"),
+        saved
+    );
+    assert_eq!(
+        f.repo
+            .run(&["show", &format!("{saved}:leftover.txt")])
+            .await
+            .expect("show"),
+        "untracked"
+    );
+    assert_eq!(
+        f.repo
+            .run(&["show", &format!("{saved}:sneaky.txt")])
+            .await
+            .expect("show"),
+        "sneaky"
+    );
+    // ...and the worktree is back exactly as it was.
+    assert_eq!(
+        wt.current_branch().await.expect("branch").as_deref(),
+        Some(s.branch.as_str())
+    );
+    assert_eq!(wt.head().await.expect("head"), before.head);
+    assert!(wt.is_clean().await.expect("clean"));
+    assert!(!wt.path().join("sneaky.txt").exists());
+    assert!(
+        f.repo
+            .branch_tip("agent-branch")
+            .await
+            .expect("tip")
+            .is_none(),
+        "created branch removed"
+    );
+    assert!(
+        f.repo
+            .run(&["tag", "-l", "agent-tag"])
+            .await
+            .expect("tags")
+            .is_empty(),
+        "created tag removed"
+    );
+    assert!(wt.check_policy(&before).await.expect("check").is_ok());
+}
+
+#[tokio::test]
+async fn quarantine_handles_a_commit_on_an_otherwise_clean_tree() {
+    let f = fixture().await;
+    let base = f.repo.head().await.expect("head");
+    let s = spec(&f, "API-23", &base);
+    f.repo.ensure_worktree(&s).await.expect("create");
+    let wt = f.repo.at(s.path().expect("path"));
+    let before = wt.snapshot().await.expect("snapshot");
+    write(wt.path(), "x.txt", "x\n");
+    wt.run(&["add", "-A"]).await.expect("add");
+    wt.run(&["commit", "-q", "-m", "agent commit"])
+        .await
+        .expect("commit");
+    let agent_head = wt.head().await.expect("head");
+
+    let saved = wt.quarantine("RUN23", &before).await.expect("quarantine");
+    assert_eq!(
+        saved, agent_head,
+        "a clean-tree commit is preserved as the recovery ref"
+    );
+    assert_eq!(wt.head().await.expect("head"), before.head);
+}
+
+#[tokio::test]
+async fn tasks_are_found_by_trailer() {
+    let f = fixture().await;
+    let base = f.repo.head().await.expect("head");
+    let s = spec(&f, "API-24", &base);
+    f.repo.ensure_worktree(&s).await.expect("create");
+    let wt = f.repo.at(s.path().expect("path"));
+    write(wt.path(), "t1.txt", "1\n");
+    let t = Trailers {
+        job: "API-24".into(),
+        task: Some("REV1/T1".into()),
+        run: Some("R".into()),
+        ..Trailers::default()
+    };
+    let sha = wt
+        .commit_all("feat(API-24): t1", "", &t)
+        .await
+        .expect("c")
+        .expect("sha");
+    assert_eq!(
+        f.repo
+            .find_commit_by_task(&s.branch, "REV1/T1")
+            .await
+            .expect("probe"),
+        Some(sha)
+    );
+    assert_eq!(
+        f.repo
+            .find_commit_by_task(&s.branch, "REV1/T2")
+            .await
+            .expect("probe"),
+        None
+    );
+    assert_eq!(wt.tree_of("HEAD").await.expect("tree").len(), 40);
+}

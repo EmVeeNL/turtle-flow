@@ -167,6 +167,34 @@ impl Repo {
         Ok(Some(self.head().await?))
     }
 
+    /// Finds the commit for a plan task via its `Turtle-Task` trailer (recovery probe).
+    pub async fn find_commit_by_task(
+        &self,
+        branch: &str,
+        task_key: &str,
+    ) -> Result<Option<String>> {
+        let pattern = format!("^Turtle-Task: {task_key}$");
+        let out = self
+            .run(&[
+                "log",
+                "-n",
+                "1",
+                "--format=%H",
+                "-E",
+                "--grep",
+                &pattern,
+                branch,
+            ])
+            .await?;
+        Ok((!out.is_empty()).then_some(out))
+    }
+
+    /// The tree object of a revision (what gate results are bound to).
+    pub async fn tree_of(&self, rev: &str) -> Result<String> {
+        self.run(&["rev-parse", "--verify", &format!("{rev}^{{tree}}")])
+            .await
+    }
+
     /// Finds the commit recorded for a run via its trailer (recovery probe, boundary 16).
     pub async fn find_commit_by_run(&self, branch: &str, run_id: &str) -> Result<Option<String>> {
         let pattern = format!("^Turtle-Run: {run_id}$");

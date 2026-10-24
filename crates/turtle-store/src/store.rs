@@ -59,6 +59,8 @@ pub struct JobRecord {
     pub description: String,
     pub job_type: JobType,
     pub priority: Priority,
+    /// Tip of the target branch when implementation started; fixed once set.
+    pub base_commit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -559,12 +561,13 @@ pub(crate) fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
         counters: String,
         complexity: Option<String>,
         version: i64,
+        base_commit: Option<String>,
     }
     let prefix_and_row = conn
         .query_row(
             "SELECT p.key_prefix, j.project_id, j.number, j.title, j.description, j.type, j.priority,
                     j.state, j.holds_json, j.blocked_json, j.profile_snapshot, j.loop_counters,
-                    j.complexity_class, j.version
+                    j.complexity_class, j.version, j.base_commit
              FROM jobs j JOIN projects p ON p.id = j.project_id WHERE j.id = ?1",
             [id.to_string()],
             |r| {
@@ -584,6 +587,7 @@ pub(crate) fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
                         counters: r.get(11)?,
                         complexity: r.get(12)?,
                         version: r.get(13)?,
+                        base_commit: r.get(14)?,
                     },
                 ))
             },
@@ -613,6 +617,7 @@ pub(crate) fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
         description: r.description,
         job_type: from_s(&r.job_type)?,
         priority: from_s(&r.priority)?,
+        base_commit: r.base_commit,
     })
 }
 

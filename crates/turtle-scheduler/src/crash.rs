@@ -3,8 +3,8 @@
 //! never fires; tests fire it at the Nth boundary to simulate a process death there, restart,
 //! and check that recovery converges.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("simulated crash at `{0}`")]
@@ -17,6 +17,7 @@ pub struct CrashPlan(Arc<Inner>);
 struct Inner {
     crash_at: Option<usize>,
     seen: AtomicUsize,
+    names: Mutex<Vec<String>>,
 }
 
 impl CrashPlan {
@@ -26,6 +27,7 @@ impl CrashPlan {
         Self(Arc::new(Inner {
             crash_at: None,
             seen: AtomicUsize::new(0),
+            names: Mutex::new(Vec::new()),
         }))
     }
 
@@ -35,17 +37,26 @@ impl CrashPlan {
         Self(Arc::new(Inner {
             crash_at: Some(n),
             seen: AtomicUsize::new(0),
+            names: Mutex::new(Vec::new()),
         }))
     }
 
     /// A step boundary. Returns `Err` exactly when this is the planned crash point.
     pub fn point(&self, name: &str) -> Result<(), Crashed> {
         let index = self.0.seen.fetch_add(1, Ordering::SeqCst);
+        self.0.names.lock().expect("lock").push(name.to_owned());
         if self.0.crash_at == Some(index) {
             Err(Crashed(format!("{name}#{index}")))
         } else {
             Ok(())
         }
+    }
+
+    /// Names of the boundaries passed so far, in order; the index is the boundary number.
+    /// Tests use it to target every boundary of a given kind.
+    #[must_use]
+    pub fn boundary_names(&self) -> Vec<String> {
+        self.0.names.lock().expect("lock").clone()
     }
 
     /// Number of boundaries passed so far (including the crash point).

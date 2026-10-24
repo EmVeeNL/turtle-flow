@@ -10,6 +10,9 @@ pub mod context;
 pub mod crash;
 pub mod dispatcher;
 pub mod engine;
+pub mod executor;
+pub mod git_facts;
+pub mod layout;
 pub mod shared;
 
 pub use approvals::{ApprovalError, ApprovalService};
@@ -24,4 +27,7 @@ pub use dispatcher::{
     backoff,
 };
 pub use engine::{ContextProvider, Engine, EngineError, Finished, StaticContext};
+pub use executor::FactoryExecutor;
+pub use git_facts::RepoGitFacts;
+pub use layout::{ExecConfig, Layout};
 pub use shared::SharedStore;

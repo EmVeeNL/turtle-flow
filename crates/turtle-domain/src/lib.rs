@@ -8,8 +8,11 @@ pub mod documents;
 pub mod hash;
 pub mod ids;
 pub mod job;
+pub mod paths;
 pub mod quota;
+pub mod reports;
 pub mod roles;
+pub mod settings;
 pub mod usage;
 
 pub use approval::{ApprovalStatus, ApprovalValidity, GateKind};
@@ -24,5 +27,10 @@ pub use ids::{
 };
 pub use job::{JobKey, JobKeyError, JobState, JobType, Priority};
 pub use quota::{QuotaStatus, QuotaWindow, WindowStatus};
+pub use reports::{
+    CriterionResult, CriterionStatus, Finding, ReviewOutcome, ReviewReport, Severity,
+    VerificationDecision, VerificationReport,
+};
 pub use roles::{Actor, Complexity, Role, TrustLevel};
+pub use settings::{ProjectCommands, ProjectSettings};
 pub use usage::{TokenUsage, UsageProvenance, UsageValue};

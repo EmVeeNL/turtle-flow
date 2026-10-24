@@ -5,5 +5,9 @@
 pub mod claude;
 pub mod codex;
 pub mod discovery;
+pub mod runner;
 
 pub use discovery::{CompatStatus, ProviderId, ProviderInfo, discover};
+pub use runner::{
+    AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, RecordedCall, Step,
+};

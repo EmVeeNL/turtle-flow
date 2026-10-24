@@ -43,6 +43,7 @@ turtle approvals
 - the workflow state machine (`decide()`, profiles, approval binding)
 - the SQLite store: migrations, hash-chained event log, effect queue, job persistence
 - Git operations: worktrees per job, factory commits with trailers, post-run policy check, conflict probes, squash delivery, recovery snapshots
+- the effect executors: worktree, task commits, gates, review, verification, approvals and delivery, tested end to end with a scripted fake agent, including crashes at every step
 - artifacts and approvals: content-addressed blob store, artifact revisions, specification and plan documents with validation, hash-bound approvals checked against the current state at every guard
 - the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
 - `turtle doctor`

@@ -8,11 +8,17 @@ use sha2::{Digest, Sha256};
 
 use crate::{Repo, Result};
 
+/// Ref prefixes that Turtle Flow itself changes while an agent runs: recovery and delivery refs,
+/// and (with parallel jobs) the factory branches of *other* jobs. They are not part of a run's
+/// snapshot, so another job's activity can never look like an agent violation.
+pub const DEFAULT_IGNORED_REF_PREFIXES: &[&str] = &["refs/turtle/", "refs/heads/turtle/"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitSnapshot {
     pub head: String,
     pub branch: Option<String>,
-    refs_hash: String,
+    /// Every ref outside the ignored prefixes, with its object id.
+    pub refs: std::collections::BTreeMap<String, String>,
     git_dir_hash: String,
 }
 
@@ -55,23 +61,49 @@ impl GitPolicyCheck {
 
 impl Repo {
     pub async fn snapshot(&self) -> Result<GitSnapshot> {
-        let refs = self
+        self.snapshot_ignoring(
+            DEFAULT_IGNORED_REF_PREFIXES,
+            self_branch_hint(self).await?.as_deref(),
+        )
+        .await
+    }
+
+    /// Snapshot that ignores refs under `ignored` prefixes. The current branch is always kept,
+    /// even if it falls under an ignored prefix, because the agent must not move it.
+    pub async fn snapshot_ignoring(
+        &self,
+        ignored: &[&str],
+        keep_branch: Option<&str>,
+    ) -> Result<GitSnapshot> {
+        let listing = self
             .run(&["for-each-ref", "--format=%(refname) %(objectname)"])
             .await?;
+        let own = keep_branch.map(|b| format!("refs/heads/{b}"));
+        let refs = listing
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .filter(|(name, _)| {
+                own.as_deref() == Some(*name) || !ignored.iter().any(|p| name.starts_with(p))
+            })
+            .map(|(n, o)| (n.to_owned(), o.to_owned()))
+            .collect();
         Ok(GitSnapshot {
             head: self.head().await?,
             branch: self.current_branch().await?,
-            refs_hash: hex(Sha256::digest(refs.as_bytes())),
+            refs,
             git_dir_hash: self.git_dir_hash().await?,
         })
     }
 
     pub async fn check_policy(&self, before: &GitSnapshot) -> Result<GitPolicyCheck> {
-        let now = self.snapshot().await?;
+        let own = before.branch.as_deref();
+        let now = self
+            .snapshot_ignoring(DEFAULT_IGNORED_REF_PREFIXES, own)
+            .await?;
         Ok(GitPolicyCheck {
             head_unchanged: now.head == before.head,
             branch_unchanged: now.branch == before.branch,
-            refs_unchanged: now.refs_hash == before.refs_hash,
+            refs_unchanged: refs_equivalent(before, &now),
             git_dir_untouched: now.git_dir_hash == before.git_dir_hash,
         })
     }
@@ -97,6 +129,32 @@ impl Repo {
         }
         Ok(hex(h.finalize()))
     }
+}
+
+/// The branch to keep in the snapshot: the one checked out here, if any.
+async fn self_branch_hint(repo: &Repo) -> Result<Option<String>> {
+    repo.current_branch().await
+}
+
+/// Refs are equivalent when the same names exist, tags point at the same objects, and the
+/// run's own branch has not moved. Other branches may legitimately move (another job's delivery,
+/// the user committing) while an agent runs; the agent's sandbox, not this check, keeps it away
+/// from them.
+fn refs_equivalent(before: &GitSnapshot, now: &GitSnapshot) -> bool {
+    let names = |s: &GitSnapshot| {
+        s.refs
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    if names(before) != names(now) {
+        return false;
+    }
+    let own = before.branch.as_ref().map(|b| format!("refs/heads/{b}"));
+    before.refs.iter().all(|(name, oid)| {
+        let must_match = name.starts_with("refs/tags/") || own.as_deref() == Some(name.as_str());
+        !must_match || now.refs.get(name) == Some(oid)
+    })
 }
 
 fn collect_hooks(dir: &Path, prefix: &str, out: &mut Vec<(String, Vec<u8>)>) {
