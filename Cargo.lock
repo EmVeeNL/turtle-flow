@@ -1007,6 +1007,8 @@ name = "turtle-git"
 version = "0.0.1"
 dependencies = [
  "semver",
+ "sha2",
+ "tempfile",
  "thiserror",
  "tokio",
  "turtle-domain",
