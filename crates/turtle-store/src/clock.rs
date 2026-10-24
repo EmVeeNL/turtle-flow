@@ -48,6 +48,42 @@ impl Clock for StepClock {
     }
 }
 
+/// Test clock that only moves when told to; reads do not advance it.
+#[derive(Debug)]
+pub struct ManualClock {
+    ms: AtomicI64,
+}
+
+impl ManualClock {
+    #[must_use]
+    pub fn new() -> Self {
+        // 2026-10-24T00:00:00Z
+        Self {
+            ms: AtomicI64::new(1_792_800_000_000),
+        }
+    }
+
+    pub fn advance(&self, by: std::time::Duration) {
+        let ms = i64::try_from(by.as_millis()).expect("duration fits");
+        self.ms.fetch_add(ms, Ordering::Relaxed);
+    }
+}
+
+impl Default for ManualClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp_nanos(
+            i128::from(self.ms.load(Ordering::Relaxed)) * 1_000_000,
+        )
+        .expect("test timestamps are in range")
+    }
+}
+
 /// `2026-10-24T09:14:03.120Z`: fixed-width RFC 3339 UTC with milliseconds.
 pub fn format_ts(t: OffsetDateTime) -> Result<String, time::error::Format> {
     t.to_offset(time::UtcOffset::UTC)

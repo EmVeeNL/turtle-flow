@@ -6,10 +6,12 @@ pub mod chain;
 pub mod clock;
 pub mod error;
 pub mod migrate;
+pub mod queue;
 pub mod store;
 
-pub use clock::{Clock, StepClock, SystemClock};
+pub use clock::{Clock, ManualClock, StepClock, SystemClock};
 pub use error::{Result, StoreError};
+pub use queue::{ClaimParams, EffectFate, RecoveryReport};
 pub use store::{
     Applied, ChainVerdict, EffectRow, EventRow, JobRecord, NewEvent, NewJob, NewProject,
     RebuiltJob, Store, Tx,

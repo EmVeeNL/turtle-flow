@@ -1,4 +1,4 @@
-use turtle_domain::JobId;
+use turtle_domain::{EffectId, JobId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -13,6 +13,9 @@ pub enum StoreError {
     /// Optimistic concurrency failure: someone else changed the job first.
     #[error("job {job} was modified concurrently (expected version {expected})")]
     VersionConflict { job: JobId, expected: u64 },
+    /// The effect is no longer claimed by this instance (restart, recovery or cancellation).
+    #[error("lease on effect {effect} was lost")]
+    LeaseLost { effect: EffectId },
     #[error("not found: {0}")]
     NotFound(String),
     #[error(

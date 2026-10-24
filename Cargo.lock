@@ -1029,11 +1029,16 @@ dependencies = [
 name = "turtle-scheduler"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
  "turtle-agents",
  "turtle-context",
  "turtle-domain",
  "turtle-exec",
  "turtle-git",
+ "turtle-policy",
  "turtle-store",
  "turtle-tokens",
  "turtle-workflow",
