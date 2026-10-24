@@ -132,7 +132,7 @@ Why not full event sourcing? State tables remain authoritative for queries and s
 ```mermaid
 flowchart TB
     subgraph interfaces["Interfaces"]
-        CLI["turtle-cli<br/>(Clap commands)"]
+        CLI["turtle-flow<br/>(binary turtle, Clap)"]
         API["turtle-api<br/>(Axum routes, SSE, auth,<br/>embedded dashboard)"]
     end
     subgraph core["Turtle Flow Core"]
@@ -191,7 +191,7 @@ flowchart TB
 | `turtle-artifacts` | Content-addressed blob store, artifact revision service, JSON Schema validation, Markdown rendering of structured artifacts | domain | store (gets a repository trait) |
 | `turtle-store` | SQLx repositories implementing traits declared in domain/workflow, migrations, event log hash chain, outbox, ledger tables | domain | workflow logic |
 | `turtle-api` | Axum router, auth (token/cookie, Host/Origin checks), SSE, OpenAPI (`utoipa`), static dashboard assets via `rust-embed` | domain, workflow, policy, store | agents, git (only through commands) |
-| `turtle-cli` | Binary: Clap commands; `daemon` subcommand is the composition root wiring all crates; terminal rendering | all | — |
+| `turtle-flow` | Binary crate (executable `turtle`): Clap commands; `daemon` subcommand is the composition root wiring all crates; terminal rendering | all | — |
 
 Frontend: `dashboard/` — Vite + React + TypeScript SPA, built in CI and embedded into `turtle-api` ([ADR-003](adr/ADR-003-embedded-webserver-dashboard.md)).
 

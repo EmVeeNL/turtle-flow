@@ -1,0 +1,16 @@
+[package]
+name = "turtle-workflow"
+description = "Job state machine: transition table, guards, profiles and the pure `decide()` function."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turtle-domain = { workspace = true }
+turtle-policy = { workspace = true }

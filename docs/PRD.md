@@ -521,7 +521,7 @@ Full architectural risk analysis: [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.m
 |---|---|---|
 | A-01 | Claude Code CLI supports non-interactive execution with streamed JSON output (`-p` / `--output-format stream-json`) including a final result event with usage data. | Spike S-1 ([AGENT-PROTOCOL.md §9](AGENT-PROTOCOL.md#9-provider-specifics-and-verification-spikes)) |
 | A-02 | Codex CLI supports non-interactive execution (`codex exec`) with JSON event output including token usage per turn, and sandbox modes restricting writes to the working directory. | Spike S-2 |
-| A-03 | Neither CLI exposes reliable remaining subscription quota; rate-limit signals are only available as errors or partial messages. | Spike S-3 |
+| A-03 | ~~Neither CLI exposes remaining subscription quota.~~ **Partly falsified (spike 2026-10-24):** Claude Code 2.1.310 emits `rate_limit_event` with per-window utilization (5-hour and 7-day) and reset times; Codex 0.163.0 only reports an unstructured "try again at <time>" error. Neither exposes absolute remaining tokens. | [Spike S-1/S-2 report](../spikes/S-1-S-2-provider-cli-report.md) |
 | A-04 | Users run Turtle Flow on a machine where they already trust the repositories they work on roughly as much as running their build locally. | Product positioning; documented in SECURITY |
 | A-05 | Typical MVP jobs change ≤ 1,500 lines across ≤ 30 files; larger work is decomposed into multiple jobs. | Dogfooding data |
 | A-06 | A single machine can run 3–4 concurrent agent runs before provider rate limits, not local resources, become the bottleneck. | Load test |

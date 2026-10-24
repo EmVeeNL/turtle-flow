@@ -322,6 +322,8 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 
 ## 9. Provider Specifics and Verification Spikes
 
+> **Partly verified 2026-10-24** against Claude Code 2.1.310 and Codex 0.163.0. See the [spike report](../spikes/S-1-S-2-provider-cli-report.md); verified rows below are marked ✔. Key verified results: native structured output, `--max-budget-usd`, `--restricted`, `--permission-prompts none`, quota events, **no `--max-turns`**, and **inherited user config (MCP connectors, skills) inflates cost ~45×**, so the adapter must always apply the full isolation flag set.
+>
 > **Uncertain.** Provider CLIs evolve quickly. The mappings below reflect publicly documented behavior as understood at the time of writing (2025–2026 releases) and **must be verified** in the listed spikes against the exact CLI versions to be supported. The adapter design does not depend on any single item: each is a capability with a fallback.
 
 ### 9.1 Claude Code CLI adapter (`claude-code`)
@@ -332,12 +334,14 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 | Streaming output | `--output-format stream-json` (with `--verbose`); events include `system/init`, `assistant`, `user` (tool results), final `result` | `--output-format json` (final only) |
 | Usage & cost | Final `result` event with `usage` (input, output, cache creation/read) and `total_cost_usd`; possibly per-model breakdown | Estimate from transcript (provenance `estimated`) |
 | Model selection | `--model <alias|id>` | Default model (recorded as `model_reported` from init event) |
-| Turn limit | `--max-turns N` | Wall-clock only |
+| Turn limit | **Not available** in 2.1.310 ✔ | Wall-clock + `--max-budget-usd` ✔ |
 | Tool restriction | `--allowedTools` / `--disallowedTools` with patterns such as `Bash(cargo test:*)`; `--permission-mode` (`plan` for read-only, `acceptEdits` for implementer) | Post-run checks (best effort) |
 | Settings / sandbox | `--settings <file>` (permissions; sandbox configuration where supported) | Rely on permission rules + post-run checks |
 | System prompt | `--append-system-prompt` | Prepend to user prompt |
 | Sessions | `--session-id`, `--resume <id>` | Fresh run for repair |
-| Structured output | Possibly a JSON-schema option in print mode (**Uncertain**) | Final fenced JSON extraction |
+| Structured output | `--json-schema` ✔; result event has `structured_output` | Final fenced JSON extraction |
+| Isolation (mandatory) | `--restricted --permission-prompts none --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources "" --disable-slash-commands --exclude-dynamic-system-prompt-sections --no-session-persistence` ✔; assert `system/init` tool list | — |
+| Quota | `rate_limit_event` with 5-hour/7-day utilization + reset ✔ | — |
 | Auth | Uses CLI's own login or `ANTHROPIC_API_KEY` | `blocked` with remediation |
 | Config isolation | `CLAUDE_CONFIG_DIR` (OQ-03) | Global config |
 
@@ -352,7 +356,7 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 | Usage | `turn.completed` usage with `input_tokens`, `cached_input_tokens`, `output_tokens` | Estimate |
 | Cost | Not reported (compute from price table) | — |
 | Model selection | `-m/--model` | Config default (recorded) |
-| Sandbox | `--sandbox read-only | workspace-write | danger-full-access`; approvals `-a never` in headless runs; network off by default in workspace-write | Required capability for implementer role |
+| Sandbox | `--sandbox read-only | workspace-write | danger-full-access`; no `-a` flag on `exec` ✔ (approvals never prompt headless); network off by default in workspace-write | Required capability for implementer role |
 | Structured output | `--output-schema <file>` (**verify** availability per version) | Final JSON extraction |
 | Working dir | `-C/--cd <dir>`; may require `--skip-git-repo-check` in some layouts | Spawn with cwd |
 | Config overrides | `-c key=value`, `--profile` | — |

@@ -1,0 +1,15 @@
+[package]
+name = "turtle-store"
+description = "SQLite persistence: repositories, migrations, hash-chained event log, effect outbox. The only crate that issues SQL."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turtle-domain = { workspace = true }

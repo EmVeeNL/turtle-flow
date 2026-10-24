@@ -1,0 +1,22 @@
+[package]
+name = "turtle-scheduler"
+description = "Effect dispatcher, scheduling loop, leases, concurrency limits, run and gate supervisors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turtle-domain = { workspace = true }
+turtle-workflow = { workspace = true }
+turtle-store = { workspace = true }
+turtle-agents = { workspace = true }
+turtle-git = { workspace = true }
+turtle-exec = { workspace = true }
+turtle-context = { workspace = true }
+turtle-tokens = { workspace = true }
