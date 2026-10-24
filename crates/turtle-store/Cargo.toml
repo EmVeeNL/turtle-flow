@@ -1,6 +1,6 @@
 [package]
 name = "turtle-store"
-description = "SQLite persistence: repositories, migrations, hash-chained event log, effect outbox. The only crate that issues SQL."
+description = "SQLite persistence: migrations, hash-chained event log, effect outbox and job repository. The only crate that issues SQL."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,3 +13,17 @@ workspace = true
 
 [dependencies]
 turtle-domain = { workspace = true }
+turtle-policy = { workspace = true }
+turtle-workflow = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rusqlite = { workspace = true }
+tempfile = { workspace = true }

@@ -147,7 +147,7 @@ flowchart TB
         GIT["turtle-git<br/>git CLI wrapper,<br/>worktrees, merge-tree"]
         EXE["turtle-exec<br/>process runner, sandbox,<br/>env scrub, rlimits, gates"]
         ART["turtle-artifacts<br/>blob store, revisions,<br/>JSON schemas"]
-        ST["turtle-store<br/>SQLx/SQLite repositories,<br/>event log, outbox, migrations"]
+        ST["turtle-store<br/>rusqlite/SQLite repositories,<br/>event log, outbox, migrations"]
     end
     DOM["turtle-domain<br/>IDs, entities, events,<br/>errors, value objects"]
 
@@ -189,7 +189,7 @@ flowchart TB
 | `turtle-git` | Typed wrapper around Git CLI (sanitized config, hooks disabled), worktree lifecycle, commit with trailers, `merge-tree` conflict probe, recovery probes | domain, exec | store |
 | `turtle-exec` | Spawning processes: env allowlist, process groups, timeouts, output caps, rlimits, optional container wrapper | domain, `tokio::process`, `nix` | everything above |
 | `turtle-artifacts` | Content-addressed blob store, artifact revision service, JSON Schema validation, Markdown rendering of structured artifacts | domain | store (gets a repository trait) |
-| `turtle-store` | SQLx repositories implementing traits declared in domain/workflow, migrations, event log hash chain, outbox, ledger tables | domain | workflow logic |
+| `turtle-store` | rusqlite repositories, migrations, event log hash chain, effect outbox, ledger tables. Persists `turtle-workflow` decisions | domain, policy, workflow (data types only: aggregate, decision, effects, events) | workflow *logic* (`decide` is never called from the store) |
 | `turtle-api` | Axum router, auth (token/cookie, Host/Origin checks), SSE, OpenAPI (`utoipa`), static dashboard assets via `rust-embed` | domain, workflow, policy, store | agents, git (only through commands) |
 | `turtle-flow` | Binary crate (executable `turtle`): Clap commands; `daemon` subcommand is the composition root wiring all crates; terminal rendering | all | — |
 
@@ -377,7 +377,7 @@ turtle dashboard                    # opens browser with one-time login code
 | Async runtime | Tokio | async-std (inactive), smol | [ADR-002](adr/ADR-002-rust-technology-stack.md) |
 | CLI | Clap (derive) | argh, bpaf | ADR-002 |
 | HTTP | Axum + tower-http | Actix-web, Warp, Poem | ADR-002/003 |
-| DB | SQLite via SQLx (WAL) | rusqlite (sync, simpler), Diesel, SeaORM, embedded KV (redb) | [ADR-004](adr/ADR-004-sqlite-persistence-event-logging.md) |
+| DB | SQLite via rusqlite (WAL, single writer; see ADR-002 amendment) | SQLx, Diesel, SeaORM, embedded KV (redb) | [ADR-004](adr/ADR-004-sqlite-persistence-event-logging.md) |
 | Git | Git CLI (writes) + `gix` for fast read-only queries (optional) | git2/libgit2 (worktree & merge-tree gaps, C dependency) | [ADR-009](adr/ADR-009-git-worktree-isolation.md) |
 | Live updates | SSE | WebSockets (bidirectional not needed) | ADR-003 |
 | Frontend | Vite + React + TS, TanStack Router/Query/Table/Virtual, Tailwind, Radix primitives; Asap Sharp + JetBrains Mono (self-hosted); Fluent icons via `unplugin-icons` | TanStack Start, Astro, SvelteKit (adapter-static), Leptos/Dioxus (Rust WASM) | ADR-003 |

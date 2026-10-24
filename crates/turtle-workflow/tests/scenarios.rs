@@ -465,3 +465,57 @@ fn release_required_waits_for_release() {
     let done = step(&delivered, C::ReleaseCompleted, &scheduler(), &permissive());
     assert_eq!(done.state, JobState::Done);
 }
+
+#[test]
+fn changes_requested_while_waiting_for_dependencies_does_not_strand_the_hold() {
+    let mut cx = permissive();
+    cx.plan_thresholds_exceeded = true;
+    cx.dependencies_delivered = false;
+    let job = common::job_in(JobState::Planning, Profile::strict());
+
+    let awaiting = step(&job, plan(), &scheduler(), &cx);
+    assert_eq!(awaiting.state, JobState::PlanApproval);
+    let waiting = step(
+        &awaiting,
+        C::ApprovalGranted {
+            gate: GateKind::Plan,
+        },
+        &user(),
+        &cx,
+    );
+    assert_eq!(waiting.holds, [Hold::WaitingForDependencies]);
+
+    let revised = step(
+        &waiting,
+        C::ApprovalChangesRequested {
+            gate: GateKind::Plan,
+        },
+        &user(),
+        &cx,
+    );
+    assert_eq!(revised.state, JobState::Planning);
+    assert!(
+        revised.holds.is_empty(),
+        "the wait ends when the plan is sent back"
+    );
+    assert!(!revised.ready_for_implementation);
+
+    // The next plan and approval go through without a duplicate-hold rejection.
+    let again = step(&revised, plan(), &scheduler(), &cx);
+    let waiting_again = step(
+        &again,
+        C::ApprovalGranted {
+            gate: GateKind::Plan,
+        },
+        &user(),
+        &cx,
+    );
+    assert_eq!(waiting_again.holds, [Hold::WaitingForDependencies]);
+    let started = step(
+        &waiting_again,
+        C::DependenciesDelivered,
+        &scheduler(),
+        &permissive(),
+    );
+    assert_eq!(started.state, JobState::Implementation);
+}

@@ -204,6 +204,11 @@ proptest! {
             prop_assert!(after.counters.respecs <= p.max_respecs);
             // The profile snapshot never changes inside the engine.
             prop_assert_eq!(&after.profile, &before.profile);
+            // The dependency-wait flag and hold always change together.
+            prop_assert_eq!(
+                after.ready_for_implementation,
+                after.holds.contains(&turtle_workflow::Hold::WaitingForDependencies)
+            );
             // No duplicate holds.
             let mut holds = after.holds.clone();
             holds.dedup();

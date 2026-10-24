@@ -40,9 +40,11 @@ turtle approvals
 - a Git version check
 - provider CLI discovery
 - parsers for Claude Code and Codex output, tested against real recorded transcripts ([spike report](spikes/S-1-S-2-provider-cli-report.md))
+- the workflow state machine (`decide()`, profiles, approval binding)
+- the SQLite store: migrations, hash-chained event log, effect queue, job persistence
 - `turtle doctor`
 
-There is no workflow engine or daemon yet.
+There is no daemon, scheduler or agent execution yet.
 
 ### Development
 

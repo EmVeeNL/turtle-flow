@@ -51,6 +51,13 @@ SQLite is the most battle-tested embedded transactional store. Same-transaction 
 - Chunk bulk work into small transactions; index extraction off the writer when possible (prepare outside, commit small).
 - Measure; allow `NORMAL` for non-critical tables via separate attached DB if needed (e.g. transcripts index).
 
+## Implementation notes (2026-10-24)
+
+- Driver: rusqlite, not SQLx ([ADR-002 amendment](ADR-002-rust-technology-stack.md#amendment-2026-10-24-rusqlite-instead-of-sqlx)).
+- Hash chain: `hash = SHA-256(prev_hash_hex ‖ canonical_json(event))`; the genesis hash is derived from a random installation id stored in `store_meta`. The sequence number is not hashed. Tail truncation is not detectable without an external anchor (planned, `SECURITY.md` §6.7).
+- Effect idempotency keys are deterministic (`job:<id>:v<version>:e<index>`), so replaying a decision cannot enqueue duplicates.
+- The append-only triggers guard against application bugs only. An attacker with file access can drop them, which the hash chain then detects.
+
 ## Related ADRs
 
 [ADR-013](ADR-013-resource-artifact-management.md), [ADR-016](ADR-016-observability-auditability.md), [ADR-017](ADR-017-recovery-idempotency-crash-safety.md), [ADR-015](ADR-015-future-server-deployment.md)

@@ -108,6 +108,7 @@ enum Loop {
 
 impl Tx<'_> {
     fn enter(&mut self, to: JobState, purpose: RunPurpose, backward: bool) {
+        self.end_dependency_wait();
         self.events.push(WorkflowEvent::StageEntered {
             from: self.job.state,
             to,
@@ -272,6 +273,13 @@ impl Tx<'_> {
         self.effects.push(Effect::NotifyUser);
     }
 
+    /// Ends a dependency wait: the hold and the ready flag always change together
+    /// (invariant: `ready_for_implementation` iff `WaitingForDependencies` is held).
+    fn end_dependency_wait(&mut self) {
+        self.job.ready_for_implementation = false;
+        let _ = self.remove_hold(|h| *h == Hold::WaitingForDependencies);
+    }
+
     fn proceed_to_implementation(&mut self) -> Result<(), &'static str> {
         if self.cx.dependencies_delivered {
             self.job.ready_for_implementation = false;
@@ -327,7 +335,9 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
     // Commands valid in any non-terminal state.
     match cmd {
         C::Cancel => {
-            tx.job.holds.clear();
+            for hold in std::mem::take(&mut tx.job.holds) {
+                tx.events.push(WorkflowEvent::HoldRemoved { hold });
+            }
             tx.enter(S::Cancelled, RunPurpose::Initial, false);
             return Ok(());
         }
@@ -504,6 +514,7 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             if !valid {
                 return Err("plan_valid");
             }
+            tx.end_dependency_wait();
             if !within_scope {
                 tx.invalidate(GateKind::Scope, MaterialChange::PlanRevised);
                 tx.auto_back(S::Specification, Loop::Respec, RunPurpose::Revise);
@@ -521,6 +532,7 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             if !valid {
                 return Err("plan_valid");
             }
+            tx.end_dependency_wait();
             tx.invalidate(GateKind::Plan, MaterialChange::PlanRevised);
             tx.re_request(GateKind::Plan);
         }
@@ -529,15 +541,12 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             tx.proceed_to_implementation()?;
         }
         (S::PlanApproval, C::ApprovalChangesRequested { .. }) => {
-            tx.job.ready_for_implementation = false;
             tx.user_back(S::Planning, RunPurpose::Revise);
         }
         (S::Planning | S::PlanApproval, C::DependenciesDelivered) => {
             if !tx.job.ready_for_implementation {
                 return Err("ready_for_implementation");
             }
-            tx.remove_hold(|h| *h == Hold::WaitingForDependencies)?;
-            tx.job.ready_for_implementation = false;
             tx.enter(S::Implementation, RunPurpose::Initial, false);
         }
 
