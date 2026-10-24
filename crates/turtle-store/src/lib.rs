@@ -8,6 +8,7 @@ pub mod chain;
 pub mod clock;
 pub mod error;
 pub mod migrate;
+pub mod projects;
 pub mod queue;
 pub mod store;
 
@@ -15,6 +16,7 @@ pub use approvals::{ApprovalRecord, Decision};
 pub use artifacts::{NewRevision, RevisionRecord};
 pub use clock::{Clock, ManualClock, StepClock, SystemClock};
 pub use error::{Result, StoreError};
+pub use projects::{DeliveryRecord, DeliveryStatus, ProjectRecord};
 pub use queue::{ClaimParams, EffectFate, RecoveryReport};
 pub use store::{
     Applied, ChainVerdict, EffectRow, EventRow, JobRecord, NewEvent, NewJob, NewProject,

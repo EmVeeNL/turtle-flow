@@ -937,7 +937,9 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
+ "tokio",
  "turtle-domain",
  "turtle-exec",
 ]

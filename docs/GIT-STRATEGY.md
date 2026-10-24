@@ -210,6 +210,11 @@ Decisions made while building the crate; the code and its tests are authoritativ
 - **Commit policy.** Staged paths matching the never-include list (including any `.git` path component) refuse the commit and reset the index. Symlinks leaving the work tree and files above 5 MB are refused. Trailers are `Turtle-Job`, `Turtle-Task`, `Turtle-Run`, `Turtle-Provider`, `Turtle-Model`, `Turtle-Context`.
 - **Worktree safety.** Project slug and job key are validated before they form a path, so a path can never leave the worktree root. An existing branch is reused only when it still points at the recorded base; it is never moved.
 
+### 12b. Policy snapshot semantics and quarantine (2026-10-25)
+
+- **What the snapshot compares.** HEAD, the current branch, the *set of ref names*, the object ids of **tags** and of the run's **own branch**, and the config/hook hash. Refs under `refs/turtle/` and other jobs' factory branches (`refs/heads/turtle/*`) are ignored, because with parallel jobs they legitimately change while an agent runs. A test creates a second job, commits on it and writes delivery and recovery refs during a run: no violation.
+- **Known limitation.** An agent that moves a *non-factory, non-own* branch (for example `main`) without creating or deleting names is not detected by this check; the agent sandbox, not this check, keeps it away from other branches. Detecting it would make every delivery by another job a false alarm.
+- **Quarantine** (`Repo::quarantine`) undoes a violating run: it first preserves everything the agent did (a commit on a clean tree, working changes and untracked files) at `refs/turtle/recovery/<run>`, then restores the branch, HEAD and a clean tree, deletes refs the agent created, recreates refs it deleted and resets moved tags. The job is blocked; nothing continues silently.
 ## 13. Git Command Catalogue (MVP)
 
 | Purpose | Command (base flags omitted) |

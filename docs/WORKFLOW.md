@@ -450,7 +450,7 @@ These 25 boundaries are each covered by a crash-injection test ([TESTING-STRATEG
 
 ### 10.2 Crash-injection coverage (status)
 
-The generic effect protocol (claim, execute, complete-with-command, requeue after restart) is covered at every step boundary by `crates/turtle-scheduler/tests/crash.rs`. That covers the *shape* of boundaries 1, 3, 6, 10, 19 and the "effect pending, then dispatched" parts of 11, 14–25 in the table above. The following still need their own tests when the corresponding executors exist: 2, 4, 5, 7, 8 (agent runs, reservations, ledger), and the Git-specific probes of 11–16 and 20–25 (the probes themselves exist in `turtle-git`, but are not yet called by an executor).
+The effect-specific probes are now covered too by the end-to-end crash test with real Git (see ADR-017, "Executor probes"): worktree creation, task commits, delivery, approval requests and artifact reuse. The generic effect protocol (claim, execute, complete-with-command, requeue after restart) is covered at every step boundary by `crates/turtle-scheduler/tests/crash.rs`. That covers the *shape* of boundaries 1, 3, 6, 10, 19 and the "effect pending, then dispatched" parts of 11, 14–25 in the table above. The following still need their own tests when the corresponding executors exist: 2, 4, 5, 7, 8 (agent runs, reservations, ledger), and the Git-specific probes of 11–16 and 20–25 (the probes themselves exist in `turtle-git`, but are not yet called by an executor).
 
 ## 11. Job Dependencies and Parallel Execution
 

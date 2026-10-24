@@ -119,6 +119,16 @@ Milestones are dependency-ordered. Durations are ranges under the staffing assum
 | **M5 — Completeness & safety** | Beta-complete feature set | `strict` profile, plan approval, PR delivery, conflict probe & refresh, resources + FTS + redaction, static gates, analytics screen, providers/resources/settings screens, full crash-injection suite, security test suite | AC-03, AC-05 – AC-09 pass | 6–8 wk |
 | **M6 — Beta hardening** | Ship 0.3 | `init` wizard, `doctor`, export, performance work, docs, signed releases, live E2E on 3 reference repos, usability tests | AC-01 – AC-10 all pass | 3–5 wk |
 
+### 6.1 Progress against the milestones (2026-10-25)
+
+| Milestone | State |
+|---|---|
+| M0 spikes | S-1 partly and S-2 error path done; S-3 to S-7 not started |
+| M1 walking skeleton | **Library-complete.** A whole job runs from backlog to delivered with real Git worktrees, gates, hash-bound approvals, fix loops, policy enforcement and crash recovery, driven by a scripted fake agent (`turtle-scheduler/tests/e2e.rs`). **Missing for M1: the `turtle` CLI and daemon** (next PR). |
+| M2 first real agent | not started (Claude Code adapter, token ledger) |
+
+Known M1 simplifications, all deliberate and listed so they are not forgotten: gates run per job, not per task; tasks are tracked by commit trailers rather than the `tasks` table; agent runs are recorded as events rather than in `agent_runs`; no token ledger yet; delivery is local squash only (no pull requests); a delivery parked for a checked-out branch still completes the job; hard pause cannot yet stop a running agent; automatic scope approval is off.
+
 ## 7. Technical Dependencies
 
 | Dependency | Needed by | Risk | Mitigation |

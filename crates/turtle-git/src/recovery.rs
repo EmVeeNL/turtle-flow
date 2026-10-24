@@ -2,6 +2,7 @@
 
 use std::time::{Duration, SystemTime};
 
+use crate::policy::GitSnapshot;
 use crate::{GitError, Repo, Result};
 
 /// A stale lock younger than this might belong to a git process that just started.
@@ -72,6 +73,58 @@ impl Repo {
         self.run(&["reset", "--hard", "-q", "HEAD"]).await?;
         self.run(&["clean", "-fdq"]).await?;
         Ok(Some(commit))
+    }
+
+    /// Undoes a run that violated the Git policy. Everything the agent did (commits, working
+    /// changes) is first preserved at `refs/turtle/recovery/<run>`, then the worktree is put back
+    /// exactly as `before` recorded it: branch, HEAD, refs and a clean tree. Returns the
+    /// recovery commit.
+    pub async fn quarantine(&self, run_id: &str, before: &GitSnapshot) -> Result<String> {
+        if run_id.is_empty()
+            || !run_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err(GitError::Invalid(format!("invalid run id `{run_id}`")));
+        }
+        // 1. Preserve the agent's work, including a commit it made on a clean tree.
+        let recovery_ref = format!("refs/turtle/recovery/{run_id}");
+        let saved = match self.stash_to_recovery_ref(run_id).await? {
+            Some(commit) => commit,
+            None => {
+                let head = self.head().await?;
+                self.run(&["update-ref", &recovery_ref, &head]).await?;
+                head
+            }
+        };
+
+        // 2. Put the branch and HEAD back.
+        if let Some(branch) = &before.branch {
+            self.run(&["switch", "-q", "-f", branch]).await?;
+        }
+        self.run(&["reset", "--hard", "-q", &before.head]).await?;
+        self.run(&["clean", "-fdq"]).await?;
+
+        // 3. Put the refs back: delete the ones the agent created, recreate deleted ones, and
+        //    reset tags it moved.
+        let now = self
+            .snapshot_ignoring(
+                crate::policy::DEFAULT_IGNORED_REF_PREFIXES,
+                before.branch.as_deref(),
+            )
+            .await?;
+        for name in now.refs.keys().filter(|n| !before.refs.contains_key(*n)) {
+            self.run(&["update-ref", "-d", name]).await?;
+        }
+        for (name, oid) in &before.refs {
+            let current = now.refs.get(name);
+            let restore =
+                current.is_none() || (name.starts_with("refs/tags/") && current != Some(oid));
+            if restore {
+                self.run(&["update-ref", name, oid]).await?;
+            }
+        }
+        Ok(saved)
     }
 
     /// Repairs interrupted operations in a factory worktree. Never touches the user's checkout:
