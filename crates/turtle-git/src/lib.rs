@@ -30,9 +30,41 @@ pub enum GitError {
     Exec(#[from] ExecError),
     #[error("git exited unsuccessfully: {stderr}")]
     Failed { stderr: String },
+    #[error("git {args} failed (exit {code}): {stderr}")]
+    Command {
+        args: String,
+        code: String,
+        stderr: String,
+    },
     #[error("could not parse git version from {0:?}")]
     VersionParse(String),
+    #[error("invalid input: {0}")]
+    Invalid(String),
+    #[error("unexpected git output: {0}")]
+    Parse(String),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("commit refused: {0}")]
+    CommitRefused(String),
+    #[error("target branch `{branch}` moved since the delivery was prepared")]
+    TargetMoved { branch: String },
+    #[error("merge has conflicts in {} file(s)", .0.len())]
+    Conflicts(Vec<String>),
 }
+
+pub type Result<T, E = GitError> = std::result::Result<T, E>;
+
+pub mod commit;
+pub mod delivery;
+pub mod diff;
+pub mod merge;
+pub mod names;
+pub mod policy;
+pub mod recovery;
+pub mod repo;
+pub mod worktree;
+
+pub use repo::{Identity, Repo};
 
 /// Builds a hardened `git` command.
 #[must_use]

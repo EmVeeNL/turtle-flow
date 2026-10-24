@@ -197,6 +197,19 @@ Crash-specific recovery steps: [WORKFLOW.md §10.1](WORKFLOW.md#101-step-boundar
 | Signed commits required by target | Delivery squash/merge commit signed via user's configured signing if non-interactive (`gpg-agent`/SSH agent available); otherwise PR mode recommended |
 | Non-GitHub forges | Push + manual PR (URL printed) |
 
+## 12a. Implementation Notes (`turtle-git`)
+
+Decisions made while building the crate; the code and its tests are authoritative.
+
+- **Every command is hardened.** All Git calls go through one builder that sets `core.hooksPath=/dev/null`, `core.fsmonitor=false`, restricted protocols, `gc.auto=0` and `GIT_TERMINAL_PROMPT=0`, inside a scrubbed environment. A test plants hooks and an fsmonitor script in a repository and checks that neither runs. Removing either setting makes it fail.
+- **Delivery takes the approved target tip.** `deliver_squash_from(req, target_tip)` builds the squash commit on the tip that was probed and approved and moves the branch only if it is still exactly there. If the target moved, the result is `TargetMoved` and the other party's commit is untouched. `deliver_squash` reads the current tip and calls it.
+- **Checked-out targets are parked.** If the target branch is checked out in any worktree (main checkout included), the squash commit is stored at `refs/turtle/delivery/<job>` and the outcome is `PendingIntegration`. The documented `git merge --ff-only <ref>` works afterwards.
+- **Policy snapshot.** Before a run the factory snapshots HEAD, branch, a hash of all refs, and a hash of `config`, `config.worktree` and every non-sample hook. After the run any difference is a violation. Editing files is allowed.
+- **Recovery snapshots include untracked files.** `git stash create` ignores untracked files, which agents create constantly. The recovery ref is built from a temporary index (`read-tree`, `add -A`, `write-tree`, `commit-tree`), so the real index is never disturbed, and ignored files are left alone.
+- **Stale lock removal is conservative.** An `index.lock` is removed only when it is at least 60 s old and no `git` process is running anywhere on the machine. A false positive delays recovery; a false negative could corrupt a live operation.
+- **Commit policy.** Staged paths matching the never-include list (including any `.git` path component) refuse the commit and reset the index. Symlinks leaving the work tree and files above 5 MB are refused. Trailers are `Turtle-Job`, `Turtle-Task`, `Turtle-Run`, `Turtle-Provider`, `Turtle-Model`, `Turtle-Context`.
+- **Worktree safety.** Project slug and job key are validated before they form a path, so a path can never leave the worktree root. An existing branch is reused only when it still points at the recorded base; it is never moved.
+
 ## 13. Git Command Catalogue (MVP)
 
 | Purpose | Command (base flags omitted) |
