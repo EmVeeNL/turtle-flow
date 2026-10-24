@@ -52,8 +52,10 @@ pub struct BlockInfo {
     pub allowed_targets: Vec<JobState>,
 }
 
-/// Loop budgets consumed by autonomous backward transitions.
+/// Loop budgets consumed by autonomous backward transitions. Missing fields read as zero, so
+/// the database default `'{}'` is a valid starting value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Counters {
     pub fix_iterations: u32,
     pub back_transitions: u32,

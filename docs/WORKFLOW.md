@@ -193,6 +193,8 @@ These rules were made precise while implementing `decide()`. The code and the sn
 - **Block resolution never bypasses approvals.** `ResolveBlock` into `delivery` requires a valid acceptance approval, and into `planning` a valid scope approval (J-4, J-5).
 - **Holds do not stop transitions.** A result arriving while a job is paused is still recorded. The scheduler simply dispatches no new effects for jobs with holds.
 - **Waiting for dependencies is a hold.** A plan that is ready while dependencies are undelivered sets `WaitingForDependencies` and keeps the stage. `DependenciesDelivered` then enters `implementation`.
+- **Dependency wait invariant.** `ready_for_implementation` is true exactly while the `WaitingForDependencies` hold is set. Any stage change, a new plan, or a human sending the plan back ends the wait. An earlier version could strand the hold after "request changes" on an approved plan; a property invariant and a regression test now cover it.
+- **Events rebuild state.** Cancelling emits a `HoldRemoved` event per hold, so job stage, holds and block info can be rebuilt from the event log alone (tested in `turtle-store`).
 - **Testing.** The property test starts sequences in random non-terminal states and down-weights destructive commands. Walks that start at `backlog` almost never reach `delivery`, which would leave J-5 effectively untested. A mutation check (removing the acceptance guard) fails the test immediately.
 
 ## 5. Workflow Profiles

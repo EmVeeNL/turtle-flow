@@ -61,7 +61,7 @@ The MVP delivers **one reliable end-to-end supervised development workflow** for
 | Epic | Title | Scope | Key requirements |
 |---|---|---|---|
 | **E01** | Foundation | Cargo workspace (13 crates), CI (Linux/macOS), lint/format, `cargo-deny`, config loading, logging, error codes | NFR-001, NFR-011, NFR-015, SEC-020 |
-| **E02** | Persistence & event log | SQLx/SQLite store, migrations, repositories, single writer, event hash chain, outbox, blob store | NFR-004, NFR-009, NFR-017, SEC-009 |
+| **E02** | Persistence & event log | rusqlite/SQLite store, migrations, repositories, single writer, event hash chain, outbox, blob store | NFR-004, NFR-009, NFR-017, SEC-009 |
 | **E03** | Workflow engine | States, transition table, guards, profiles, holds, loop limits, blocked resolution | FR-020 – FR-045 |
 | **E04** | Daemon, scheduler & recovery | Daemon lifecycle, single-instance lock, scheduler, leases, limits, effect dispatcher, startup recovery | FR-037, FR-131, NFR-005, NFR-007, ADR-017 |
 | **E05** | Process execution | `turtle-exec`: process groups, env allowlist, timeouts, output caps, rlimits, scratch dirs | SEC-004, SEC-007 |
@@ -129,7 +129,7 @@ Milestones are dependency-ordered. Durations are ranges under the staffing assum
 | `gh` CLI | PR delivery | Low | Optional; local delivery default |
 | SQLite FTS5 (bundled via `libsqlite3-sys` `bundled` feature) | E07 | Low | Bundle SQLite |
 | OS keychain (`keyring`) | E10 (HMAC key), dashboard session key | Medium on headless Linux | File fallback with warning |
-| Rust crates: tokio, axum, sqlx, clap, serde, jsonschema, schemars, utoipa, rust-embed, tracing, minijinja, nix, ulid, sha2, ed25519-dalek, fail, proptest, insta | All | Low | `cargo-deny`, pinned versions |
+| Rust crates: tokio, axum, rusqlite, clap, serde, jsonschema, schemars, utoipa, rust-embed, tracing, minijinja, nix, ulid, sha2, ed25519-dalek, fail, proptest, insta | All | Low | `cargo-deny`, pinned versions |
 | Frontend: Vite, React, TypeScript, TanStack Router/Query/Table/Virtual, Tailwind, Radix, `@fontsource-variable/asap-sharp`, `@fontsource-variable/jetbrains-mono`, `unplugin-icons` + `@iconify-json/fluent`, a diff viewer component, a chart library | E13 | Low | Lockfile, embed at build |
 
 ## 8. Acceptance Criteria

@@ -1,6 +1,6 @@
 # ADR-002: Rust Technology Stack
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-24: rusqlite replaces SQLx; see *Amendment* below)
 - **Date:** 2026-10-24
 
 ## Context
@@ -18,7 +18,7 @@ Which language-level libraries and frameworks should the Rust implementation sta
 | Async runtime | **Tokio** (multi-threaded), `tokio::process` for children |
 | CLI | **Clap** v4 derive API; completions & man pages generated |
 | HTTP server | **Axum** + `tower-http` (compression, tracing, timeouts) |
-| Database | **SQLx** with SQLite (bundled `libsqlite3-sys`), compile-time checked queries, offline metadata |
+| Database | **rusqlite** with bundled SQLite (see Amendment). ~~SQLx~~ |
 | Serialization | `serde`, `serde_json`, `toml` |
 | Schemas | `schemars` (generate), `jsonschema` (validate) |
 | OpenAPI | `utoipa` |
@@ -65,6 +65,18 @@ Mainstream, well-maintained crates with large user bases reduce long-term risk. 
 
 - Spike S-7 benchmarks the store; rusqlite fallback behind the repository traits.
 - Use porcelain v2 / `-z` machine-readable formats; typed wrapper with tests (TST-07).
+
+## Amendment (2026-10-24): rusqlite instead of SQLx
+
+**Decision:** the store uses **rusqlite** (bundled SQLite, FTS5 available) instead of SQLx. This is the fallback this ADR already named.
+
+**Why, after building the store:**
+- The design has exactly one writer doing short, multi-statement transactions with an optimistic version check. That fits a synchronous API; an async driver adds a pool, futures and cancellation cases around a single connection and gains nothing.
+- Per-connection PRAGMAs (`synchronous=FULL`, `foreign_keys`, `busy_timeout`) and `VACUUM INTO` backups are direct calls in rusqlite.
+- SQLx's compile-time query checking needs committed offline metadata and a prepared database in CI. We trade it for integration tests against a real in-memory database, which already caught two schema/code mismatches in the first PR (`loop_counters` default, `jobs.version` default).
+- The async runtime still drives everything else. Store calls will run on a dedicated blocking task owned by the scheduler.
+
+**Consequences:** SQL is not checked at compile time; every repository method needs a test. The Phase 2 PostgreSQL store (ADR-015) will use whatever driver suits it behind the same repository boundary.
 
 ## Related ADRs
 

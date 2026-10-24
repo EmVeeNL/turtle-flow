@@ -132,7 +132,7 @@ CREATE TABLE jobs (
   budget_id        TEXT REFERENCES budgets(id),
   release_required INTEGER NOT NULL DEFAULT 0 CHECK (release_required IN (0,1)),
   reopened_from    TEXT REFERENCES jobs(id),
-  version          INTEGER NOT NULL DEFAULT 1,
+  version          INTEGER NOT NULL DEFAULT 0,   -- matches JobAggregate::new; incremented by every accepted command
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
   ended_at         TEXT,
@@ -553,11 +553,11 @@ Large blobs are compressed with zstd (level 3) when `size > 64 KiB` and the medi
 
 ## 6. Migration Strategy
 
-- Tool: `sqlx migrate` with SQL files embedded in the binary (`sqlx::migrate!()`); applied automatically at daemon start.
+- Tool: a small built-in runner (`turtle-store::migrate`) with SQL files embedded via `include_str!`; applied automatically when the store is opened. Each migration runs in its own transaction and sets `PRAGMA user_version`.
 - **Forward-only.** No down migrations; recovery from a bad migration = restore the automatic pre-migration backup (`backups/turtle-pre-<version>.db`, created via `VACUUM INTO` before applying).
 - **Version guard:** `PRAGMA user_version` stores the schema generation; a daemon refuses to start if the DB generation is newer than it supports (NFR-009), with a clear message.
 - **Expand–contract** for renames/splits across two releases (add new column → dual-write → backfill → switch reads → drop in a later release), even locally, so downgrades within one minor version keep working on read paths.
 - **JSON columns** carry `schema` fields where structure may evolve (`profile_snapshot`, `binding_json`); readers support N and N-1.
-- **Compile-time checked queries** (`sqlx::query!`) with offline metadata (`.sqlx/`) committed, so CI builds without a database.
+- **Query safety** comes from integration tests that run every repository method against a real in-memory SQLite database (no compile-time query checking with rusqlite; see the ADR-002 amendment).
 - **Postgres portability (Phase 2):** avoid SQLite-only features outside `turtle-store`: FTS5 and partial indexes have Postgres equivalents (`tsvector`/GIN, partial indexes); `AUTOINCREMENT` → `BIGSERIAL`; JSON `TEXT` → `JSONB`.
 - **Migration tests:** every migration is tested against a fixture DB from each previous released version (seeded with representative data), plus a projection rebuild check (NFR-017).

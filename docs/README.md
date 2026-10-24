@@ -109,7 +109,7 @@ These terms are used with exactly these meanings across all documents. Full inva
 | # | Decision | ADR |
 |---|---|---|
 | 1 | Single-binary, local-first modular monolith (Cargo workspace), no microservices in MVP | [ADR-001](adr/ADR-001-local-first-modular-monolith.md) |
-| 2 | Rust + Tokio + Clap + Axum + SQLx/SQLite + Git CLI (git2/gix only for read paths) | [ADR-002](adr/ADR-002-rust-technology-stack.md) |
+| 2 | Rust + Tokio + Clap + Axum + rusqlite/SQLite + Git CLI (git2/gix only for read paths) | [ADR-002](adr/ADR-002-rust-technology-stack.md) |
 | 3 | Embedded Axum server serving a Vite + React + TypeScript + TanStack Router SPA via `rust-embed`; SSE for live updates; Asap Sharp + Fluent icons, self-hosted (not Astro / TanStack Start; Astro reserved for a future docs site) | [ADR-003](adr/ADR-003-embedded-webserver-dashboard.md) |
 | 4 | SQLite (WAL) with authoritative state tables plus an append-only, hash-chained event log written in the same transaction (not full event sourcing) | [ADR-004](adr/ADR-004-sqlite-persistence-event-logging.md) |
 | 5 | Hand-written explicit state machine in Rust; profiles can only *select* from the built-in stage graph | [ADR-005](adr/ADR-005-workflow-state-machine.md) |

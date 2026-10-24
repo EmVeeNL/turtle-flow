@@ -1,3 +1,16 @@
-//! SQLite persistence: repositories, migrations, hash-chained event log, effect outbox. The only crate that issues SQL.
-//!
-//! Design: see `docs/ARCHITECTURE.md` §4.1. Not implemented yet.
+//! SQLite persistence: migrations, hash-chained event log, effect outbox, job repository.
+//! The only crate that issues SQL (architecture invariant I-1). Design: `docs/DATA-MODEL.md`,
+//! `docs/adr/ADR-004-sqlite-persistence-event-logging.md`.
+
+pub mod chain;
+pub mod clock;
+pub mod error;
+pub mod migrate;
+pub mod store;
+
+pub use clock::{Clock, StepClock, SystemClock};
+pub use error::{Result, StoreError};
+pub use store::{
+    Applied, ChainVerdict, EffectRow, EventRow, JobRecord, NewEvent, NewJob, NewProject,
+    RebuiltJob, Store, Tx,
+};
