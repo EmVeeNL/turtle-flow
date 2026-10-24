@@ -306,6 +306,43 @@ pub enum Effect {
     NotifyUser,
 }
 
+impl Effect {
+    /// Kinds that must run even when the job is paused, blocked or finished: they stop work,
+    /// release resources or tell the user. Everything else is dropped for jobs that are
+    /// blocked or finished and waits while a job has holds.
+    pub const CONTROL_KINDS: &'static [&'static str] = &[
+        "terminate_runs",
+        "release_reservations",
+        "supersede_pending_approvals",
+        "notify_user",
+        "cleanup_worktree",
+    ];
+
+    /// Stable name, identical to the `effect` tag in the serialized form.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::StartRun { .. } => "start_run",
+            Self::RequestApproval { .. } => "request_approval",
+            Self::CreateWorktree => "create_worktree",
+            Self::DispatchReadyTasks => "dispatch_ready_tasks",
+            Self::RunGates => "run_gates",
+            Self::RunVerification => "run_verification",
+            Self::Deliver => "deliver",
+            Self::CleanupWorktree => "cleanup_worktree",
+            Self::TerminateRuns => "terminate_runs",
+            Self::ReleaseReservations => "release_reservations",
+            Self::SupersedePendingApprovals => "supersede_pending_approvals",
+            Self::NotifyUser => "notify_user",
+        }
+    }
+
+    #[must_use]
+    pub fn is_control(&self) -> bool {
+        Self::CONTROL_KINDS.contains(&self.kind())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkflowEvent {

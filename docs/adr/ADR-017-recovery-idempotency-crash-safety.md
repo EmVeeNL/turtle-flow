@@ -48,6 +48,15 @@ Outbox + probes is a proven pattern for exactly-once *effects* over at-least-onc
 - Probes based on unique, Turtle Flow-generated markers (trailers with run IDs, specific ref names, PR head branches).
 - Lock removal only after process-table check and age threshold; only in Turtle Flow worktrees.
 
+## Implementation notes (2026-10-24)
+
+- **Result and completion are atomic.** `Engine::finish_effect` marks the effect completed and applies the command it produced in **one transaction**. A crash can neither complete an effect without applying its result nor apply the result without completing the effect. Splitting these into two transactions is exactly the bug the crash harness catches.
+- **Stale results are dropped, not failed.** If the job moved on (cancelled, paused, superseded) so that `decide()` rejects the produced command, the effect is completed with `command_rejected: <guard>` recorded.
+- **Version conflicts retry the whole decision** on fresh state (up to 8 times), so a decision is never applied to a state it was not made for.
+- **Startup recovery** (`Engine::recover`): instances that did not stop cleanly are marked stopped, their claimed effects return to `pending`, effects that already used every attempt become `failed` and their jobs are blocked. Each requeue and failure is an event, and `daemon.recovered` summarizes the run.
+- **Crash injection.** `CrashPlan` marks every step boundary (after claim, after execution, around every decision and commit). The test harness crashes at boundary N, boots a fresh instance on the same on-disk database, and compares the finished job's event history and effect set with an uninterrupted run, for every N and for pairs of crashes. It runs in-process (a "crash" is the scheduler dropping all state and a new instance recovering from the file); a real `kill -9` harness is still planned.
+- **Mutation-checked.** Replacing the atomic completion with two transactions fails the harness, and so does disabling recovery.
+- **Not yet covered** (no code exists for them yet): orphaned agent processes, reservation and ledger reconciliation, recovery refs for interrupted agent work, and the effect-specific completion probes (worktree, commit, delivery). The generic protocol is proven; each executor must bring its own probe test when it is added.
 ## Related ADRs
 
 [ADR-004](ADR-004-sqlite-persistence-event-logging.md), [ADR-005](ADR-005-workflow-state-machine.md), [ADR-009](ADR-009-git-worktree-isolation.md), [ADR-011](ADR-011-job-scheduling-concurrency.md)

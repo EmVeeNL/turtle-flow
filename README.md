@@ -43,9 +43,10 @@ turtle approvals
 - the workflow state machine (`decide()`, profiles, approval binding)
 - the SQLite store: migrations, hash-chained event log, effect queue, job persistence
 - Git operations: worktrees per job, factory commits with trailers, post-run policy check, conflict probes, squash delivery, recovery snapshots
+- the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
 - `turtle doctor`
 
-There is no daemon, scheduler or agent execution yet.
+There is no daemon process, CLI job commands or agent execution yet.
 
 ### Development
 

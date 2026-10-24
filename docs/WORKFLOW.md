@@ -448,6 +448,10 @@ These 25 boundaries are each covered by a crash-injection test ([TESTING-STRATEG
 | 24 | PR created; DB not updated | `gh pr list --head <branch>` returns PR | Record PR |
 | 25 | Worktree cleanup partial | dir missing or present with job terminal | `git worktree remove --force` / `git worktree prune`; mark cleaned |
 
+### 10.2 Crash-injection coverage (status)
+
+The generic effect protocol (claim, execute, complete-with-command, requeue after restart) is covered at every step boundary by `crates/turtle-scheduler/tests/crash.rs`. That covers the *shape* of boundaries 1, 3, 6, 10, 19 and the "effect pending, then dispatched" parts of 11, 14–25 in the table above. The following still need their own tests when the corresponding executors exist: 2, 4, 5, 7, 8 (agent runs, reservations, ledger), and the Git-specific probes of 11–16 and 20–25 (the probes themselves exist in `turtle-git`, but are not yet called by an executor).
+
 ## 11. Job Dependencies and Parallel Execution
 
 - **Dependencies:** `blocked_by` edges between jobs of one project; cycles rejected at creation. A dependent job may run discovery/spec/planning but waits before `implementation` until dependencies are `done` or `awaiting_release`; its base commit is then taken from the updated target branch.

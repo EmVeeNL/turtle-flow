@@ -519,3 +519,41 @@ fn changes_requested_while_waiting_for_dependencies_does_not_strand_the_hold() {
     );
     assert_eq!(started.state, JobState::Implementation);
 }
+
+#[test]
+fn effect_kind_matches_serialized_tag_and_control_kinds_are_known() {
+    let samples = [
+        Effect::StartRun {
+            role: Role::Planner,
+            purpose: RunPurpose::Initial,
+        },
+        Effect::RequestApproval {
+            gate: GateKind::Scope,
+            auto: false,
+        },
+        Effect::CreateWorktree,
+        Effect::DispatchReadyTasks,
+        Effect::RunGates,
+        Effect::RunVerification,
+        Effect::Deliver,
+        Effect::CleanupWorktree,
+        Effect::TerminateRuns,
+        Effect::ReleaseReservations,
+        Effect::SupersedePendingApprovals,
+        Effect::NotifyUser,
+    ];
+    for e in &samples {
+        let tag = serde_json::to_value(e).expect("serialize")["effect"]
+            .as_str()
+            .expect("tag")
+            .to_owned();
+        assert_eq!(e.kind(), tag);
+    }
+    for kind in Effect::CONTROL_KINDS {
+        assert!(
+            samples.iter().any(|e| e.kind() == *kind),
+            "unknown control kind {kind}"
+        );
+    }
+    assert!(Effect::TerminateRuns.is_control() && !Effect::Deliver.is_control());
+}

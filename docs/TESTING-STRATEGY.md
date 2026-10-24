@@ -81,6 +81,11 @@
 - **Power-loss simulation (Linux nightly):** run on a filesystem with `fsync` interception (e.g. LazyFS or `dm-flakey`) to validate WAL + `synchronous=FULL` assumptions for ledger/approval writes.
 - **Git interruption:** kill during `git worktree add`, `git commit`, rebase; assert recovery probes act correctly (stale lock removal only when safe).
 
+### 6.1 Implementation status
+
+- The in-process harness is implemented (`turtle-scheduler/tests/crash.rs`) with an explicit `CrashPlan` instead of the `fail` crate: every boundary is a named `point()` call, the harness crashes at the Nth, restarts on the same database file and compares the result with a baseline run, including double crashes.
+- Planned and not yet written: the `kill -9` subprocess harness (random times), and power-loss simulation.
+
 ## 7. Security Tests (TST-13)
 
 | Control | Test |

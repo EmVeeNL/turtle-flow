@@ -240,8 +240,8 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
 // ---------------------------------------------------------------- transaction
 
 pub struct Tx<'a> {
-    tx: Transaction<'a>,
-    clock: &'a dyn Clock,
+    pub(crate) tx: Transaction<'a>,
+    pub(crate) clock: &'a dyn Clock,
 }
 
 impl std::fmt::Debug for Tx<'_> {
@@ -251,7 +251,7 @@ impl std::fmt::Debug for Tx<'_> {
 }
 
 impl Tx<'_> {
-    fn now(&self) -> Result<String> {
+    pub(crate) fn now(&self) -> Result<String> {
         Ok(format_ts(self.clock.now())?)
     }
 
@@ -520,7 +520,7 @@ fn installation_id(conn: &Connection) -> Result<String> {
     .map_err(Into::into)
 }
 
-fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
+pub(crate) fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
     struct Row {
         project_id: String,
         number: u32,
@@ -615,7 +615,7 @@ fn list_events(conn: &Connection, job: Option<JobId>) -> Result<Vec<EventRow>> {
     rows.collect::<Result<_, _>>().map_err(Into::into)
 }
 
-fn list_effects(conn: &Connection, job: JobId) -> Result<Vec<EffectRow>> {
+pub(crate) fn list_effects(conn: &Connection, job: JobId) -> Result<Vec<EffectRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, job_id, kind, idempotency_key, payload, status, attempts, max_attempts,
                 created_event_seq
@@ -756,7 +756,7 @@ fn event_tag(payload: &Value) -> Result<&str> {
         .ok_or_else(|| StoreError::Corrupt("workflow event without tag".into()))
 }
 
-fn to_s<T: Serialize>(v: &T) -> Result<String> {
+pub(crate) fn to_s<T: Serialize>(v: &T) -> Result<String> {
     match serde_json::to_value(v)? {
         Value::String(s) => Ok(s),
         other => Err(StoreError::Corrupt(format!(
@@ -765,7 +765,7 @@ fn to_s<T: Serialize>(v: &T) -> Result<String> {
     }
 }
 
-fn from_s<T: DeserializeOwned>(s: &str) -> Result<T> {
+pub(crate) fn from_s<T: DeserializeOwned>(s: &str) -> Result<T> {
     Ok(serde_json::from_value(Value::String(s.to_owned()))?)
 }
 

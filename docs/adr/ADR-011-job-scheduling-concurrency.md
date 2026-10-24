@@ -49,6 +49,15 @@ DB-backed leases unify scheduling and recovery; limits encode real bottlenecks; 
 - Aging boost (priority increases with wait time).
 - On resume from sleep, supervisors renew leases before recovery evaluates them; orphan checks verify process liveness (PID + start time) before acting.
 
+## Implementation notes (2026-10-24)
+
+- **Claiming is one transaction** (`Tx::claim_effects`). It cancels pending non-control effects of blocked or finished jobs, skips jobs with holds, enforces per-job ordering (an effect waits for every earlier effect of the same job and for any claimed one, which gives J-2), skips effects in retry backoff, and then takes up to `max_concurrent` effects.
+- **Control effects bypass holds and ordering:** `terminate_runs`, `release_reservations`, `supersede_pending_approvals`, `notify_user`, `cleanup_worktree` (`Effect::CONTROL_KINDS`). A hard pause must be able to stop a run that is still executing.
+- **Leases are fenced by instance id.** Completion and failure require that the caller still holds the lease; otherwise the store returns `LeaseLost` and nothing is written. A hung old instance that finishes late cannot apply its result.
+- **Heartbeats** renew the lease while an effect runs. Failure to renew stops the execution (the task is aborted) and the effect is treated as lost.
+- **Executors run in their own task.** A panic in adapter code becomes a retryable failure instead of taking the dispatcher down (NFR-008).
+- **Retry:** 10 s, 20 s, 40 s, 80 s, then 2 min, up to 5 attempts. A permanent failure (fatal error or attempts exhausted) blocks the job with `Unrecoverable{effect_failed:<kind>}`, in the same transaction.
+- **Not yet implemented:** per-provider and per-project concurrency limits, priority ordering across jobs, and conflict prediction. The global limit is in place.
 ## Related ADRs
 
 [ADR-005](ADR-005-workflow-state-machine.md), [ADR-009](ADR-009-git-worktree-isolation.md), [ADR-017](ADR-017-recovery-idempotency-crash-safety.md), [ADR-015](ADR-015-future-server-deployment.md)
