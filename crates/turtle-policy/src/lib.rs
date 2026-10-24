@@ -1,3 +1,8 @@
-//! Approval binding and invalidation, protected branch/path rules, security-policy resolution, entitlements. Pure logic.
-//!
-//! Design: see `docs/ARCHITECTURE.md` §4.1. Not implemented yet.
+//! Policy logic with no IO: approval binding hashes and invalidation rules.
+//! Protected paths, security-policy precedence and entitlements follow in later PRs.
+
+pub mod binding;
+pub mod invalidation;
+
+pub use binding::{ApprovalBinding, ArtifactRef, BINDING_SCHEMA, BudgetEnvelope, GitBinding};
+pub use invalidation::MaterialChange;
