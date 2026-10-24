@@ -4,11 +4,20 @@
 //! Design: `docs/ARCHITECTURE.md` §3, `docs/adr/ADR-011-job-scheduling-concurrency.md`,
 //! `docs/adr/ADR-017-recovery-idempotency-crash-safety.md`.
 
+pub mod approvals;
+pub mod binding;
+pub mod context;
 pub mod crash;
 pub mod dispatcher;
 pub mod engine;
 pub mod shared;
 
+pub use approvals::{ApprovalError, ApprovalService};
+pub use binding::{
+    ArtifactSnapshot, BindingError, GitFacts, GitFactsProvider, NoGit, POLICY_VERSION,
+    build_binding, profile_hash,
+};
+pub use context::{ContextConfig, StoreContext};
 pub use crash::{CrashPlan, Crashed};
 pub use dispatcher::{
     DispatchError, Dispatcher, DispatcherConfig, ExecError, ExecOutcome, Executor, TickReport,

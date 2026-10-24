@@ -168,6 +168,8 @@ Approval integrity is the most important property of the product and the hardest
 
 Residual risk (documented, top-10 risk in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md)): on Linux without a keyring ACL and without container isolation, a same-user process outside any sandbox could in theory read the HMAC key; L8 is the complete mitigation.
 
+> **Implementation status of the layers above.** L1 (agents cannot decide: only users, enforced in the store and the engine), L2 (hash echo, plus recomputation at guard time) and L7-style re-verification at guard time are implemented and mutation-tested. **L6 (per-row HMAC with a keychain-held key) is not implemented yet**, so a same-user process that edits the database file can still forge an approval row; the guard recomputation limits what a forged row can approve, but does not prevent it. L3–L5 and L8 depend on the sandbox spike (S-4) and the daemon.
+
 ### 6.6 Git hardening (SEC-014)
 
 All Turtle Flow Git invocations use: `git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c protocol.file.allow=user -c submodule.recurse=false -c credential.helper= (only for non-delivery operations) …`, with `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1` for read-only probes, and explicit `--no-verify` where hooks would run. Delivery operations that need user credentials (push) use the user's credential helper but still disable hooks. See [GIT-STRATEGY.md §9](GIT-STRATEGY.md#9-security-considerations).

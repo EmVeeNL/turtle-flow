@@ -956,7 +956,13 @@ dependencies = [
 name = "turtle-artifacts"
 version = "0.0.1"
 dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
  "turtle-domain",
+ "ulid",
 ]
 
 [[package]]
@@ -1029,11 +1035,14 @@ dependencies = [
 name = "turtle-scheduler"
 version = "0.0.1"
 dependencies = [
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
  "turtle-agents",
+ "turtle-artifacts",
  "turtle-context",
  "turtle-domain",
  "turtle-exec",
