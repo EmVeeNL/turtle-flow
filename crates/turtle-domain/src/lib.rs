@@ -3,6 +3,7 @@
 //!
 //! This crate performs no IO. See `docs/DOMAIN-MODEL.md` for the full model and invariants.
 
+pub mod approval;
 pub mod hash;
 pub mod ids;
 pub mod job;
@@ -10,6 +11,7 @@ pub mod quota;
 pub mod roles;
 pub mod usage;
 
+pub use approval::{ApprovalStatus, ApprovalValidity, GateKind};
 pub use hash::{HashParseError, Sha256};
 pub use ids::{
     ApprovalId, ArtifactId, BudgetId, EffectId, EventId, JobId, ProjectId, ReservationId, RunId,

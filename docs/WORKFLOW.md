@@ -177,6 +177,24 @@ pub fn decide(job: &JobAggregate, cmd: &JobCommand, cx: &DecisionContext)
 
 A table-driven test enumerates every `(JobState, JobCommand)` pair and asserts the expected outcome (accept → target, or specific guard rejection). This makes the state machine reviewable and prevents accidental edges.
 
+### 4.2 Implementation notes (`turtle-workflow`)
+
+These rules were made precise while implementing `decide()`. The code and the snapshot `crates/turtle-workflow/tests/snapshots/` are authoritative.
+
+- **Who may issue commands.**
+  - Agents can never issue commands (`agents_cannot_issue_commands`).
+  - Results of runs and gates are machine-only (`machine_result_only`). A user cannot report "tests passed".
+  - Approval decisions, cancel, pause/resume, block resolution and mark-failed are user-only.
+  - `ApprovalGranted` from the system is accepted only for the scope gate under the `fast` auto-scope rule.
+- **Loop budgets.**
+  - Only *autonomous* backward transitions consume budgets: fix loops, replans, respecs and back transitions.
+  - Human "request changes" and block resolution never consume them.
+  - A replan or respec resets the fix-iteration counter, because the new plan gets a fresh fix budget.
+- **Block resolution never bypasses approvals.** `ResolveBlock` into `delivery` requires a valid acceptance approval, and into `planning` a valid scope approval (J-4, J-5).
+- **Holds do not stop transitions.** A result arriving while a job is paused is still recorded. The scheduler simply dispatches no new effects for jobs with holds.
+- **Waiting for dependencies is a hold.** A plan that is ready while dependencies are undelivered sets `WaitingForDependencies` and keeps the stage. `DependenciesDelivered` then enters `implementation`.
+- **Testing.** The property test starts sequences in random non-terminal states and down-weights destructive commands. Walks that start at `backlog` almost never reach `delivery`, which would leave J-5 effectively untested. A mutation check (removing the acceptance guard) fails the test immediately.
+
 ## 5. Workflow Profiles
 
 Profiles are TOML/YAML documents with a `base` of `fast`, `standard`, or `strict`. The engine snapshots the resolved profile into the job at creation (hash stored). Full example: [examples/example-workflow.yaml](examples/example-workflow.yaml).

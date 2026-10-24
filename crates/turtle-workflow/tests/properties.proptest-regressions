@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ef461d59ab54f45bd196b80015a6766adb1e7aed2672435f7cc4605c0a96b122 # shrinks to profile = Profile { name: "fast", base: Fast, discovery: Off, plan_approval: Off, scope_approval: AutoIfSmall, review_independence: Off, max_fix_iterations: 2, max_back_transitions: 6, max_replans: 3, max_respecs: 3, release_required: false }, complexity = None, start = AcceptanceApproval, steps = [Step { command: 42, actor: 0, scope_valid: false, plan_valid: false, acceptance_valid: false, preflight: 0, deps: false, flags: true, auto_scope: false, thresholds: false }]
