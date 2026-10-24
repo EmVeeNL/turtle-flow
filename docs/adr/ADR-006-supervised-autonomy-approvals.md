@@ -48,6 +48,14 @@ Binding approvals to hashes is cheap and makes stale approvals impossible by con
 - Show deltas, flags and invalidation reasons prominently; batch low-risk scope approvals; `fast` auto-scope rules.
 - Layered bypass defenses L1–L8; HMAC + audit chain; container isolation option.
 
+## Implementation notes (2026-10-24)
+
+- **One builder for request and check.** `build_binding` creates the binding document when an approval is requested and again whenever a guard needs it. An approval is valid exactly when rebuilding the binding from the world as it is now gives the approved hash. Scope binds the specification revision; plan adds the plan; acceptance adds the verification report, the optional review report, and the Git state (base, head, diff hash, target branch).
+- **Flags are part of the hash; acknowledgement is enforced at decision time.** The flags a human must see (protected paths, new dependencies) are computed from the diff and stored in the binding, so a changed set of flags changes the hash. `ApprovalService::decide` refuses an approval unless the caller acknowledges every flag in the binding. The guard therefore treats a valid acceptance approval as flags-acknowledged.
+- **Three layers against stale approvals.** (1) The decision must echo the shown hash; (2) before recording, the service re-checks the pending approval against current state and invalidates it if the world moved (`Stale`); (3) the engine's guard recomputes validity again when applying the decision. Each layer has a mutation-checked test.
+- **Eager invalidation.** `apply_decision` marks pending and approved approvals invalid in the same transaction when the workflow reports a material change (spec revised, base refreshed, …).
+- **Fail closed.** If the decision context cannot read its facts, it returns an empty context: nothing is approved and nothing proceeds.
+- **Not yet implemented:** the per-row HMAC from `docs/SECURITY.md` §6.5 layer L6 (it needs the OS keychain integration), approval expiry, and automatic scope approval for `fast` (`ContextConfig::auto_scope_enabled` exists but defaults to **off** until protected-path checks exist). Preflight is a placeholder that always allows, until the token engine lands (M3).
 ## Related ADRs
 
 [ADR-005](ADR-005-workflow-state-machine.md), [ADR-008](ADR-008-token-intelligence-budgets.md), [ADR-009](ADR-009-git-worktree-isolation.md), [ADR-012](ADR-012-agent-execution-security.md), [ADR-016](ADR-016-observability-auditability.md)

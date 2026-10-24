@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 use turtle_domain::{
     Actor, EffectId, EventId, JobId, JobKey, JobState, JobType, Priority, ProjectId,
 };
-use turtle_workflow::{BlockInfo, Counters, Decision, Hold, JobAggregate, JobCommand, Profile};
+use turtle_workflow::{
+    BlockInfo, Counters, Decision, Hold, JobAggregate, JobCommand, Profile, WorkflowEvent,
+};
 use ulid::Ulid;
 
 use crate::chain::{HashedEvent, event_hash, genesis_hash};
@@ -203,6 +205,17 @@ impl Store {
 
     pub fn list_events(&self, job: Option<JobId>) -> Result<Vec<EventRow>> {
         list_events(&self.conn, job)
+    }
+
+    /// True when every job this one depends on is delivered (`done` or `awaiting_release`).
+    pub fn dependencies_delivered(&self, job: JobId) -> Result<bool> {
+        let open: i64 = self.conn.query_row(
+            "SELECT count(*) FROM job_dependencies d JOIN jobs j ON j.id = d.depends_on_id
+             WHERE d.job_id = ?1 AND j.state NOT IN ('done', 'awaiting_release')",
+            [job.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(open == 0)
     }
 
     pub fn list_effects(&self, job: JobId) -> Result<Vec<EffectRow>> {
@@ -417,6 +430,17 @@ impl Tx<'_> {
         for event in &decision.events {
             let payload = serde_json::to_value(event)?;
             push(self, format!("job.{}", event_tag(&payload)?), payload)?;
+        }
+
+        // Eager invalidation: approvals whose assumptions a material change broke are marked
+        // in the same transaction. (Guards also recompute binding hashes, so this is defense in
+        // depth plus a clear audit trail.)
+        for event in &decision.events {
+            if let WorkflowEvent::ApprovalInvalidated { gate, change } = event {
+                let mut gates = vec![*gate];
+                gates.extend(change.invalidates().iter().copied().filter(|g| g != gate));
+                self.invalidate_approvals(job.id, &gates, &to_s(change)?)?;
+            }
         }
 
         let created_event_seq = event_seqs[0];

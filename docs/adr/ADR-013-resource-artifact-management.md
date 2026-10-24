@@ -49,6 +49,12 @@ Content addressing gives dedup, integrity checks and natural immutability — ex
 - Out-of-process extraction with memory/time limits; no execution of embedded content.
 - Size limits per resource (default 50 MB), quotas per project, retention for transcripts.
 
+## Implementation notes (2026-10-24)
+
+- **Blob store (`turtle-artifacts`).** Atomic writes (temporary file, then rename), directories `0700`, files `0600`, and every read re-hashes the content: a corrupted or tampered blob is reported as `Corrupted`, never used. Structured documents are stored as canonical JSON, so equal documents have equal hashes.
+- **Revisions (`turtle-store`).** Numbered per artifact with a parent link and an author (agent run, user or system). **Adding content identical to the latest revision returns the existing revision**, so a replayed or retried step cannot create a phantom revision that would invalidate approvals bound to the previous one. Blob reference counts are kept for later garbage collection.
+- **Documents.** `Specification` and `Plan` are typed with `deny_unknown_fields`, so an agent cannot smuggle extra fields. Deterministic validation covers non-empty criteria with unique ids, a plan with unique tasks, no unknown or self dependencies, an acyclic graph, and every test- or command-verified criterion covered by a task (FR-024, FR-026).
+- **Not yet implemented:** compression, retention and garbage collection, resources (inputs) and text extraction, and JSON Schema generation for the agent output contract.
 ## Related ADRs
 
 [ADR-004](ADR-004-sqlite-persistence-event-logging.md), [ADR-006](ADR-006-supervised-autonomy-approvals.md), [ADR-010](ADR-010-project-memory-context-retrieval.md), [ADR-012](ADR-012-agent-execution-security.md)
