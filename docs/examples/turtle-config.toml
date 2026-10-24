@@ -1,0 +1,81 @@
+# ~/.turtle/config.toml — global configuration (example)
+# Precedence: built-in defaults < this file < repo .turtle/project.toml (security: tighten-only)
+#             < per-project DB overrides < CLI flags.
+# See ARCHITECTURE.md §8 and SECURITY.md.
+
+schema = "turtle.config.v1"
+
+[daemon]
+# Auto-start the daemon when a CLI command needs it.
+auto_start = true
+# Loopback only. Non-loopback binds are rejected in MVP builds (SEC-001).
+http_bind = "127.0.0.1"
+http_port = 0                 # 0 = random free port, written to ~/.turtle/run/
+log_level = "info"
+log_rotation = { files = 10, max_mb = 20 }
+
+[paths]
+# home = "~/.turtle"         # TURTLE_HOME override
+worktree_root = "~/.turtle/worktrees"
+
+[scheduler]
+max_concurrent_runs = 3       # global agent runs
+max_concurrent_gates = 4      # default: CPU cores / 2
+lease_ttl_seconds = 30
+heartbeat_seconds = 10
+aging_boost_minutes = 60      # priority boost after waiting this long
+
+[budgets.global]
+period = "monthly"
+limit_tokens = 60_000_000
+hard = false                  # global budget: soft by default
+warn_thresholds = [0.5, 0.8, 1.0]
+
+[providers.claude-code]
+enabled = true
+binary = "claude"             # resolved via PATH
+billing_mode = "subscription" # api_metered | subscription | enterprise_contract
+max_concurrent_runs = 2
+# Optional API-key mode: key stored in OS keychain, injected only into this provider's runs.
+# auth = { mode = "api_key", keychain_item = "turtle/anthropic" }
+
+[providers.codex]
+enabled = true
+binary = "codex"
+billing_mode = "subscription"
+max_concurrent_runs = 2
+
+# Capability tiers: Turtle Flow never hardcodes "provider X is better at Y".
+# Map tiers to concrete models you have access to. Model IDs below are placeholders.
+[routing.tiers]
+economy  = ["codex/<small-model-id>", "claude-code/<fast-model-id>"]
+standard = ["claude-code/<standard-model-id>", "codex/<standard-model-id>"]
+premium  = ["claude-code/<premium-model-id>", "codex/<premium-model-id>"]
+
+[routing.role_tiers]          # role -> tier per complexity class XS,S,M,L,XL
+spec_writer = ["economy", "economy", "standard", "premium", "premium"]
+planner     = ["economy", "standard", "standard", "premium", "premium"]
+implementer = ["economy", "standard", "standard", "premium", "premium"]
+fixer       = ["economy", "economy", "standard", "standard", "premium"]
+reviewer    = ["standard", "standard", "standard", "premium", "premium"]
+verifier    = ["economy", "economy", "standard", "standard", "standard"]
+
+[routing]
+use_history = false           # enabled from 0.4 when buckets have >= 20 runs
+exploration_epsilon = 0.0
+
+[security]
+never_include = [".env*", "*.pem", "*.key", "id_*", "*.p12", "*.keystore",
+                 ".npmrc", ".pypirc", "**/secrets/**", "*.tfstate"]
+secret_scan = true
+scripted_approvals = false    # allow non-TTY `turtle approve` (recorded as cli_script)
+isolation_tier = 1            # 0/1 in MVP; 2 = container (post-MVP)
+
+[retention]
+raw_transcripts_days = 90
+gate_output_days = 90
+branch_retention_days = 14
+backups_daily = 7
+
+[notifications]
+desktop = true

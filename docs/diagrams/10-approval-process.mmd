@@ -1,0 +1,21 @@
+%% Source: WORKFLOW.md — keep in sync (extracted from the Markdown document)
+flowchart TD
+    A[Job enters approval stage] --> B[Engine builds binding document]
+    B --> C[subject_hash = SHA-256 of canonical JSON]
+    C --> D[Approval created: pending]
+    D --> E{Auto-approval rule applies?}
+    E -- yes --> F[Approved by system + rule id]
+    E -- no --> G[Notify: dashboard, CLI, desktop]
+    G --> H[User opens approval view<br/>sees artifacts, diff, estimate,<br/>hash prefix, invalidation rules]
+    H --> I{Decision}
+    I -- approve --> J[Request echoes subject_hash]
+    I -- request changes --> K[Feedback stored, job moves back]
+    I -- reject --> L[Job cancelled]
+    J --> M{Hash matches current binding?}
+    M -- no --> N[Reject request: stale view,<br/>reload required]
+    M -- yes --> O[Approval approved, event appended]
+    F --> P[Transition guard recomputes binding]
+    O --> P
+    P --> Q{Still valid?}
+    Q -- yes --> R[Transition proceeds]
+    Q -- no --> S[Approval invalidated,<br/>new approval requested]

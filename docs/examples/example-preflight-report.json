@@ -1,0 +1,81 @@
+{
+  "schema": "turtle.preflight-report.v1",
+  "job": { "id": "01JB7Y0Q4N3T9Z8K2M6W5R1C7D", "key": "API-42", "profile": "standard-api" },
+  "stage": "pre_scope",
+  "computed_at": "2026-10-24T09:02:11.540Z",
+  "complexity": {
+    "class": "M",
+    "score": 41,
+    "drivers": [
+      { "feature": "acceptance_criteria", "value": 6, "contribution": 9 },
+      { "feature": "estimated_files_touched", "value": 14, "contribution": 12 },
+      { "feature": "risk_tags", "value": ["public_api"], "contribution": 8 },
+      { "feature": "job_type", "value": "feature", "contribution": 8 },
+      { "feature": "affected_loc", "value": 3800, "contribution": 4 }
+    ]
+  },
+  "expected_runs": [
+    { "role": "spec_writer", "count": 1 },
+    { "role": "planner", "count": 1 },
+    { "role": "implementer", "count": 5, "note": "estimated task count for class M" },
+    { "role": "fixer", "expected_count": 1.6 },
+    { "role": "reviewer", "count": 1 },
+    { "role": "verifier", "count": 1 }
+  ],
+  "routes": {
+    "spec_writer": { "choice": "claude-code/<standard-model-id>", "tier": "standard" },
+    "planner": { "choice": "claude-code/<standard-model-id>", "tier": "standard" },
+    "implementer": { "choice": "codex/<standard-model-id>", "tier": "standard", "override": true },
+    "fixer": { "choice": "codex/<standard-model-id>", "tier": "standard" },
+    "reviewer": { "choice": "claude-code/<standard-model-id>", "tier": "standard", "constraint": "cross_provider_required" },
+    "verifier": { "choice": "codex/<small-model-id>", "tier": "economy" }
+  },
+  "estimate_tokens": {
+    "p10": 310000,
+    "p50": 520000,
+    "p90": 910000,
+    "provenance": "estimated",
+    "method": "monte_carlo_lognormal_hierarchical",
+    "samples": 2000,
+    "seed": "hash(job_id, stage)"
+  },
+  "confidence": {
+    "level": "medium",
+    "basis": [
+      { "bucket": "p:payments-api|r:implementer|c:M|pv:codex", "n": 14, "level": 1 },
+      { "bucket": "r:reviewer|c:M|pv:claude-code", "n": 37, "level": 2 }
+    ],
+    "calibration_factor": 1.1
+  },
+  "buffer": 0.25,
+  "envelope_tokens": 1140000,
+  "expected_retry_share": 0.22,
+  "cost": {
+    "kind": "api_equivalent",
+    "note": "Providers configured with billing_mode=subscription; marginal spend not computed.",
+    "currency": "USD",
+    "p50": 3.10,
+    "p90": 5.60,
+    "price_table_version": 7
+  },
+  "budgets": {
+    "job": { "limit_tokens": 1200000, "hard": true, "fits_envelope": true },
+    "project": { "limit_tokens": 25000000, "settled": 6420000, "reserved": 380000, "headroom": 18200000, "hard": true },
+    "global": { "limit_tokens": 60000000, "settled": 21300000, "reserved": 380000, "hard": false }
+  },
+  "provider_capacity": {
+    "claude-code": { "health": "ok", "rate_limit": "none_observed_24h", "quota": "unknown" },
+    "codex": { "health": "ok", "rate_limit": "observed 2026-10-23T16:40Z (resolved)", "quota": "unknown" }
+  },
+  "decision": "allow",
+  "decision_rule": 7,
+  "reasons": [
+    "Envelope 1.14M fits job budget 1.2M (hard).",
+    "Project headroom 18.2M of 25M.",
+    "Scope approval still required by profile standard-api."
+  ],
+  "approval_required": true,
+  "recommendations": [
+    "Repo map contributes ~6k tokens per implementer run; consider limiting to src/http/** for this job."
+  ]
+}

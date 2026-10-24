@@ -1,0 +1,70 @@
+# <repo>/.turtle/project.toml — committed with the repository (example)
+# Security-relevant settings in this file can only TIGHTEN Turtle Flow policy (SEC-015).
+# Attempts to relax them are ignored and reported as a warning event.
+
+schema = "turtle.project.v1"
+
+[project]
+name = "Payments API"
+key_prefix = "API"
+default_profile = "standard"
+stack = ["rust", "typescript"]
+
+[commands]
+worktree_setup = "pnpm install --frozen-lockfile --offline"
+build          = "cargo build --workspace --locked"
+test           = "cargo test --workspace --locked -- --format=terse"
+lint           = "cargo clippy --workspace --all-targets -- -D warnings"
+format_check   = "cargo fmt --all -- --check"
+custom.contract_tests = "pnpm --filter api-contract test"
+
+[commands.env_allowlist]
+vars = ["CARGO_HOME", "RUSTUP_HOME", "PNPM_HOME"]
+
+[commands.timeouts]
+build = "15m"
+test = "20m"
+lint = "10m"
+
+[gates]
+test_parser = "cargo"         # cargo | junit:<path-glob> | jest | pytest | tap | none
+test_retry_on_fail = 1        # flaky handling; flakes are recorded
+diff_size_limit = 1200
+
+[git]
+target_branch = "main"
+branch_prefix = "turtle/"
+protected_branches = ["main", "release/*"]
+delivery_mode = "pr"          # pr | local_squash | local_ff | local_merge_commit
+remote = "origin"
+auto_refresh = "on_conflict_free"
+
+[policy]
+# Path-based profile escalation
+escalate = [
+  { paths = ["src/auth/**", "src/crypto/**"], profile = "strict" },
+  { paths = ["migrations/**"], profile = "strict" },
+]
+protected_paths = [".github/**", ".turtle/**", "Cargo.lock", "pnpm-lock.yaml", "Dockerfile", "build.rs"]
+dependency_changes = "require_ack"   # allow | require_ack | require_approval
+
+[budgets.project]
+period = "monthly"
+limit_tokens = 25_000_000
+hard = true
+
+[budgets.job_default]
+limit_tokens = 1_500_000      # job budget unless preflight envelope is approved higher
+hard = true
+
+[agents]
+allowed_providers = ["claude-code", "codex"]
+# Optional fixed preferences (overrides tier routing for a role):
+# prefer = { reviewer = "claude-code/<model-id>" }
+review_cross_provider = "preferred"   # off | preferred | required
+extra_allowed_commands = ["cargo nextest run *", "pnpm --filter * test"]
+network_allowlist = []                # e.g. ["crates.io", "registry.npmjs.org"] if sandbox supports it
+
+[context]
+budgets = { spec_writer = 30000, planner = 30000, implementer = 25000, fixer = 15000, reviewer = 40000, verifier = 20000 }
+always_include = ["docs/CONVENTIONS.md"]

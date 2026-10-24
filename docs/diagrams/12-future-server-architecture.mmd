@@ -1,0 +1,40 @@
+%% Source: ROADMAP.md — keep in sync (extracted from the Markdown document)
+flowchart TB
+    subgraph clients["Clients"]
+        B["Browser dashboard"]
+        CLI["Turtle Flow CLI<br/>(remote profile)"]
+        CI["CI / webhooks / API clients"]
+    end
+    subgraph server["Turtle Flow Server (stateless replicas)"]
+        GW["API gateway<br/>TLS, OIDC/SAML, RBAC"]
+        CORE["Turtle Flow Core<br/>workflow, policy, tokens,<br/>scheduler (leader-elected)"]
+        ORG["Organization mgmt<br/>users, teams, roles, policies"]
+        LIC["Licensing / entitlements"]
+    end
+    subgraph data["State"]
+        PG[("PostgreSQL<br/>state, events, ledger")]
+        OBJ[("Object storage<br/>artifacts, transcripts, resources")]
+    end
+    subgraph workers["Worker nodes (pull-based)"]
+        W1["Worker A<br/>container sandbox<br/>agent CLIs + git + gates"]
+        W2["Worker B"]
+    end
+    IDP[(Identity provider)]
+    PROV[(AI providers)]
+    FORGE[(Git forge)]
+
+    B --> GW
+    CLI --> GW
+    CI --> GW
+    GW --> CORE
+    GW --> ORG
+    CORE --> LIC
+    CORE --> PG
+    CORE --> OBJ
+    ORG --> PG
+    GW -.-> IDP
+    W1 -- "mTLS: lease work,<br/>stream events, upload artifacts" --> GW
+    W2 -- "mTLS" --> GW
+    W1 --> PROV
+    W1 --> FORGE
+    W2 --> PROV

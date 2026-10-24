@@ -1,0 +1,51 @@
+{
+  "schema": "turtle.agent-request.v1",
+  "run_id": "01JBA2K7Q9D3M8X4T6V1N5R0CE",
+  "job": { "id": "01JB7Y0Q4N3T9Z8K2M6W5R1C7D", "key": "API-42" },
+  "task": { "id": "01JB9F3S8W2H7K1P4Q6T0Y5ZAB", "ordinal": 2, "title": "Add token bucket middleware" },
+  "role": "implementer",
+  "provider": "codex",
+  "model": "<model-id>",
+  "attempt": 1,
+  "workdir": "/Users/dev/.turtle/worktrees/payments-api/API-42",
+  "scratch_dir": "/Users/dev/.turtle/tmp/runs/01JBA2K7Q9D3M8X4T6V1N5R0CE",
+  "instructions": {
+    "template": "implementer/v3",
+    "template_sha256": "4c1d0e7f2b9a6c3e8d5f1a0b7c4e9d2f6a3b8c5e1d7f0a4b9c6e2d8f5a1b3c7e",
+    "rendered_sha256": "b2e8f1c4a7d0e3b6c9f2a5d8e1b4c7f0a3d6e9b2c5f8a1d4e7b0c3f6a9d2e5b8"
+  },
+  "context": {
+    "manifest_sha256": "9e1f4b7c2a5d8e1f4b7c0a3d6e9f2b5c8a1d4e7f0b3c6a9d2e5f8b1c4a7d0e3f",
+    "estimated_input_tokens": 18450,
+    "items": [
+      { "kind": "task", "source": "artifact:plan@rev2#task-2", "trust": "trusted", "reason": "current_task", "approx_tokens": 620 },
+      { "kind": "spec_excerpt", "source": "artifact:specification@rev3#AC-1,AC-2,AC-4", "trust": "trusted", "reason": "criteria_mapped_to_task", "approx_tokens": 910 },
+      { "kind": "convention", "source": "resource:docs/CONVENTIONS.md@v5", "trust": "trusted", "reason": "always_include", "approx_tokens": 2300 },
+      { "kind": "decision", "source": "resource:docs/adr/0007-rate-limiting.md@v1", "trust": "trusted", "reason": "pinned", "approx_tokens": 1450 },
+      { "kind": "resource_chunk", "source": "resource:docs/api/openapi.yaml@v3#/components/responses/TooManyRequests", "trust": "internal", "reason": "fts_rank:1", "approx_tokens": 380 },
+      { "kind": "repo_map", "source": "derived:repo_map@3f2a9c1", "trust": "internal", "reason": "default_for_role", "approx_tokens": 6200 },
+      { "kind": "relevant_files", "source": "plan:expected_paths", "trust": "internal", "reason": "task_expected_paths", "approx_tokens": 140 }
+    ],
+    "redactions": 0
+  },
+  "tool_policy": {
+    "writes": "workdir",
+    "shell": { "mode": "allow", "patterns": ["cargo build *", "cargo test *", "cargo clippy *", "cargo fmt *", "rg *", "ls *", "cat *"] },
+    "deny_commands": ["git commit*", "git push*", "git checkout*", "git switch*", "git reset*", "git rebase*", "git branch*", "curl *", "wget *", "sudo *"],
+    "network": "none",
+    "mcp_servers": "none",
+    "enforcement": "strict"
+  },
+  "sandbox": { "mode": "workspace_write", "network": false },
+  "limits": {
+    "wall_clock_seconds": 2700,
+    "max_turns": null,
+    "max_stdout_bytes": 67108864,
+    "token_hard_limit": 260000
+  },
+  "reservation": { "id": "01JBA2K7R0F8C2N6P1W4X9Y3TD", "tokens": 260000, "basis": "p90=210000 x (1+0.25)" },
+  "output_contract": { "kind": "none", "note": "Result is the worktree diff; final message must summarize changes." },
+  "session": { "mode": "fresh" },
+  "routing_decision_id": "01JBA2K7PZ4Q8M1C6T3V9R5N0B",
+  "labels": { "project": "payments-api", "ticket": "PAY-1182" }
+}

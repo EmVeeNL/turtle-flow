@@ -1,0 +1,19 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Dashboard (future)
+node_modules/
+dist/
+
+# Local Turtle Flow state (never commit)
+.turtle/local/
+*.db
+*.db-wal
+*.db-shm
+
+# Archives / OS / editors
+*.zip
+.DS_Store
+.idea/
+.vscode/

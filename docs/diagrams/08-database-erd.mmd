@@ -1,0 +1,30 @@
+%% Source: DATA-MODEL.md — keep in sync (extracted from the Markdown document)
+erDiagram
+    PROJECTS ||--o{ JOBS : has
+    PROJECTS ||--o{ RESOURCES : has
+    PROJECTS ||--o{ BUDGETS : scopes
+    PROJECTS ||--o{ KNOWLEDGE_ITEMS : has
+    JOBS ||--o{ TASKS : plans
+    JOBS ||--o{ AGENT_RUNS : executes
+    JOBS ||--o{ APPROVALS : requires
+    JOBS ||--o{ ARTIFACTS : produces
+    JOBS ||--o| WORKTREES : uses
+    JOBS ||--o{ JOB_DEPENDENCIES : blocked_by
+    JOBS ||--o{ GATE_RESULTS : checked_by
+    JOBS }o--o| RELEASES : included_in
+    TASKS ||--o{ AGENT_RUNS : executed_by
+    TASKS ||--o{ COMMIT_RECORDS : results_in
+    AGENT_RUNS ||--o| ROUTING_DECISIONS : routed_by
+    AGENT_RUNS ||--o{ USAGE_RECORDS : consumes
+    AGENT_RUNS ||--o| RESERVATIONS : holds
+    ARTIFACTS ||--o{ ARTIFACT_REVISIONS : versions
+    ARTIFACT_REVISIONS }o--|| BLOBS : stored_as
+    APPROVALS }o--o{ ARTIFACT_REVISIONS : binds
+    BUDGETS ||--o{ LEDGER_ENTRIES : records
+    RESERVATIONS ||--o{ LEDGER_ENTRIES : settles
+    RESOURCES ||--o{ RESOURCE_VERSIONS : versions
+    RESOURCE_VERSIONS }o--|| BLOBS : stored_as
+    RESOURCE_VERSIONS ||--o{ CHUNKS : split_into
+    RESOURCES ||--o{ RESOURCE_ATTACHMENTS : attached_via
+    EVENTS }o--o| JOBS : about
+    EFFECTS }o--o| JOBS : for

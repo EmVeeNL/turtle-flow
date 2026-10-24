@@ -1,0 +1,32 @@
+%% Source: AGENT-PROTOCOL.md — keep in sync (extracted from the Markdown document)
+sequenceDiagram
+    autonumber
+    participant SCH as Scheduler
+    participant RT as Router
+    participant REG as Capability registry
+    participant POL as Policy
+    participant EST as Estimator
+    participant LED as Ledger
+    participant AD as Adapter
+
+    SCH->>RT: route(run: role, task, complexity, project)
+    RT->>POL: allowed providers/models (project prefs, profile, overrides)
+    POL-->>RT: allowed set + constraints (e.g. reviewer != implementer)
+    RT->>REG: capabilities + health for allowed set
+    REG-->>RT: candidates (healthy, authenticated, capable)
+    loop each candidate
+        RT->>EST: estimate(role, complexity, context size, provider, model)
+        EST-->>RT: P50 / P90 tokens, confidence
+    end
+    RT->>LED: headroom(job, project, Turtle Flow budgets)
+    LED-->>RT: remaining hard/soft limits
+    RT->>RT: filter by headroom, score, pick best
+    RT-->>SCH: RoutingDecision (choice, alternatives, reason)
+    SCH->>LED: reserve(P90 × (1 + buffer))
+    alt reservation ok
+        LED-->>SCH: reservation id
+        SCH->>AD: plan_invocation + spawn
+    else insufficient budget
+        LED-->>SCH: denied
+        SCH-->>SCH: hold awaiting_budget, request approval
+    end

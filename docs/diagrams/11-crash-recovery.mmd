@@ -1,0 +1,19 @@
+%% Source: WORKFLOW.md — keep in sync (extracted from the Markdown document)
+flowchart TD
+    S[Daemon start] --> L[Acquire instance lock<br/>new instance_id]
+    L --> I[SQLite integrity_check quick<br/>+ migration check]
+    I --> X[Expire leases of dead instances]
+    X --> R{For each run in starting/running}
+    R --> P{Process still alive?<br/>pid + start-time + cmdline match}
+    P -- yes, orphan --> K[Terminate process group]
+    P -- no --> U
+    K --> U[Parse captured transcript tail<br/>for usage + result]
+    U --> V{Result complete and valid?}
+    V -- yes --> C[Submit RunCompleted<br/>idempotency key = run id]
+    V -- no --> F[Mark run abandoned,<br/>settle usage reported or estimated]
+    F --> W[Stash worktree changes to<br/>refs/turtle/recovery/run-id,<br/>reset to last Turtle Flow commit]
+    C --> G
+    W --> G[Git recovery probes per worktree:<br/>index.lock, rebase/merge in progress,<br/>missing dirs, unexpected refs]
+    G --> E[Re-dispatch pending effects<br/>each with completion probe]
+    E --> Q[Reconcile ledger:<br/>close reservations of final runs]
+    Q --> SCH[Start scheduler + API]

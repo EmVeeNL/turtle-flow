@@ -1,0 +1,36 @@
+%% Source: ARCHITECTURE.md — keep in sync (extracted from the Markdown document)
+flowchart LR
+    dev([Developer])
+    subgraph host["Developer machine (single OS user)"]
+        cli["Turtle Flow CLI"]
+        browser["Browser<br/>(dashboard SPA)"]
+        subgraph daemon["turtle daemon (one process)"]
+            api["HTTP API + SSE<br/>(Axum)"]
+            core["Turtle Flow Core<br/>(workflow, scheduler,<br/>tokens, policy)"]
+            store[("SQLite (WAL)<br/>+ blob store")]
+        end
+        subgraph agents["Agent processes (spawned per run)"]
+            claude["Claude Code CLI"]
+            codex["Codex CLI"]
+        end
+        gates["Gate processes<br/>(build / test / lint)"]
+        repo[("Project Git repo<br/>+ job worktrees")]
+    end
+    anthropic[(Anthropic API)]
+    openai[(OpenAI API)]
+    forge[(Git remote / GitHub)]
+
+    dev --> cli
+    dev --> browser
+    cli -- "HTTP over Unix socket" --> api
+    browser -- "HTTP + SSE on 127.0.0.1" --> api
+    api --> core
+    core --> store
+    core -- "spawn, stream, cancel" --> agents
+    core -- "spawn, capture" --> gates
+    core -- "git CLI" --> repo
+    agents -- "edit files in worktree" --> repo
+    gates -- "run in worktree" --> repo
+    claude --> anthropic
+    codex --> openai
+    core -- "push / gh pr create<br/>(delivery only)" --> forge

@@ -1,0 +1,28 @@
+%% Source: TOKEN-INTELLIGENCE.md — keep in sync (extracted from the Markdown document)
+sequenceDiagram
+    autonumber
+    participant WF as Workflow engine
+    participant PF as Preflight
+    participant CX as Complexity scorer
+    participant H as History store
+    participant RT as Router
+    participant B as Budgets / ledger
+    participant AP as Approvals
+
+    WF->>PF: preflight(job, stage = pre-scope)
+    PF->>CX: score(job features, spec, discovery)
+    CX-->>PF: complexity class + score + drivers
+    PF->>RT: provisional route per role
+    RT-->>PF: provider/model per role
+    PF->>H: quantiles per bucket (role, class, provider, model, project)
+    H-->>PF: samples / priors, n_eff, dispersion
+    PF->>PF: simulate job total (Monte Carlo, seeded)<br/>incl. expected fix loops and retries
+    PF->>B: headroom (job, project, Turtle Flow)
+    B-->>PF: remaining hard / soft
+    PF->>PF: apply decision table
+    PF-->>WF: PreflightReport (estimate range, confidence,<br/>route, reserve, decision, reasons)
+    alt decision = require_approval or scope approval stage
+        WF->>AP: attach report to approval binding (budget envelope)
+    else decision = deny
+        WF-->>WF: block with reason + suggestions
+    end

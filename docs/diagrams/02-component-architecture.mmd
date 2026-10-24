@@ -1,0 +1,42 @@
+%% Source: ARCHITECTURE.md — keep in sync (extracted from the Markdown document)
+flowchart TB
+    subgraph interfaces["Interfaces"]
+        CLI["turtle-cli<br/>(Clap commands)"]
+        API["turtle-api<br/>(Axum routes, SSE, auth,<br/>embedded dashboard)"]
+    end
+    subgraph core["Turtle Flow Core"]
+        WF["turtle-workflow<br/>state machine, profiles,<br/>guards, decide()"]
+        SCH["turtle-scheduler<br/>queue, leases, limits,<br/>effect dispatch"]
+        POL["turtle-policy<br/>approvals, protected paths,<br/>security policy, entitlements"]
+        TOK["turtle-tokens<br/>estimation, preflight,<br/>ledger logic, pricing, routing"]
+        CTX["turtle-context<br/>context packages, retrieval,<br/>FTS, redaction, extraction"]
+    end
+    subgraph infra["Infrastructure adapters"]
+        AG["turtle-agents<br/>ProviderAdapter trait,<br/>claude / codex / fake,<br/>capability registry"]
+        GIT["turtle-git<br/>git CLI wrapper,<br/>worktrees, merge-tree"]
+        EXE["turtle-exec<br/>process runner, sandbox,<br/>env scrub, rlimits, gates"]
+        ART["turtle-artifacts<br/>blob store, revisions,<br/>JSON schemas"]
+        ST["turtle-store<br/>SQLx/SQLite repositories,<br/>event log, outbox, migrations"]
+    end
+    DOM["turtle-domain<br/>IDs, entities, events,<br/>errors, value objects"]
+
+    CLI -->|HTTP/UDS| API
+    API --> WF
+    API --> POL
+    API --> ST
+    SCH --> WF
+    SCH --> AG
+    SCH --> GIT
+    SCH --> EXE
+    SCH --> CTX
+    WF --> POL
+    WF --> TOK
+    CTX --> ART
+    CTX --> ST
+    TOK --> ST
+    AG --> EXE
+    GIT --> EXE
+    WF -.-> DOM
+    POL -.-> DOM
+    TOK -.-> DOM
+    ST -.-> DOM

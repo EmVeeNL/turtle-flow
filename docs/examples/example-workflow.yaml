@@ -1,0 +1,61 @@
+# Custom workflow profile derived from "standard" (example)
+# Profiles can only select/configure built-in stages, gates and limits; they cannot add states.
+# See WORKFLOW.md §5 for validation rules.
+
+schema: turtle.profile.v1
+name: standard-api
+base: standard
+description: Standard profile for the payments API with stricter review and PR delivery.
+
+stages:
+  discovery: auto            # off | auto | on   (auto = complexity >= M)
+  plan_approval: threshold   # off | threshold | on
+  release_required: false
+
+approvals:
+  scope: required            # fast only: auto_if_small
+  acceptance: required       # cannot be disabled for protected branches
+  plan_thresholds:
+    max_tasks_without_approval: 8
+    envelope_growth_factor: 1.0   # plan estimate > approved envelope -> plan approval
+  expiry:
+    acceptance: 7d
+
+gates:
+  per_task: [build, test]
+  job: [build, test, lint, format_check, custom.contract_tests]
+  static: [secret_scan, protected_paths, diff_size, scope_conformance, dependency_changes]
+  scope_conformance:
+    max_out_of_scope_ratio: 0.10
+    max_out_of_scope_lines: 50
+
+review:
+  required: full             # blockers_only | full
+  cross_provider: required   # off | preferred | required
+  auto_fix_max_severity: minor   # nit | minor | major
+
+limits:
+  max_fix_iterations: 3
+  max_back_transitions: 6
+  loop_limits: { planning: 3, specification: 3 }
+  diff_size_limit: 1200
+  timeouts:
+    job: 8h
+    run_default: 30m
+    run_by_role: { implementer: 45m, reviewer: 20m }
+
+retry:
+  transient_provider: { max_attempts: 3, backoff: exponential, initial: 10s, max: 2m }
+  rate_limited: { strategy: wait_or_failover, max_wait: 30m }
+  schema_violation: { repair_attempts: 1 }
+  timeout: { max_attempts: 1, limit_multiplier: 1.5 }
+
+delivery:
+  mode: pr
+  target_branch: main
+  squash_on_merge: true      # informational for PR body / local modes
+  delete_branch_after_delivery: false
+
+budget:
+  max_job_tokens_without_approval: 2000000
+  task_budget_factor: 2.0

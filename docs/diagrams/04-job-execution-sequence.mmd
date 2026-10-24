@@ -1,0 +1,47 @@
+%% Source: ARCHITECTURE.md — keep in sync (extracted from the Markdown document)
+sequenceDiagram
+    autonumber
+    actor U as Developer
+    participant API as API / CLI
+    participant WF as Workflow engine
+    participant SCH as Scheduler
+    participant TOK as Token engine
+    participant CTX as Context builder
+    participant AG as Agent adapter
+    participant GIT as Git
+    participant GATE as Gate runner
+
+    U->>API: job create "Add rate limiting"
+    API->>WF: CreateJob
+    WF-->>SCH: effect: StartStage(specification)
+    SCH->>TOK: preflight(job)
+    TOK-->>SCH: estimate + route + reservation OK
+    SCH->>CTX: build context(spec_writer)
+    SCH->>AG: run(spec_writer, context)
+    AG-->>SCH: spec JSON (schema valid) + usage
+    SCH->>WF: RunCompleted → spec artifact rev 1
+    WF-->>U: ApprovalRequested(scope, spec@sha)
+    U->>API: approve scope (bound to spec sha + estimate)
+    API->>WF: GrantApproval
+    WF-->>SCH: effect: StartStage(planning)
+    SCH->>AG: run(planner)
+    AG-->>SCH: plan DAG
+    SCH->>GIT: create worktree + branch at base SHA
+    loop for each task in DAG order
+        SCH->>AG: run(implementer, task context)
+        AG-->>SCH: files changed + usage
+        SCH->>GIT: verify refs unchanged, commit with trailers
+        SCH->>GATE: build + test + lint
+        GATE-->>SCH: results
+        alt gate failed and fix budget left
+            SCH->>AG: run(fixer, failure context)
+        end
+    end
+    SCH->>AG: run(reviewer, spec + plan + diff)
+    AG-->>SCH: findings
+    SCH->>AG: run(verifier, criteria + evidence)
+    AG-->>SCH: verification report
+    WF-->>U: ApprovalRequested(acceptance, diff@sha)
+    U->>API: accept
+    SCH->>GIT: merge-tree probe, then merge / push + PR
+    WF-->>U: JobDelivered

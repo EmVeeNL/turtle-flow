@@ -1,0 +1,87 @@
+%% Source: DOMAIN-MODEL.md — keep in sync (extracted from the Markdown document)
+classDiagram
+    direction LR
+    class Project {
+      ProjectId id
+      slug
+      repo_path
+      default_profile
+    }
+    class Job {
+      JobId id
+      key (API-42)
+      state
+      profile_ref
+      version
+    }
+    class Task {
+      TaskId id
+      plan_revision
+      state
+      depends_on[]
+    }
+    class AgentRun {
+      RunId id
+      role
+      provider/model
+      status
+    }
+    class Artifact {
+      ArtifactId id
+      kind
+    }
+    class ArtifactRevision {
+      rev
+      sha256
+      author
+    }
+    class Approval {
+      ApprovalId id
+      gate_kind
+      subject_hash
+      status
+    }
+    class QualityGateResult {
+      gate
+      outcome
+    }
+    class Resource {
+      ResourceId id
+      trust_level
+    }
+    class Budget {
+      scope
+      limit
+    }
+    class LedgerEntry {
+      kind
+      tokens
+      provenance
+    }
+    class Release {
+      ReleaseId id
+      version
+      state
+    }
+    class Event {
+      seq
+      prev_hash
+      hash
+    }
+
+    Project "1" --> "*" Job
+    Project "1" --> "*" Resource
+    Project "1" --> "*" Budget
+    Job "1" --> "*" Task
+    Job "1" --> "*" Approval
+    Job "1" --> "*" Artifact
+    Job "*" --> "*" Resource : attached
+    Job "*" --> "0..1" Release : included in
+    Task "1" --> "*" AgentRun
+    Task "1" --> "*" QualityGateResult
+    AgentRun "1" --> "*" LedgerEntry
+    AgentRun "1" --> "1" Artifact : context manifest
+    Artifact "1" --> "*" ArtifactRevision
+    Approval "*" --> "1" ArtifactRevision : bound to
+    Budget "1" --> "*" LedgerEntry
+    Job "1" --> "*" Event

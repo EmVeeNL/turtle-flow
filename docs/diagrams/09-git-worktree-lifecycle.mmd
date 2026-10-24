@@ -1,0 +1,17 @@
+%% Source: GIT-STRATEGY.md — keep in sync (extracted from the Markdown document)
+stateDiagram-v2
+    [*] --> planned: job enters implementation<br/>(effect CreateWorktree recorded)
+    planned --> created: git worktree add -b branch path base_commit
+    created --> prepared: worktree_setup command<br/>(e.g. pnpm install --frozen-lockfile)
+    prepared --> active: first task dispatched
+    active --> active: agent edits → Turtle Flow commit per task
+    active --> refreshing: base moved and refresh requested
+    refreshing --> active: rebase/merge clean → gates rerun
+    refreshing --> conflicted: conflicts
+    conflicted --> active: user or fixer resolves (new commit)
+    active --> delivering: acceptance approved
+    delivering --> delivered: merge/PR recorded
+    delivered --> removed: cleanup (worktree remove, prune)
+    active --> abandoned: job cancelled / failed
+    abandoned --> removed: cleanup per retention
+    removed --> [*]

@@ -1,0 +1,41 @@
+%% Source: WORKFLOW.md — keep in sync (extracted from the Markdown document)
+stateDiagram-v2
+    [*] --> backlog
+    backlog --> discovery: start [discovery enabled]
+    backlog --> specification: start [discovery disabled]
+    discovery --> specification: report valid
+    specification --> scope_approval: spec valid + preflight
+    scope_approval --> planning: approved
+    scope_approval --> specification: changes requested
+    planning --> plan_approval: [plan approval required]
+    planning --> implementation: plan valid [no plan approval]
+    plan_approval --> implementation: approved
+    plan_approval --> planning: changes requested
+    implementation --> build_test: all tasks succeeded
+    implementation --> planning: replan needed
+    implementation --> specification: scope change detected
+    build_test --> review: all gates passed
+    build_test --> implementation: gate failed [fix budget left]
+    review --> verification: no blocking findings
+    review --> implementation: fixable findings
+    review --> planning: verdict replan
+    review --> specification: scope creep
+    verification --> acceptance_approval: criteria met
+    verification --> implementation: not met (fixable)
+    verification --> planning: not met (structural)
+    acceptance_approval --> delivery: approved
+    acceptance_approval --> implementation: changes requested
+    delivery --> done: delivered [no release]
+    delivery --> awaiting_release: delivered [release required]
+    delivery --> build_test: base refreshed
+    awaiting_release --> done: release completed
+    done --> [*]
+
+    blocked : blocked (see §4)
+    note right of blocked
+        Any non-terminal stage can move to blocked
+        (limits, conflicts, timeouts, unrecoverable errors)
+        and any non-terminal stage can move to cancelled.
+        blocked resolves to an allowed earlier stage,
+        to cancelled, or to failed.
+    end note
