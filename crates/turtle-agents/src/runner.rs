@@ -24,7 +24,8 @@ pub struct AgentRequest {
     pub job_key: String,
     pub title: String,
     pub description: String,
-    /// The job worktree for roles that touch or read code.
+    /// The directory the run works in: the job worktree for code roles, the project checkout
+    /// (read-only) for roles that run before a worktree exists.
     pub workdir: Option<PathBuf>,
     pub spec: Option<Specification>,
     pub plan: Option<Plan>,

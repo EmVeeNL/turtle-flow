@@ -11,6 +11,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::cmd::daemon::{AgentChoice, ClaudeOptions};
 use crate::cmd::job::JobCommandLine;
 use crate::cmd::project::ProjectCommand;
 use crate::paths::Home;
@@ -37,9 +38,8 @@ enum Command {
     },
     /// Start the background daemon that runs jobs.
     Up {
-        /// Drive jobs with the scripted demo agent (no real agent adapter exists yet).
-        #[arg(long)]
-        demo_agent: bool,
+        #[command(flatten)]
+        agent: AgentArgs,
     },
     /// Stop the background daemon.
     Down,
@@ -47,8 +47,8 @@ enum Command {
     Status,
     /// Run the daemon in the foreground (what `up` starts).
     Daemon {
-        #[arg(long)]
-        demo_agent: bool,
+        #[command(flatten)]
+        agent: AgentArgs,
     },
     /// Register and inspect projects.
     #[command(subcommand)]
@@ -74,6 +74,32 @@ enum Command {
     /// Verify the tamper-evident event log.
     #[command(subcommand)]
     Audit(AuditCommand),
+}
+
+#[derive(Debug, clap::Args)]
+struct AgentArgs {
+    /// Which agent runs the jobs.
+    #[arg(long, value_enum)]
+    agent: Option<AgentChoice>,
+    /// Claude model (default: the CLI's own default).
+    #[arg(long)]
+    claude_model: Option<String>,
+    /// Claude effort: low, medium, high, xhigh or max.
+    #[arg(long)]
+    claude_effort: Option<String>,
+    /// Spend cap per Claude run in API-equivalent USD (default 3.00).
+    #[arg(long)]
+    max_run_usd: Option<f64>,
+}
+
+impl AgentArgs {
+    fn options(&self) -> ClaudeOptions {
+        ClaudeOptions {
+            model: self.claude_model.clone(),
+            effort: self.claude_effort.clone(),
+            max_run_usd: self.max_run_usd,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -102,10 +128,13 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     let ok = ExitCode::SUCCESS;
     match command {
         Command::Doctor { .. } => unreachable!("handled above"),
-        Command::Up { demo_agent } => cmd::daemon::up(&home, demo_agent).await?,
+        Command::Up { agent } => cmd::daemon::up(&home, agent.agent, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home),
-        Command::Daemon { demo_agent } => cmd::daemon::run(home, demo_agent).await?,
+        Command::Daemon { agent } => {
+            let options = agent.options();
+            cmd::daemon::run(home, agent.agent, options).await?;
+        }
         Command::Project(c) => cmd::project::run(&Runtime::open(home)?, c).await?,
         Command::Job(c) => cmd::job::run(&Runtime::open(home)?, c).await?,
         Command::Approvals => cmd::approvals::list(&Runtime::open(home)?).await?,

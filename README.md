@@ -46,9 +46,10 @@ turtle approvals
 - the effect executors: worktree, task commits, gates, review, verification, approvals and delivery, tested end to end with a scripted fake agent, including crashes at every step
 - artifacts and approvals: content-addressed blob store, artifact revisions, specification and plan documents with validation, hash-bound approvals checked against the current state at every guard
 - the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
+- a Claude Code adapter: headless, fully isolated runs per role with structured output and a spend cap; one real job has been delivered end to end
 - the `turtle` CLI and daemon: `turtle doctor`, `project`, `job`, `approvals`/`approve` (interactive terminal only), `audit verify`, `up`/`down`/`status`
 
-There is no real agent execution yet: the daemon only runs with the scripted `--demo-agent` until the Claude Code adapter lands (M2).
+Real agent runs are new and lightly tested: `turtle up --agent claude` works end to end on small jobs, but there is no token ledger or budget enforcement yet (rest of M2), and Codex is not wired in (M3). `--agent demo` runs the scripted placeholder agent.
 
 ### Development
 
