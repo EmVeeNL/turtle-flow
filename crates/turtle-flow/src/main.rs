@@ -154,38 +154,16 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     if let Command::Doctor { json } = command {
         return Ok(doctor::run(json).await);
     }
-    if let Command::Providers(ProvidersCommand::List) = command {
-        let registry = turtle_agents::CapabilityRegistry::discover().await;
-        for provider in turtle_agents::ProviderId::ALL {
-            let caps = registry.get(provider);
-            let version = caps
-                .info
-                .version
-                .as_ref()
-                .map_or_else(|| "unknown".into(), ToString::to_string);
-            println!(
-                "{}: version={}, compatibility={:?}, login={:?}, schema={}, quota={}, sandbox={}, effort={}; {}",
-                provider.as_str(),
-                version,
-                caps.info.compat,
-                caps.auth,
-                caps.native_json_schema,
-                caps.quota_visibility,
-                caps.sandbox_modes.join(","),
-                caps.effort_levels.join(","),
-                caps.info.detail
-            );
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
     let home = Home::locate()?;
     let ok = ExitCode::SUCCESS;
     match command {
         Command::Doctor { .. } => unreachable!("handled above"),
-        Command::Providers(_) => unreachable!("handled above"),
+        Command::Providers(ProvidersCommand::List) => {
+            providers_list(&home).await?;
+        }
         Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
-        Command::Status => cmd::daemon::status(&home),
+        Command::Status => cmd::daemon::status(&home).await?,
         Command::Daemon { agent } => {
             let options = agent.options();
             cmd::daemon::run(home, options).await?;
@@ -209,4 +187,93 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         }
     }
     Ok(ok)
+}
+
+async fn providers_list(home: &Home) -> Result<ExitCode> {
+    let registry = turtle_agents::CapabilityRegistry::discover().await;
+    let runtime = Runtime::open(home.clone())?;
+    let (limits, snapshots) = runtime
+        .store
+        .with(|store| {
+            Ok::<_, turtle_store::StoreError>((
+                store.current_limited_providers()?,
+                store.latest_quota_snapshots()?,
+            ))
+        })
+        .await?;
+    for provider in turtle_agents::ProviderId::ALL {
+        let caps = registry.get(provider);
+        let version = caps
+            .info
+            .version
+            .as_ref()
+            .map_or_else(|| "unknown".into(), ToString::to_string);
+        let limit_label = limits
+            .iter()
+            .find(|limit| limit.provider == provider.as_str())
+            .map_or_else(
+                || "not rate limited".to_owned(),
+                |limit| match limit.reset_at.as_deref() {
+                    Some(reset) => format!(
+                        "rate limited until {} (provider hint)",
+                        display_local_time(reset)
+                    ),
+                    None => "rate limited (reset unknown)".into(),
+                },
+            );
+        println!(
+            "{}: version={}, compatibility={:?}, login={:?}, schema={}, quota={}, sandbox={}, effort={}; {}; {}",
+            provider.as_str(),
+            version,
+            caps.info.compat,
+            caps.auth,
+            caps.native_json_schema,
+            caps.quota_visibility,
+            caps.sandbox_modes.join(","),
+            caps.effort_levels.join(","),
+            limit_label,
+            caps.info.detail
+        );
+        for quota in snapshots.iter().filter(|q| q.provider == provider.as_str()) {
+            let age = snapshot_age(&quota.observed_at);
+            println!(
+                "  {}: {:.0}% of provider window ({} old, {})",
+                quota.window_name,
+                quota.utilization * 100.0,
+                age,
+                quota.status
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) fn display_local_time(timestamp: &str) -> String {
+    let Ok(parsed) =
+        time::OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339)
+    else {
+        return "unknown time".into();
+    };
+    parsed
+        .to_offset(turtle_agents::local_offset().unwrap_or(time::UtcOffset::UTC))
+        .format(time::macros::format_description!("[hour]:[minute]"))
+        .unwrap_or_else(|_| "unknown time".into())
+}
+
+fn snapshot_age(timestamp: &str) -> String {
+    let Ok(observed) =
+        time::OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339)
+    else {
+        return "age unknown".into();
+    };
+    let seconds = (time::OffsetDateTime::now_utc() - observed)
+        .whole_seconds()
+        .max(0);
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3_600 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{}h", seconds / 3_600)
+    }
 }

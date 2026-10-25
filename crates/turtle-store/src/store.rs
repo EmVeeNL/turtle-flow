@@ -130,8 +130,8 @@ pub struct RebuiltJob {
 }
 
 pub struct Store {
-    conn: Connection,
-    clock: Arc<dyn Clock>,
+    pub(crate) conn: Connection,
+    pub(crate) clock: Arc<dyn Clock>,
 }
 
 impl std::fmt::Debug for Store {
@@ -199,6 +199,11 @@ impl Store {
 
     pub fn installation_id(&self) -> Result<String> {
         installation_id(&self.conn)
+    }
+
+    #[must_use]
+    pub fn now(&self) -> time::OffsetDateTime {
+        self.clock.now()
     }
 
     pub fn load_job(&self, id: JobId) -> Result<JobRecord> {

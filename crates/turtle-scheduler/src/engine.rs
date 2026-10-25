@@ -205,6 +205,36 @@ impl<C: ContextProvider> Engine<C> {
         command: JobCommand,
         reason: &str,
     ) -> Result<Finished, EngineError> {
+        self.defer_effect_inner(effect, instance, command, reason, None)
+            .await
+    }
+
+    pub async fn defer_effect_until(
+        &self,
+        effect: &EffectRow,
+        instance: &str,
+        command: JobCommand,
+        reason: &str,
+        not_before: &str,
+    ) -> Result<Finished, EngineError> {
+        self.defer_effect_inner(
+            effect,
+            instance,
+            command,
+            reason,
+            Some(not_before.to_owned()),
+        )
+        .await
+    }
+
+    async fn defer_effect_inner(
+        &self,
+        effect: &EffectRow,
+        instance: &str,
+        command: JobCommand,
+        reason: &str,
+        not_before: Option<String>,
+    ) -> Result<Finished, EngineError> {
         for _ in 0..MAX_CONFLICT_RETRIES {
             let applied = match effect.job_id {
                 Some(job_id) => {
@@ -216,11 +246,12 @@ impl<C: ContextProvider> Engine<C> {
                 }
                 None => None,
             };
-            let (id, inst, why, cmd) = (
+            let (id, inst, why, cmd, due) = (
                 effect.id,
                 instance.to_owned(),
                 reason.to_owned(),
                 command.clone(),
+                not_before.clone(),
             );
             let outcome = self
                 .store
@@ -229,7 +260,7 @@ impl<C: ContextProvider> Engine<C> {
                         if let Some((version, decision)) = &applied {
                             tx.apply_decision(*version, decision, &cmd, &Actor::Scheduler)?;
                         }
-                        tx.defer_effect(id, &inst, &why)
+                        tx.defer_effect(id, &inst, &why, due.as_deref())
                     })
                 })
                 .await;

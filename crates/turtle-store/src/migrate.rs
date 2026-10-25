@@ -22,6 +22,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../migrations/0002_estimation_observations.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../migrations/0003_provider_quota.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -116,6 +120,24 @@ mod tests {
             })
             .expect("new table");
         assert_eq!(observations, 0);
+    }
+
+    #[test]
+    fn upgrading_v2_adds_provider_limit_reset_and_quota_history() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        migrate_with(&mut conn, &MIGRATIONS[..2], None, "t").expect("v2");
+        assert_eq!(current_version(&conn).expect("version"), 2);
+        migrate(&mut conn, None, "t").expect("v3");
+        let reset_column: i64 = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('provider_limits_observed') WHERE name='resets_at'",
+            [], |row| row.get(0),
+        ).expect("column");
+        let snapshots: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='provider_quota_snapshots'",
+            [], |row| row.get(0),
+        ).expect("table");
+        assert_eq!(reset_column, 1);
+        assert_eq!(snapshots, 1);
     }
 
     #[test]

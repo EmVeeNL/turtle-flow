@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use turtle_domain::{Actor, JobKey, JobState, JobType, Priority};
 use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord};
-use turtle_workflow::{JobCommand, PauseMode, Profile, ProfileBase};
+use turtle_workflow::{Hold, JobCommand, PauseMode, Profile, ProfileBase};
 
 use crate::runtime::{Runtime, label, parse_label};
 
@@ -301,6 +301,27 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             "  holds        {}",
             serde_json::to_string(&job.job.holds).unwrap_or_default()
         );
+        for hold in &job.job.holds {
+            if let Hold::RateLimited { provider } = hold {
+                let limit = rt
+                    .store
+                    .with({
+                        let provider = provider.clone();
+                        move |s| s.limited_provider(&provider)
+                    })
+                    .await?;
+                let explanation = limit.and_then(|limit| limit.reset_at).map_or_else(
+                    || format!("waiting for {provider}'s limit to reset (reset unknown)"),
+                    |reset| {
+                        format!(
+                            "waiting for {provider}'s limit to reset at {}",
+                            crate::display_local_time(&reset)
+                        )
+                    },
+                );
+                println!("  waiting      {explanation}");
+            }
+        }
     }
     let mut delivery_hint = None;
     if let Some(d) = delivery {

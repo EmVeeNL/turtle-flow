@@ -3,8 +3,12 @@
 
 use std::sync::Arc;
 
-use turtle_domain::{Actor, ApprovalValidity, GateKind, JobState, JobType, Priority};
-use turtle_store::{ChainVerdict, JobRecord, NewJob, NewProject, StepClock, Store, StoreError};
+use turtle_domain::{
+    Actor, ApprovalValidity, GateKind, JobState, JobType, Priority, Role, RunId, WindowStatus,
+};
+use turtle_store::{
+    ChainVerdict, JobRecord, NewJob, NewProject, NewRun, StepClock, Store, StoreError,
+};
 use turtle_workflow::{DecisionContext, JobCommand as C, PreflightDecision, Profile, decide};
 
 fn store() -> Store {
@@ -93,6 +97,108 @@ fn creates_job_with_key_and_round_trips() {
         })
         .expect("second job");
     assert_eq!(second.key.to_string(), "API-2");
+}
+
+#[test]
+fn provider_limit_and_quota_observations_round_trip_and_resolve() {
+    let mut store = store();
+    let job = seed(&mut store);
+    let run = RunId::new();
+    store
+        .transaction(|tx| {
+            tx.begin_run(&NewRun {
+                id: run,
+                job_id: job.job.id,
+                role: Role::Implementer,
+                stage: "implement".into(),
+                provider: "claude-code".into(),
+                model: "default".into(),
+                adapter_version: "test".into(),
+                context_manifest_rev: None,
+            })?;
+            tx.observe_provider_limit(
+                "claude-code",
+                run,
+                Some(
+                    time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("valid reset"),
+                ),
+                "limit message",
+            )?;
+            tx.record_quota_snapshot(
+                "claude-code",
+                run,
+                "five_hour",
+                0.93,
+                Some(1_800_000_000),
+                WindowStatus::Warning,
+            )?;
+            tx.record_quota_snapshot(
+                "claude-code",
+                run,
+                "five_hour",
+                0.96,
+                Some(1_800_000_100),
+                WindowStatus::Rejected,
+            )?;
+            Ok(())
+        })
+        .expect("record observations");
+    assert_eq!(store.current_limited_providers().expect("limits").len(), 1);
+    let snapshot = store.latest_quota_snapshots().expect("snapshots").remove(0);
+    assert_eq!(snapshot.window_name, "five_hour");
+    assert_eq!(snapshot.utilization, 0.96);
+    store
+        .transaction(|tx| tx.resolve_provider_limits("claude-code"))
+        .expect("resolve");
+    assert!(
+        store
+            .current_limited_providers()
+            .expect("resolved")
+            .is_empty()
+    );
+}
+
+#[test]
+fn an_expired_limit_does_not_clear_a_newer_limit_for_the_same_provider() {
+    let mut store = store();
+    let job = seed(&mut store);
+    let run_a = RunId::new();
+    let run_b = RunId::new();
+    store
+        .transaction(|tx| {
+            for run in [run_a, run_b] {
+                tx.begin_run(&NewRun {
+                    id: run,
+                    job_id: job.job.id,
+                    role: Role::Implementer,
+                    stage: "implement".into(),
+                    provider: "claude-code".into(),
+                    model: "default".into(),
+                    adapter_version: "test".into(),
+                    context_manifest_rev: None,
+                })?;
+            }
+            tx.observe_provider_limit(
+                "claude-code",
+                run_a,
+                Some(time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("past")),
+                "old",
+            )?;
+            tx.observe_provider_limit(
+                "claude-code",
+                run_b,
+                Some(time::OffsetDateTime::from_unix_timestamp(2_000_000_000).expect("future")),
+                "new",
+            )?;
+            Ok(())
+        })
+        .expect("observations");
+    assert!(
+        store
+            .providers_ready_to_clear()
+            .expect("clear candidates")
+            .is_empty()
+    );
 }
 
 #[test]

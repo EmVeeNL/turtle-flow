@@ -26,8 +26,8 @@ use turtle_agents::{
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
-    Actor, ApprovalStatus, ArtifactKind, GateKind, Plan, ReviewOutcome, ReviewReport, Role, RunId,
-    Specification, UsageValue, VerificationDecision, VerificationReport,
+    Actor, ApprovalStatus, ArtifactKind, GateKind, Plan, QuotaStatus, ReviewOutcome, ReviewReport,
+    Role, RunId, Specification, UsageValue, VerificationDecision, VerificationReport,
 };
 use turtle_exec::{CommandSpec, ExitOutcome};
 use turtle_git::commit::Trailers;
@@ -326,12 +326,34 @@ where
             ReviewIndependence::Preferred => Independence::Preferred,
             ReviewIndependence::Required => Independence::Required,
         };
+        let (limited, snapshots) = self
+            .store
+            .with(|s| {
+                Ok::<_, turtle_store::StoreError>((
+                    s.current_limited_providers()?,
+                    s.latest_quota_snapshots()?,
+                ))
+            })
+            .await
+            .map_err(retryable)?;
+        let limited_providers: Vec<String> = limited.iter().map(|l| l.provider.clone()).collect();
+        let quota_threshold = std::env::var("TURTLE_CLAUDE_QUOTA_THRESHOLD")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| (0.0..=1.0).contains(value))
+            .unwrap_or(0.90);
+        let avoid_provider = snapshots
+            .iter()
+            .any(|q| q.provider == "claude-code" && q.utilization >= quota_threshold)
+            .then(|| "claude-code".to_owned());
         let route = self
             .runner
             .select(&RouteContext {
                 role,
                 independence,
                 implementer_provider,
+                limited_providers,
+                avoid_provider,
             })
             .map_err(agent_error)?;
         let provider = route.provider.clone();
@@ -447,7 +469,23 @@ where
                 e.usage().unwrap_or(UsageValue::Unavailable),
             ),
         };
+        let quota = result
+            .as_ref()
+            .ok()
+            .and_then(|out| out.quota.clone())
+            .or_else(|| result.as_ref().err().and_then(|err| err.quota().cloned()));
+        let rate_limit = result.as_ref().err().and_then(|err| {
+            let raw = err
+                .raw_message()
+                .map(str::to_owned)
+                .unwrap_or_else(|| err.to_string());
+            err.rate_limit()
+                .map(|(provider, reset)| (provider.to_owned(), reset, raw))
+        });
         let error_text = error_text.map(|message| turtle_context::redact(&message).0);
+        let quota_for_storage = quota.clone();
+        let rate_limit_for_storage = rate_limit.clone();
+        let provider_for_storage = provider.clone();
         let charge = match usage {
             UsageValue::Reported { usage } | UsageValue::Estimated { usage } => Some(usage.total()),
             // A successful run that reported nothing still used something; assume the estimate.
@@ -471,6 +509,23 @@ where
                     };
                     if let Some((hash, size)) = transcript_blob {
                         tx.set_transcript_blob(run_id, hash, size)?;
+                    }
+                    if provider_for_storage == "claude-code"
+                        && let Some(QuotaStatus::Partial { windows }) = &quota_for_storage
+                    {
+                        for window in windows {
+                            tx.record_quota_snapshot(
+                                "claude-code",
+                                run_id,
+                                &window.name,
+                                window.utilization,
+                                window.resets_at,
+                                window.status,
+                            )?;
+                        }
+                    }
+                    if let Some((limited_provider, reset_at, message)) = &rate_limit_for_storage {
+                        tx.observe_provider_limit(limited_provider, run_id, *reset_at, message)?;
                     }
                     for denial in &denials {
                         tx.append_event(&NewEvent {
@@ -500,6 +555,64 @@ where
             })
             .await
             .map_err(retryable)?;
+        if let Some((limited_provider, reset_at, message)) = rate_limit {
+            let latest_limited = self
+                .store
+                .with(|s| s.current_limited_providers())
+                .await
+                .map_err(retryable)?;
+            let limited_providers = latest_limited
+                .iter()
+                .map(|limit| limit.provider.clone())
+                .collect();
+            let route_context = RouteContext {
+                role,
+                independence,
+                implementer_provider: if matches!(role, Role::Reviewer | Role::Verifier) {
+                    self.store
+                        .with(move |s| s.transaction(|tx| tx.latest_implementer_provider(job_id)))
+                        .await
+                        .map_err(retryable)?
+                } else {
+                    None
+                },
+                limited_providers,
+                avoid_provider: None,
+            };
+            if let Ok(alternative) = self.runner.select(&route_context)
+                && alternative.provider != limited_provider
+            {
+                req.run_id = RunId::new();
+                return Box::pin(self.run_agent(req, job)).await;
+            }
+            let observed_now = self
+                .store
+                .with(|store| Ok::<_, turtle_store::StoreError>(store.now()))
+                .await
+                .map_err(retryable)?;
+            let due = reset_at.unwrap_or_else(|| observed_now + Duration::from_secs(60 * 60));
+            let due_text = turtle_store::clock::format_ts(due).map_err(fatal)?;
+            let local_due =
+                due.to_offset(turtle_agents::local_offset().unwrap_or(time::UtcOffset::UTC));
+            let wait_label = if reset_at.is_some() {
+                format!(
+                    " until {}",
+                    local_due
+                        .format(time::macros::format_description!("[hour]:[minute]"))
+                        .unwrap_or_else(|_| "unknown time".into())
+                )
+            } else {
+                "; reset unknown; retrying conservatively in one hour".into()
+            };
+            let reason = format!("{limited_provider} is rate limited{wait_label}: {message}");
+            return Err(ExecError::HoldUntil {
+                command: JobCommand::RateLimited {
+                    provider: limited_provider,
+                },
+                reason,
+                not_before: due_text,
+            });
+        }
         result.map_err(agent_error)
     }
 

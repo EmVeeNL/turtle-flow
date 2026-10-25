@@ -52,6 +52,7 @@ pub struct AgentOutput {
     /// Original provider stream; redacted and capped by the executor before storage.
     pub transcript: Option<String>,
     pub permission_denials: Vec<crate::claude::PermissionDenial>,
+    pub quota: Option<turtle_domain::QuotaStatus>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -64,6 +65,13 @@ pub enum AgentError {
     RetryableDetails(Box<AgentErrorDetails>),
     #[error("{0}")]
     FatalDetails(Box<AgentErrorDetails>),
+    #[error("{message}")]
+    RateLimited {
+        provider: String,
+        reset_at: Option<time::OffsetDateTime>,
+        message: String,
+        details: Box<AgentErrorDetails>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +80,7 @@ pub struct AgentErrorDetails {
     usage: Option<UsageValue>,
     transcript: Option<String>,
     permission_denials: Vec<crate::claude::PermissionDenial>,
+    pub quota: Option<turtle_domain::QuotaStatus>,
 }
 
 impl std::fmt::Display for AgentErrorDetails {
@@ -83,12 +92,41 @@ impl std::fmt::Display for AgentErrorDetails {
 impl AgentError {
     #[must_use]
     pub fn retryable(&self) -> bool {
-        matches!(self, Self::Retryable(_) | Self::RetryableDetails(_))
+        matches!(
+            self,
+            Self::Retryable(_) | Self::RetryableDetails(_) | Self::RateLimited { .. }
+        )
+    }
+    #[must_use]
+    pub fn rate_limit(&self) -> Option<(&str, Option<time::OffsetDateTime>)> {
+        match self {
+            Self::RateLimited {
+                provider, reset_at, ..
+            } => Some((provider, *reset_at)),
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn quota(&self) -> Option<&turtle_domain::QuotaStatus> {
+        match self {
+            Self::RateLimited { details, .. }
+            | Self::RetryableDetails(details)
+            | Self::FatalDetails(details) => details.quota.as_ref(),
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn raw_message(&self) -> Option<&str> {
+        match self {
+            Self::RateLimited { details, .. } => Some(&details.message),
+            _ => None,
+        }
     }
     #[must_use]
     pub fn usage(&self) -> Option<UsageValue> {
         match self {
             Self::RetryableDetails(details) | Self::FatalDetails(details) => details.usage,
+            Self::RateLimited { details, .. } => details.usage,
             _ => None,
         }
     }
@@ -98,6 +136,7 @@ impl AgentError {
             Self::RetryableDetails(details) | Self::FatalDetails(details) => {
                 details.transcript.as_deref()
             }
+            Self::RateLimited { details, .. } => details.transcript.as_deref(),
             _ => None,
         }
     }
@@ -107,6 +146,7 @@ impl AgentError {
             Self::RetryableDetails(details) | Self::FatalDetails(details) => {
                 &details.permission_denials
             }
+            Self::RateLimited { details, .. } => &details.permission_denials,
             _ => &[],
         }
     }
@@ -122,17 +162,84 @@ impl AgentError {
             Self::Fatal(message) => (false, message),
             Self::RetryableDetails(details) => (true, details.message),
             Self::FatalDetails(details) => (false, details.message),
+            Self::RateLimited { message, .. } => (true, message),
         };
         let details = Box::new(AgentErrorDetails {
             message,
             usage,
             transcript,
             permission_denials,
+            quota: None,
         });
         if retryable {
             Self::RetryableDetails(details)
         } else {
             Self::FatalDetails(details)
+        }
+    }
+
+    #[must_use]
+    pub fn rate_limited(
+        provider: impl Into<String>,
+        reset_at: Option<time::OffsetDateTime>,
+        message: impl Into<String>,
+        usage: Option<UsageValue>,
+        transcript: Option<String>,
+        permission_denials: Vec<crate::claude::PermissionDenial>,
+        quota: Option<turtle_domain::QuotaStatus>,
+    ) -> Self {
+        let message = message.into();
+        Self::RateLimited {
+            provider: provider.into(),
+            reset_at,
+            message: message.clone(),
+            details: Box::new(AgentErrorDetails {
+                message,
+                usage,
+                transcript,
+                permission_denials,
+                quota,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn with_raw_message(mut self, raw_message: impl Into<String>) -> Self {
+        if let Self::RateLimited { details, .. } = &mut self {
+            details.message = raw_message.into();
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_quota(self, quota: Option<turtle_domain::QuotaStatus>) -> Self {
+        if quota.is_none() {
+            return self;
+        }
+        match self {
+            Self::RetryableDetails(mut details) => {
+                details.quota = quota;
+                Self::RetryableDetails(details)
+            }
+            Self::FatalDetails(mut details) => {
+                details.quota = quota;
+                Self::FatalDetails(details)
+            }
+            Self::RateLimited {
+                provider,
+                reset_at,
+                message,
+                mut details,
+            } => {
+                details.quota = quota;
+                Self::RateLimited {
+                    provider,
+                    reset_at,
+                    message,
+                    details,
+                }
+            }
+            other => other.with_details(None, None, Vec::new()).with_quota(quota),
         }
     }
 }
@@ -153,6 +260,13 @@ pub trait AgentRunner: Send + Sync + 'static {
     fn select(&self, context: &RouteContext) -> Result<RouteSelection, AgentError> {
         let independent = matches!(context.role, Role::Reviewer | Role::Verifier)
             && context.implementer_provider.as_deref() == Some(self.name());
+        let limited = context.limited_providers.iter().any(|p| p == self.name());
+        if limited {
+            return Err(AgentError::Fatal(format!(
+                "provider {} is currently rate limited",
+                self.name()
+            )));
+        }
         if independent && context.independence == Independence::Required {
             return Err(AgentError::Fatal(
                 "independent review requires another available provider".into(),
@@ -197,6 +311,9 @@ pub struct RouteContext {
     pub role: Role,
     pub independence: Independence,
     pub implementer_provider: Option<String>,
+    pub limited_providers: Vec<String>,
+    /// Soft quota guard: prefer other providers for new runs when this provider is near quota.
+    pub avoid_provider: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +439,7 @@ fn json_output(value: &impl serde::Serialize, text: &str, usage: UsageValue) -> 
         usage,
         transcript: None,
         permission_denials: Vec::new(),
+        quota: None,
     }
 }
 
@@ -380,6 +498,7 @@ impl AgentRunner for FakeRunner {
                     usage,
                     transcript: None,
                     permission_denials: Vec::new(),
+                    quota: None,
                 });
             }
             _ => {}
@@ -480,6 +599,7 @@ impl AgentRunner for FakeRunner {
                     usage,
                     transcript: None,
                     permission_denials: Vec::new(),
+                    quota: None,
                 })
             }
             Role::Reviewer => Ok(json_output(
@@ -520,6 +640,7 @@ impl AgentRunner for FakeRunner {
                 usage,
                 transcript: None,
                 permission_denials: Vec::new(),
+                quota: None,
             }),
         }
     }
@@ -634,6 +755,8 @@ mod tests {
             role: Role::Reviewer,
             independence: Independence::Required,
             implementer_provider: Some("fake".into()),
+            limited_providers: Vec::new(),
+            avoid_provider: None,
         };
         let err = runner
             .select(&context)

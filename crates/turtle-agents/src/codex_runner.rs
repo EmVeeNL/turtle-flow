@@ -7,7 +7,7 @@ use serde_json::Value;
 use turtle_domain::{Role, TokenUsage, UsageValue};
 use turtle_exec::{CommandSpec, ExecError, ExitOutcome, Output};
 
-use crate::codex::{CodexError, ISOLATION_FLAGS, classify_error_event};
+use crate::codex::{CodexError, ISOLATION_FLAGS, classify_error_event, retry_instant};
 use crate::prompts;
 use crate::runner::{AgentError, AgentOutput, AgentRequest, AgentRunner};
 use crate::schemas;
@@ -20,6 +20,8 @@ pub struct CodexConfig {
     pub timeout: Duration,
     /// Only these variables are inherited beyond turtle-exec's small base allowlist.
     pub inherit_env: Vec<String>,
+    /// Clock used to resolve Codex's date-free local retry hint.
+    pub now: fn() -> time::OffsetDateTime,
 }
 
 impl Default for CodexConfig {
@@ -30,6 +32,7 @@ impl Default for CodexConfig {
             effort: None,
             timeout: Duration::from_secs(30 * 60),
             inherit_env: ["CODEX_HOME", "OPENAI_API_KEY"].map(String::from).to_vec(),
+            now: time::OffsetDateTime::now_utc,
         }
     }
 }
@@ -118,7 +121,7 @@ impl AgentRunner for CodexRunner {
             }
             Err(e) => return Err(AgentError::Retryable(e.to_string())),
         };
-        interpret(&output, req.role)
+        interpret_with_clock(&output, req.role, self.config.now)
     }
 }
 
@@ -166,6 +169,14 @@ impl Summary {
 
 /// Pure interpretation of a completed process, including partial usage on failures.
 pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
+    interpret_with_clock(out, role, time::OffsetDateTime::now_utc)
+}
+
+fn interpret_with_clock(
+    out: &Output,
+    role: Role,
+    now: fn() -> time::OffsetDateTime,
+) -> Result<AgentOutput, AgentError> {
     let stdout = out.stdout_lossy();
     let stderr = String::from_utf8_lossy(&out.stderr);
     let raw = format!(
@@ -204,16 +215,29 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
         )));
     }
     if !out.success() || summary.error.is_some() {
+        if let Some(CodexError::UsageLimit { message, retry_at }) = &summary.error {
+            let reset_at = retry_at.and_then(|(hour, minute)| {
+                let now = now();
+                let offset = crate::codex::local_offset()?;
+                retry_instant(now, offset, hour, minute)
+            });
+            let display_message = retry_at.map_or_else(
+                || message.clone(),
+                |(hour, minute)| format!("{message} (retry hint {hour:02}:{minute:02} local time)"),
+            );
+            return Err(AgentError::rate_limited(
+                "codex",
+                reset_at,
+                display_message,
+                usage,
+                transcript,
+                Vec::new(),
+                None,
+            )
+            .with_raw_message(message.clone()));
+        }
         let (retryable, message) = match summary.error {
-            Some(CodexError::UsageLimit { message, retry_at }) => (
-                true,
-                format!(
-                    "{message}{}",
-                    retry_at.map_or(String::new(), |(h, m)| format!(
-                        " (retry hint {h:02}:{m:02} local time)"
-                    ))
-                ),
-            ),
+            Some(CodexError::UsageLimit { .. }) => (true, "Codex usage limit reached".into()),
             Some(CodexError::Other { message }) => (transient(&message), message),
             None => {
                 let message = if stderr.trim().is_empty() {
@@ -255,6 +279,7 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
         usage: usage.unwrap_or(UsageValue::Unavailable),
         transcript,
         permission_denials: Vec::new(),
+        quota: None,
     })
 }
 
