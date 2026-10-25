@@ -1,0 +1,13 @@
+{
+  // Static site served by Workers Static Assets. Build first: pnpm build.
+  "name": "turtle-flow-website",
+  "compatibility_date": "2026-10-25",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "turtle-flow.com", "custom_domain": true },
+    { "pattern": "www.turtle-flow.com", "custom_domain": true }
+  ]
+}

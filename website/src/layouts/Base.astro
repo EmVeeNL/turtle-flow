@@ -1,0 +1,73 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const og = new URL('/assets/og.png', Astro.site).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#040a1b" />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/turtle-flow-icon-32.png" />
+    <link rel="apple-touch-icon" href="/assets/turtle-flow-icon-256.png" />
+    <link
+      rel="preload"
+      href="/fonts/asap-sharp-latin-standard-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Turtle Flow" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={og} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={og} />
+    <script is:inline>
+      // Start from the hidden state only while script can build the page up. If the motion
+      // script has not taken over within four seconds, show everything.
+      document.documentElement.classList.add('js');
+      setTimeout(function () {
+        if (!document.documentElement.classList.contains('ready')) {
+          document.documentElement.classList.add('settled');
+        }
+      }, 4000);
+    </script>
+  </head>
+  <body>
+    <!--
+      THESIS: Turtle Flow's one idea is that work flows through stages and stops, twice, for you.
+      The page proves that with the stage line itself and refuses the centered hero with a
+      glowing email box.
+      OWN-WORLD: deep-sea ink ground (#040a1b), the logo's blues (#12a4ff, #62cbff) and navy
+      hairlines; Asap Sharp for everything, JetBrains Mono only for hashes; Fluent 24 regular
+      icons; no cards, no gradients on type.
+      STORY: it is real but unfinished; you approve the exact spec and diff; it runs locally;
+      updates open soon.
+      FIRST VIEWPORT: left, headline, one sentence, the coming-soon notice with a disabled form;
+      right, the logo turtle gliding in; across the bottom, nine stages on one line, the two
+      approvals carrying example hash chips.
+      FORM: brief-pinned world (dashboard type and icons, logo colors); no concept roll; seed
+      key: pinned-brief.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review,
+      the verdict, DESIGN.md, and every shipping raster carrying its provenance
+    -->
+    <slot />
+  </body>
+</html>

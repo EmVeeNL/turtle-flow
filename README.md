@@ -55,6 +55,8 @@ What works:
 
 What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported successful history, reservations retain the fixed per-role cold-start size.
 
+The public website (a coming-soon page, [turtle-flow.com](https://turtle-flow.com)) lives in [`website/`](website/README.md) and is deployed with Cloudflare Workers Static Assets.
+
 ### Development
 
 ```bash

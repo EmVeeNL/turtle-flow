@@ -1,0 +1,314 @@
+---
+import { Icon } from 'astro-icon/components';
+import Base from '../layouts/Base.astro';
+
+// The real workflow stages (docs/WORKFLOW.md). The two gates are where the job waits for you.
+const stages = [
+  { icon: 'document-text-24-regular', name: 'Specification' },
+  {
+    icon: 'shield-checkmark-24-regular',
+    name: 'Scope approval',
+    gate: true,
+    hash: 'e3e27bf3…d369ff',
+  },
+  { icon: 'task-list-square-ltr-24-regular', name: 'Plan' },
+  { icon: 'code-24-regular', name: 'Implementation' },
+  { icon: 'beaker-24-regular', name: 'Build and tests' },
+  { icon: 'eye-24-regular', name: 'Review' },
+  { icon: 'checkmark-circle-24-regular', name: 'Verification' },
+  {
+    icon: 'shield-checkmark-24-regular',
+    name: 'Acceptance approval',
+    gate: true,
+    hash: '80d7bf51…d1d03e',
+  },
+  { icon: 'send-24-regular', name: 'Delivery' },
+];
+---
+
+<Base
+  title="Turtle Flow: supervised AI software delivery"
+  description="Turtle Flow runs Claude Code and Codex on your own machine and stops at every decision that is yours. Coming soon."
+>
+  <div class="relative isolate flex min-h-svh flex-col overflow-x-clip">
+    <div class="ambient pointer-events-none absolute inset-0 -z-10" aria-hidden="true"></div>
+
+    <header
+      class="mx-auto flex w-full max-w-[1280px] items-center justify-between px-6 pt-6 lg:px-10"
+    >
+      <a
+        href="/"
+        class="flex items-center gap-2.5 text-[1.0625rem] font-bold tracking-tight text-text no-underline"
+        aria-label="Turtle Flow, home"
+      >
+        <img src="/assets/turtle-flow-logo.png" alt="" width="51" height="24" class="h-6 w-auto" />
+        <span>Turtle <span class="text-blue">Flow</span></span>
+      </a>
+      <p
+        class="flex items-center gap-2 rounded-full border border-line bg-deep/70 px-3.5 py-1.5 text-sm text-muted"
+      >
+        <span class="beat size-2 rounded-full bg-blue" aria-hidden="true"></span>
+        In development
+      </p>
+    </header>
+
+    <main class="flex-1">
+      <section
+        class="mx-auto grid w-full max-w-[1280px] items-center gap-x-10 gap-y-8 px-6 pt-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:px-10 lg:pt-14"
+      >
+        <div class="order-2 lg:order-1" data-copy>
+          <h1
+            class="text-[clamp(2.6rem,6.4vw,5.25rem)] leading-[1.02] font-[650] tracking-[-0.03em]"
+            data-hide
+          >
+            Supervised AI software delivery.
+          </h1>
+          <p class="mt-6 max-w-[34rem] text-[1.1875rem] leading-relaxed text-muted" data-hide>
+            Turtle Flow runs Claude Code and Codex on your own machine and stops at every decision
+            that is yours. You approve the exact spec and the exact diff, and the approval is void
+            the moment either one changes.
+          </p>
+
+          <div class="mt-9 max-w-[34rem]" data-hide>
+            <p class="text-lg font-semibold text-text">
+              Coming soon. <span class="font-normal text-muted">Launch updates open shortly.</span>
+            </p>
+            <form class="mt-3 flex flex-col gap-3 sm:flex-row" aria-describedby="notify-note">
+              <label for="email" class="sr-only">Email address</label>
+              <input
+                id="email"
+                type="email"
+                name="email"
+                placeholder="you@company.com"
+                autocomplete="email"
+                disabled
+                class="h-12 min-w-0 rounded-lg border border-line bg-deep px-4 text-base text-text sm:flex-1 placeholder:text-muted/70 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <button
+                type="submit"
+                disabled
+                class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue px-5 text-base font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                Notify me
+                <Icon name="fluent:arrow-right-24-regular" class="size-5" aria-hidden="true" />
+              </button>
+            </form>
+            <p id="notify-note" class="mt-2.5 text-sm text-muted">
+              The signup is not open yet, so there is nothing to fill in today.
+            </p>
+          </div>
+        </div>
+
+        <div class="order-1 lg:order-2" data-turtle>
+          <img
+            src="/assets/turtle-flow-logo.png"
+            alt="A blue sea turtle with speed streaks trailing behind it, the Turtle Flow logo"
+            width="1439"
+            height="673"
+            class="mx-auto h-auto w-[min(100%,34rem)] drop-shadow-[0_28px_40px_rgb(0_20_80/0.55)] lg:w-full"
+            fetchpriority="high"
+          />
+        </div>
+      </section>
+
+      <section class="mx-auto w-full max-w-[1280px] px-6 pt-16 pb-6 lg:px-10 lg:pt-20">
+        <h2 class="max-w-[40rem] text-[1.625rem] leading-snug font-semibold tracking-tight">
+          Every job moves through the same stages, and always stops for you at scope and
+          acceptance.
+        </h2>
+        <ol class="stages mt-10" aria-label="The stages of a job">
+          <span class="track" aria-hidden="true" data-track></span>
+          {
+            stages.map((s) => (
+              <li class="stage" data-stage data-gate={s.gate ? '' : undefined}>
+                <span class="node">
+                  <Icon name={`fluent:${s.icon}`} class="size-[1.375rem]" aria-hidden="true" />
+                </span>
+                <div class="pt-2 lg:pt-0">
+                  <p class="text-[0.9375rem] leading-tight font-medium">{s.name}</p>
+                  {s.gate && (
+                    <>
+                      <p class="mt-1 text-sm text-cyan">You approve</p>
+                      <p class="chip" data-chip data-hash={s.hash}>
+                        <Icon
+                          name="fluent:fingerprint-24-regular"
+                          class="size-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span data-hash-text>{s.hash}</span>
+                      </p>
+                    </>
+                  )}
+                </div>
+              </li>
+            ))
+          }
+        </ol>
+        <p class="mt-6 max-w-[40rem] text-sm text-muted">
+          The hashes above are examples from a test run, not live data. An approval is bound to the
+          exact content it covers; change the content and the hash, and the approval no longer
+          applies.
+        </p>
+      </section>
+
+      <section
+        class="mx-auto grid w-full max-w-[1280px] gap-10 px-6 py-20 md:grid-cols-2 lg:px-10 lg:py-28"
+      >
+        <div class="flex gap-4">
+          <Icon
+            name="fluent:hand-left-24-regular"
+            class="mt-1 size-7 shrink-0 text-blue"
+            aria-hidden="true"
+          />
+          <div>
+            <h3 class="text-xl font-semibold tracking-tight">Supervised, not autonomous</h3>
+            <p class="mt-2 max-w-[28rem] text-muted">
+              Agents write the specification, the plan and the code. They never decide what happens
+              next: Turtle Flow does, and it waits for you at the gates that matter.
+            </p>
+          </div>
+        </div>
+        <div class="flex gap-4">
+          <Icon
+            name="fluent:laptop-24-regular"
+            class="mt-1 size-7 shrink-0 text-blue"
+            aria-hidden="true"
+          />
+          <div>
+            <h3 class="text-xl font-semibold tracking-tight">Local-first and private</h3>
+            <p class="mt-2 max-w-[28rem] text-muted">
+              It runs on your machine, with the Claude Code and Codex CLIs you already use. No
+              account, and no service of ours sitting between you and your code.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t border-line/70">
+      <div
+        class="mx-auto flex w-full max-w-[1280px] flex-col gap-2 px-6 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between lg:px-10"
+      >
+        <p>Turtle Flow is in development and not available yet.</p>
+        <p>&copy; 2026 Turtle Flow</p>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    import { gsap } from 'gsap';
+
+    const root = document.documentElement;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const stages = Array.from(document.querySelectorAll<HTMLElement>('[data-stage]'));
+    const chips = Array.from(document.querySelectorAll<HTMLElement>('[data-chip]'));
+    const track = document.querySelector<HTMLElement>('[data-track]');
+    const turtle = document.querySelector<HTMLElement>('[data-turtle] img');
+
+    const HEX = '0123456789abcdef';
+
+    // Resolves "e3e27bf3…d369ff" from random hex, left to right, like a hash being computed.
+    function decode(chip: HTMLElement, duration: number) {
+      const out = chip.querySelector<HTMLElement>('[data-hash-text]');
+      const final = chip.dataset.hash ?? '';
+      if (!out) return;
+      const state = { p: 0 };
+      gsap.to(state, {
+        p: 1,
+        duration,
+        ease: 'power1.inOut',
+        onUpdate() {
+          const fixed = Math.floor(state.p * final.length);
+          out.textContent = [...final]
+            .map((ch, i) =>
+              i < fixed || ch === '…' ? ch : HEX[Math.floor(Math.random() * 16)],
+            )
+            .join('');
+        },
+        onComplete() {
+          out.textContent = final;
+        },
+      });
+    }
+
+    function settle() {
+      root.classList.add('settled');
+      stages.forEach((s) => s.classList.add('lit'));
+    }
+
+    if (reduce || !track || !turtle) {
+      root.classList.add('ready');
+      settle();
+    } else {
+      root.classList.add('ready');
+      const GLIDE = 2.0;
+      const LINE_START = 0.55;
+      const LINE = 2.4;
+      const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
+
+      tl.to('[data-hide]', { opacity: 1, y: 0, duration: 0.9, stagger: 0.09 }, 0.05);
+      gsap.set('[data-hide]', { y: 18 });
+
+      // The turtle swims in from off the left edge and settles.
+      tl.fromTo(
+        turtle,
+        { x: () => -(window.innerWidth * 0.45), opacity: 0, filter: 'blur(10px)' },
+        {
+          x: 0,
+          opacity: 1,
+          filter: 'blur(0px)',
+          duration: GLIDE,
+          ease: 'power3.out',
+          clearProps: 'filter',
+        },
+        0,
+      );
+
+      // The line follows it across the page, lighting each stage as it passes.
+      const tween = { p: 0 };
+      tl.to(
+        tween,
+        {
+          p: 1,
+          duration: LINE,
+          ease: 'power2.inOut',
+          onUpdate() {
+            track.style.setProperty('--p', String(tween.p));
+          },
+        },
+        LINE_START,
+      );
+
+      stages.forEach((stage, i) => {
+        const at = LINE_START + (i / (stages.length - 1)) * LINE * 0.92;
+        tl.call(() => stage.classList.add('lit'), [], at);
+        const node = stage.querySelector('.node');
+        if (node) {
+          tl.fromTo(
+            node,
+            { scale: 0.7 },
+            { scale: 1, duration: 0.7, ease: 'back.out(2.2)' },
+            at,
+          );
+        }
+        const chip = stage.querySelector<HTMLElement>('[data-chip]');
+        if (chip) {
+          tl.to(chip, { clipPath: 'inset(0 0% 0 0)', duration: 0.7, ease: 'power3.out' }, at + 0.1);
+          tl.call(() => decode(chip, 1.1), [], at + 0.1);
+        }
+      });
+
+      tl.call(() => {
+        root.classList.add('settled');
+        // Idle: the turtle drifts, slowly.
+        gsap.to(turtle, {
+          y: -9,
+          duration: 3.4,
+          ease: 'sine.inOut',
+          yoyo: true,
+          repeat: -1,
+        });
+      });
+    }
+  </script>
+</Base>
