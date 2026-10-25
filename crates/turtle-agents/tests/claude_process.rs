@@ -105,7 +105,7 @@ async fn a_failing_cli_surfaces_its_message_and_a_missing_cli_is_fatal() {
         ..ClaudeConfig::default()
     });
     match runner.run(&request(Some(work.path()))).await {
-        Err(AgentError::Retryable(m)) => assert!(m.contains("529"), "{m}"),
+        Err(e) if e.retryable() => assert!(e.to_string().contains("529"), "{e}"),
         other => panic!("expected a retryable error, got {other:?}"),
     }
 

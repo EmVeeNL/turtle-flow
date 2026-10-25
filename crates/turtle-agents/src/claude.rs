@@ -36,7 +36,7 @@ pub const EXPECTED_TOOLS: &[&str] = &[
 ];
 
 /// A tool call the CLI refused because of permissions (e.g. a denied `git commit`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct PermissionDenial {
     pub tool: String,
     pub input: Value,

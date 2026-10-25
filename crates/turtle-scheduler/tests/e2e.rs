@@ -1073,10 +1073,14 @@ async fn a_budget_that_cannot_cover_the_next_run_holds_the_job_until_it_is_raise
 }
 
 #[tokio::test]
-async fn a_failed_run_gives_its_reservation_back_and_records_unknown_usage() {
+async fn a_failed_reported_run_is_charged_but_does_not_train_and_keeps_a_redacted_transcript() {
     let runner = FakeRunner::new().with_script(
         Role::SpecWriter,
-        vec![Step::Fail(AgentError::Fatal("not logged in".into()))],
+        vec![Step::Fail(AgentError::Fatal("provider stopped after usage".into()).with_details(
+            Some(UsageValue::Reported { usage: TokenUsage { input: 400, output: 75, ..TokenUsage::default() } }),
+            Some(r#"{"type":"result","api_key":"ghp_123456789012345678901234567890123456"}"#.into()),
+            vec![turtle_agents::PermissionDenial { tool: "Bash".into(), input: serde_json::json!({"command":"git commit token=ghp_123456789012345678901234567890123456"}) }],
+        ))],
     );
     let env = Env::new(runner, settings(Some(NEEDS_FEATURE_FILE), Some("release"))).await;
     env.main_repo()
@@ -1102,6 +1106,90 @@ async fn a_failed_run_gives_its_reservation_back_and_records_unknown_usage() {
     let job = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
     assert_eq!(job.job.state, JobState::Blocked);
 
+    let (budgets, usage, verdict, events, run) = b
+        .store
+        .with(move |s| {
+            Ok::<_, turtle_store::StoreError>((
+                s.list_budgets()?,
+                s.job_usage(id)?,
+                s.verify_ledger()?,
+                s.list_events(Some(id))?,
+                s.runs_for_job(id)?,
+            ))
+        })
+        .await
+        .expect("ledger");
+    assert!(matches!(verdict, LedgerVerdict::Consistent { .. }));
+    assert_eq!(budgets[0].reserved_tokens, 0);
+    assert_eq!(usage.runs_unavailable, 0);
+    assert_eq!(usage.tokens_reported, 475);
+    assert_eq!(run[0].provenance, "reported");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "run.policy_denied")
+            .count(),
+        1
+    );
+    let transcript_hash = run[0].transcript_blob.expect("stored run transcript");
+    let transcript = String::from_utf8(env.blobs.get(&transcript_hash).expect("read transcript"))
+        .expect("utf8 transcript");
+    assert!(!transcript.contains("ghp_123456789012345678901234567890123456"));
+    let observations: i64 = b
+        .store
+        .with(|s| {
+            Ok::<_, turtle_store::StoreError>(s.raw_connection().query_row(
+                "SELECT count(*) FROM estimation_observations",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .expect("observations");
+    assert_eq!(observations, 0, "failed usage must not train the estimator");
+    assert_eq!(
+        budgets[0].settled_tokens,
+        usage.tokens_reported + usage.tokens_estimated,
+        "reported failed usage is charged"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_run_without_usage_remains_unknown_and_releases_its_reservation() {
+    let runner = FakeRunner::new().with_script(
+        Role::SpecWriter,
+        vec![Step::Fail(AgentError::Fatal(
+            "provider failed before reporting usage".into(),
+        ))],
+    );
+    let env = Env::new(runner, settings(Some(NEEDS_FEATURE_FILE), Some("release"))).await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("release branch");
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let id = env.job;
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("budget");
+    assert_eq!(
+        drive(&env, &b, &ApprovalPolicy::approve_all())
+            .await
+            .job
+            .state,
+        JobState::Blocked
+    );
     let (budgets, usage, verdict) = b
         .store
         .with(move |s| {
@@ -1115,13 +1203,9 @@ async fn a_failed_run_gives_its_reservation_back_and_records_unknown_usage() {
         .expect("ledger");
     assert!(matches!(verdict, LedgerVerdict::Consistent { .. }));
     assert_eq!(budgets[0].reserved_tokens, 0);
-    assert_eq!(
-        usage.runs_unavailable, 1,
-        "the failed attempt has no usage numbers"
-    );
+    assert_eq!(usage.runs_unavailable, 1);
     assert_eq!(
         budgets[0].settled_tokens,
-        usage.tokens_reported + usage.tokens_estimated,
-        "only runs with usage numbers are charged"
+        usage.tokens_reported + usage.tokens_estimated
     );
 }

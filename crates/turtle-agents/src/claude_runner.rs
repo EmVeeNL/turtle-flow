@@ -172,38 +172,54 @@ fn tail(text: &str) -> String {
 
 /// Turns the finished process into an outcome. Pure, so every failure mode is unit-tested.
 pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
+    let raw = format!(
+        "{}{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        if out.stderr.is_empty() {
+            ""
+        } else {
+            "\n[stderr]\n"
+        },
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let transcript = (!raw.is_empty()).then_some(raw);
+    let mut parser = StreamParser::new();
+    for line in out.stdout_lossy().lines() {
+        parser.on_line(line);
+    }
+    let summary = parser.finish();
+    let usage = summary.usage.map(|usage| UsageValue::Reported { usage });
+    let denials = summary.permission_denials.clone();
     match out.outcome {
         ExitOutcome::TimedOut => {
             return Err(AgentError::Fatal(format!(
                 "the run was stopped after {}s",
                 out.duration.as_secs()
-            )));
+            ))
+            .with_details(usage, transcript, denials));
         }
         ExitOutcome::Signaled => {
-            return Err(AgentError::Retryable(
-                "Claude Code was killed by a signal".into(),
-            ));
+            return Err(
+                AgentError::Retryable("Claude Code was killed by a signal".into())
+                    .with_details(usage, transcript, denials),
+            );
         }
         ExitOutcome::Exited(_) => {}
     }
     if out.truncated {
         return Err(AgentError::Fatal(
             "Claude Code produced more output than the limit allows".into(),
-        ));
+        )
+        .with_details(usage, transcript, denials));
     }
-
-    let mut parser = StreamParser::new();
-    for line in out.stdout_lossy().lines() {
-        parser.on_line(line);
-    }
-    let summary = parser.finish();
 
     let leaks = summary.isolation_leaks();
     if !leaks.is_empty() {
         return Err(AgentError::Fatal(format!(
             "isolation failed: unexpected tools or servers were loaded ({})",
             leaks.join(", ")
-        )));
+        ))
+        .with_details(usage, transcript, denials));
     }
 
     let failed = summary.is_error == Some(true) || !out.success();
@@ -224,12 +240,14 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
             AgentError::Retryable(message)
         } else {
             AgentError::Fatal(message)
-        });
+        }
+        .with_details(usage, transcript, denials));
     }
     if summary.result_text.is_none() && summary.structured_output.is_none() {
-        return Err(AgentError::Retryable(
-            "Claude Code ended without a result".into(),
-        ));
+        return Err(
+            AgentError::Retryable("Claude Code ended without a result".into())
+                .with_details(usage, transcript, denials),
+        );
     }
 
     let structured = if schemas::for_role(role).is_some() {
@@ -237,15 +255,12 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
     } else {
         None
     };
-    let usage = summary
-        .usage
-        .map_or(UsageValue::Unavailable, |usage| UsageValue::Reported {
-            usage,
-        });
     Ok(AgentOutput {
         structured,
         text: summary.result_text.unwrap_or_default(),
-        usage,
+        usage: usage.unwrap_or(UsageValue::Unavailable),
+        transcript,
+        permission_denials: denials,
     })
 }
 
@@ -376,13 +391,31 @@ mod tests {
     }
 
     #[test]
+    fn recorded_git_denial_keeps_reported_usage_and_denial_details() {
+        let out = output(
+            &fixture("03-implementer-git-denied.ndjson"),
+            ExitOutcome::Exited(0),
+        );
+        let result =
+            interpret(&out, Role::Implementer).expect("denied command does not fail the whole run");
+        assert!(matches!(result.usage, UsageValue::Reported { .. }));
+        assert_eq!(result.permission_denials.len(), 1);
+        assert_eq!(result.permission_denials[0].tool, "Bash");
+        assert!(
+            result
+                .transcript
+                .is_some_and(|text| text.contains("permission_denials"))
+        );
+    }
+
+    #[test]
     fn a_recorded_run_that_loaded_connectors_fails_isolation() {
         let out = output(
             &fixture("01-readonly-stream.ndjson"),
             ExitOutcome::Exited(0),
         );
         match interpret(&out, Role::Reviewer) {
-            Err(AgentError::Fatal(m)) => assert!(m.contains("isolation failed"), "{m}"),
+            Err(e) if !e.retryable() => assert!(e.to_string().contains("isolation failed"), "{e}"),
             other => panic!("expected an isolation failure, got {other:?}"),
         }
     }
@@ -391,7 +424,7 @@ mod tests {
     fn failures_are_classified_by_whether_retrying_can_help() {
         let result_line = |text: &str| {
             format!(
-                r#"{{"type":"result","subtype":"error_during_execution","is_error":true,"result":"{text}"}}"#
+                r#"{{"type":"result","subtype":"error_during_execution","is_error":true,"result":"{text}","usage":{{"input_tokens":31,"output_tokens":9,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}}"#
             )
         };
         let overloaded = output(
@@ -400,20 +433,26 @@ mod tests {
         );
         assert!(matches!(
             interpret(&overloaded, Role::Planner),
-            Err(AgentError::Retryable(_))
+            Err(e) if e.retryable()
         ));
+        let Err(overloaded_error) = interpret(&overloaded, Role::Planner) else {
+            panic!("expected retryable failure")
+        };
+        assert!(
+            matches!(overloaded_error.usage(), Some(UsageValue::Reported { usage }) if usage.input == 31 && usage.output == 9)
+        );
         let budget = output(
             &result_line("Reached maximum budget ($3.00)"),
             ExitOutcome::Exited(1),
         );
         assert!(matches!(
             interpret(&budget, Role::Planner),
-            Err(AgentError::Fatal(_))
+            Err(e) if !e.retryable()
         ));
         let silent = output("", ExitOutcome::Exited(1));
         assert!(matches!(
             interpret(&silent, Role::Planner),
-            Err(AgentError::Fatal(_))
+            Err(e) if !e.retryable()
         ));
     }
 
@@ -421,17 +460,17 @@ mod tests {
     fn timeouts_truncation_and_signals_are_distinguished() {
         assert!(matches!(
             interpret(&output("", ExitOutcome::TimedOut), Role::Implementer),
-            Err(AgentError::Fatal(_))
+            Err(e) if !e.retryable()
         ));
         assert!(matches!(
             interpret(&output("", ExitOutcome::Signaled), Role::Implementer),
-            Err(AgentError::Retryable(_))
+            Err(e) if e.retryable()
         ));
         let mut big = output("", ExitOutcome::Exited(0));
         big.truncated = true;
         assert!(matches!(
             interpret(&big, Role::Implementer),
-            Err(AgentError::Fatal(_))
+            Err(e) if !e.retryable()
         ));
     }
 
