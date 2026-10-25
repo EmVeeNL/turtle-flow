@@ -49,6 +49,9 @@ pub struct AgentOutput {
     pub structured: Option<Value>,
     pub text: String,
     pub usage: UsageValue,
+    /// Original provider stream; redacted and capped by the executor before storage.
+    pub transcript: Option<String>,
+    pub permission_denials: Vec<crate::claude::PermissionDenial>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -57,6 +60,81 @@ pub enum AgentError {
     Retryable(String),
     #[error("{0}")]
     Fatal(String),
+    #[error("{0}")]
+    RetryableDetails(Box<AgentErrorDetails>),
+    #[error("{0}")]
+    FatalDetails(Box<AgentErrorDetails>),
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentErrorDetails {
+    message: String,
+    usage: Option<UsageValue>,
+    transcript: Option<String>,
+    permission_denials: Vec<crate::claude::PermissionDenial>,
+}
+
+impl std::fmt::Display for AgentErrorDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl AgentError {
+    #[must_use]
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::Retryable(_) | Self::RetryableDetails(_))
+    }
+    #[must_use]
+    pub fn usage(&self) -> Option<UsageValue> {
+        match self {
+            Self::RetryableDetails(details) | Self::FatalDetails(details) => details.usage,
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn transcript(&self) -> Option<&str> {
+        match self {
+            Self::RetryableDetails(details) | Self::FatalDetails(details) => {
+                details.transcript.as_deref()
+            }
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub fn permission_denials(&self) -> &[crate::claude::PermissionDenial] {
+        match self {
+            Self::RetryableDetails(details) | Self::FatalDetails(details) => {
+                &details.permission_denials
+            }
+            _ => &[],
+        }
+    }
+    #[must_use]
+    pub fn with_details(
+        self,
+        usage: Option<UsageValue>,
+        transcript: Option<String>,
+        permission_denials: Vec<crate::claude::PermissionDenial>,
+    ) -> Self {
+        let (retryable, message) = match self {
+            Self::Retryable(message) => (true, message),
+            Self::Fatal(message) => (false, message),
+            Self::RetryableDetails(details) => (true, details.message),
+            Self::FatalDetails(details) => (false, details.message),
+        };
+        let details = Box::new(AgentErrorDetails {
+            message,
+            usage,
+            transcript,
+            permission_denials,
+        });
+        if retryable {
+            Self::RetryableDetails(details)
+        } else {
+            Self::FatalDetails(details)
+        }
+    }
 }
 
 pub trait AgentRunner: Send + Sync + 'static {
@@ -188,6 +266,8 @@ fn json_output(value: &impl serde::Serialize, text: &str, usage: UsageValue) -> 
         structured: Some(serde_json::to_value(value).expect("fake documents serialize")),
         text: text.to_owned(),
         usage,
+        transcript: None,
+        permission_denials: Vec::new(),
     }
 }
 
@@ -244,6 +324,8 @@ impl AgentRunner for FakeRunner {
                     structured: Some(v.clone()),
                     text: "scripted output".into(),
                     usage,
+                    transcript: None,
+                    permission_denials: Vec::new(),
                 });
             }
             _ => {}
@@ -342,6 +424,8 @@ impl AgentRunner for FakeRunner {
                     structured: None,
                     text: "changes made".into(),
                     usage,
+                    transcript: None,
+                    permission_denials: Vec::new(),
                 })
             }
             Role::Reviewer => Ok(json_output(
@@ -380,6 +464,8 @@ impl AgentRunner for FakeRunner {
                 structured: None,
                 text: "ok".into(),
                 usage,
+                transcript: None,
+                permission_denials: Vec::new(),
             }),
         }
     }

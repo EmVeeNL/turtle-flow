@@ -11,6 +11,7 @@ pub mod prompts;
 pub mod runner;
 pub mod schemas;
 
+pub use claude::PermissionDenial;
 pub use claude_runner::{ClaudeConfig, ClaudeRunner};
 pub use discovery::{CompatStatus, ProviderId, ProviderInfo, discover};
 pub use runner::{

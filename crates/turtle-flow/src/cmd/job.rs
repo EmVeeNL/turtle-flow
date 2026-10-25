@@ -329,6 +329,30 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             a.subject_hash.short()
         );
     }
+    let denied: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "run.policy_denied")
+        .collect();
+    if !denied.is_empty() {
+        println!("  denied actions {}", denied.len());
+        for event in denied {
+            let tool = event
+                .payload
+                .get("denial")
+                .and_then(|d| d.get("tool"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown tool");
+            println!(
+                "    {} (run {})",
+                tool,
+                event
+                    .payload
+                    .get("run")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+            );
+        }
+    }
     let usage = rt.store.with(move |s| s.job_usage(id)).await?;
     if usage.runs > 0 {
         println!(

@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use tempfile::TempDir;
 use turtle_artifacts::BlobStore;
-use turtle_domain::{Actor, ArtifactKind, JobKey};
-use turtle_store::{NewRevision, Store, SystemClock};
+use turtle_domain::{Actor, ArtifactKind, JobKey, Role, RunId, TokenUsage, UsageValue};
+use turtle_store::{NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
 
 struct World {
     _dir: TempDir,
@@ -236,6 +236,46 @@ fn a_planned_job_shows_an_honest_preflight_range() {
             && report.contains("planned runs only"),
         "{report}"
     );
+}
+
+#[test]
+fn run_commands_list_usage_and_print_the_stored_redacted_transcript() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Add a greeting"]);
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job");
+    let run = RunId::new();
+    let text = "{\"type\":\"result\",\"result\":\"done\"}\n";
+    let blobs = BlobStore::open(w.home.join("blobs")).expect("blobs");
+    let hash = blobs.put(text.as_bytes()).expect("transcript blob");
+    store.transaction(|tx| {
+        tx.begin_run(&NewRun { id: run, job_id: job.job.id, role: Role::Reviewer, stage: "review".into(), provider: "claude-code".into(), model: "sonnet".into(), adapter_version: "test".into(), context_manifest_rev: None })?;
+        tx.finish_run(run, RunEnd::Succeeded, None, UsageValue::Reported { usage: TokenUsage { input: 12, output: 4, ..TokenUsage::default() } })?;
+        tx.set_transcript_blob(run, hash, text.len() as u64)?;
+        tx.append_event(&NewEvent { project_id: Some(job.project_id), job_id: Some(job.job.id), kind: "run.policy_denied".into(), payload: serde_json::json!({"run":run.to_string(),"denial":{"tool":"Bash","input":"git commit"}}), actor: Actor::AgentRun { id: run } })?;
+        Ok(())
+    }).expect("record run");
+    drop(store);
+
+    let listed = w.ok(&["runs", "list", "--job", "PAY-1"]);
+    assert!(
+        listed.contains("claude-code/sonnet") && listed.contains("16 tokens: 12 input"),
+        "{listed}"
+    );
+    let transcript = w.ok(&["runs", "transcript", &run.to_string()]);
+    assert!(
+        transcript.contains("result") && transcript.contains("done"),
+        "{transcript}"
+    );
+    let show = w.ok(&["job", "show", "PAY-1"]);
+    assert!(
+        show.contains("denied actions 1") && show.contains("Bash"),
+        "{show}"
+    );
+    let raw = w.ok(&["runs", "transcript", &run.to_string(), "--raw"]);
+    assert_eq!(raw, text);
 }
 
 #[test]

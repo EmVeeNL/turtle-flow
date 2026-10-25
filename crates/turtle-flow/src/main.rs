@@ -4,6 +4,7 @@
 mod cmd;
 mod doctor;
 mod paths;
+mod runs;
 mod runtime;
 
 use std::process::ExitCode;
@@ -60,6 +61,9 @@ enum Command {
     /// Token budgets.
     #[command(subcommand)]
     Budget(BudgetCommand),
+    /// Inspect agent runs and their redacted transcripts.
+    #[command(subcommand)]
+    Runs(runs::RunsCommand),
     /// List what is waiting for your decision.
     Approvals,
     /// Decide an approval (interactive terminal only).
@@ -142,6 +146,7 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         Command::Project(c) => cmd::project::run(&Runtime::open(home)?, c).await?,
         Command::Job(c) => cmd::job::run(&Runtime::open(home)?, c).await?,
         Command::Budget(c) => cmd::budget::run(&Runtime::open(home)?, c).await?,
+        Command::Runs(c) => runs::run(&Runtime::open(home)?, c).await?,
         Command::Approvals => cmd::approvals::list(&Runtime::open(home)?).await?,
         Command::Approve {
             id,

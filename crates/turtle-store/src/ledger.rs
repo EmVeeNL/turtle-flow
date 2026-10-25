@@ -114,6 +114,24 @@ pub struct NewRun {
     pub context_manifest_rev: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RunRecord {
+    pub id: String,
+    pub role: String,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub input: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub output: u64,
+    pub provenance: String,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub transcript_blob: Option<turtle_domain::Sha256>,
+}
+
 /// How a run ended, for the `agent_runs` row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunEnd {
@@ -179,6 +197,27 @@ fn read_budget(r: &rusqlite::Row<'_>) -> rusqlite::Result<BudgetRecord> {
 }
 
 impl Tx<'_> {
+    /// Links a captured transcript blob to its run, registering blob metadata atomically.
+    pub fn set_transcript_blob(
+        &mut self,
+        run: RunId,
+        hash: turtle_domain::Sha256,
+        size: u64,
+    ) -> Result<()> {
+        let now = self.now()?;
+        let size =
+            i64::try_from(size).map_err(|_| StoreError::Corrupt("transcript too large".into()))?;
+        self.tx.execute(
+            "INSERT INTO blobs(sha256, size_bytes, media_type, ref_count, created_at) VALUES (?1, ?2, 'application/x-ndjson', 1, ?3) ON CONFLICT(sha256) DO UPDATE SET ref_count = ref_count + 1",
+            params![hash.to_hex(), size, now],
+        )?;
+        self.tx.execute(
+            "UPDATE agent_runs SET transcript_blob = ?1 WHERE id = ?2",
+            params![hash.to_hex(), run.to_string()],
+        )?;
+        Ok(())
+    }
+
     fn latest_budget(&self, scope: BudgetScope) -> Result<Option<BudgetRecord>> {
         Ok(self
             .tx
@@ -680,6 +719,15 @@ impl Tx<'_> {
 }
 
 impl Store {
+    pub fn runs_for_job(&self, job: JobId) -> Result<Vec<RunRecord>> {
+        read_runs(self.raw_connection(), Some(job), None)
+    }
+    pub fn run_by_id(&self, id: &str) -> Result<RunRecord> {
+        read_runs(self.raw_connection(), None, Some(id))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| StoreError::NotFound(format!("run {id}")))
+    }
     /// Context manifest revision links recorded for this job's agent runs.
     pub fn run_context_manifest_revisions(&self, job: JobId) -> Result<Vec<Option<String>>> {
         let mut stmt = self.raw_connection().prepare(
@@ -774,4 +822,60 @@ impl Store {
         }
         Ok(LedgerVerdict::Consistent { budgets, entries })
     }
+}
+
+fn read_runs(
+    conn: &rusqlite::Connection,
+    job: Option<JobId>,
+    id: Option<&str>,
+) -> Result<Vec<RunRecord>> {
+    let sql = "SELECT a.id,a.role,a.provider,a.model,a.status,IFNULL(u.input_tokens,0),IFNULL(u.cached_read,0),IFNULL(u.cached_write,0),IFNULL(u.output_tokens,0),IFNULL(u.provenance,'unavailable'),a.started_at,a.ended_at,CASE WHEN a.started_at IS NOT NULL AND a.ended_at IS NOT NULL THEN CAST(MAX(0,ROUND((julianday(a.ended_at)-julianday(a.started_at))*86400000)) AS INTEGER) END,a.transcript_blob FROM agent_runs a LEFT JOIN usage_records u ON u.run_id=a.id WHERE (?1 IS NULL OR a.job_id=?1) AND (?2 IS NULL OR a.id=?2) ORDER BY a.created_at,a.id";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(params![job.map(|j| j.to_string()), id], |r| {
+            let hash: Option<String> = r.get(13)?;
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, i64>(8)?,
+                r.get::<_, String>(9)?,
+                r.get::<_, Option<String>>(10)?,
+                r.get::<_, Option<String>>(11)?,
+                r.get::<_, Option<i64>>(12)?,
+                hash,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(RunRecord {
+                id: r.0,
+                role: r.1,
+                provider: r.2,
+                model: r.3,
+                status: r.4,
+                input: to_u64(r.5),
+                cache_read: to_u64(r.6),
+                cache_write: to_u64(r.7),
+                output: to_u64(r.8),
+                provenance: r.9,
+                started_at: r.10,
+                ended_at: r.11,
+                duration_ms: r.12.map(to_u64),
+                transcript_blob: r
+                    .13
+                    .map(|h| {
+                        h.parse()
+                            .map_err(|e| StoreError::Corrupt(format!("bad transcript hash: {e}")))
+                    })
+                    .transpose()?,
+            })
+        })
+        .collect()
 }

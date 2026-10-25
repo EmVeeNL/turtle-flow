@@ -50,6 +50,31 @@ use crate::shared::SharedStore;
 
 /// Largest slice of gate output kept in the gate result artifact.
 const OUTPUT_TAIL_CHARS: usize = 4_000;
+const MAX_TRANSCRIPT_BYTES: usize = 2 * 1024 * 1024;
+
+fn trim_chars(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+fn redacted_transcript(raw: &str) -> String {
+    let (clean, _) = turtle_context::redact(raw);
+    if clean.len() <= MAX_TRANSCRIPT_BYTES {
+        return clean;
+    }
+    let mut end = MAX_TRANSCRIPT_BYTES;
+    while !clean.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[transcript truncated at {} bytes]\n",
+        &clean[..end],
+        MAX_TRANSCRIPT_BYTES
+    )
+}
+
+fn redact_gate_output(raw: &str) -> String {
+    turtle_context::redact(raw).0
+}
 
 pub struct FactoryExecutor<R, C, G> {
     store: SharedStore,
@@ -94,9 +119,10 @@ fn label<T: Serialize>(value: &T) -> String {
 }
 
 fn agent_error(e: AgentError) -> ExecError {
-    match e {
-        AgentError::Retryable(m) => ExecError::Retryable(m),
-        AgentError::Fatal(m) => ExecError::Fatal(m),
+    if e.retryable() {
+        ExecError::Retryable(e.to_string())
+    } else {
+        ExecError::Fatal(e.to_string())
     }
 }
 
@@ -340,18 +366,55 @@ where
         let result = self.runner.run(&req).await;
         let (project_id, event_usage) = (
             job.project_id,
-            result.as_ref().map_or(UsageValue::Unavailable, |o| o.usage),
+            result.as_ref().map_or_else(
+                |e| e.usage().unwrap_or(UsageValue::Unavailable),
+                |o| o.usage,
+            ),
         );
+        let transcript_raw = match &result {
+            Ok(out) => out.transcript.clone().or_else(|| {
+                serde_json::to_string(&json!({
+                    "type": "result", "result": out.text, "structured_output": out.structured,
+                    "usage": out.usage, "permission_denials": out.permission_denials,
+                }))
+                .ok()
+            }),
+            Err(e) => e.transcript().map(str::to_owned),
+        };
+        let transcript = transcript_raw.as_deref().map(redacted_transcript);
+        let transcript_blob = transcript
+            .as_deref()
+            .map(|text| {
+                self.blobs
+                    .put(text.as_bytes())
+                    .map(|hash| (hash, text.len() as u64))
+            })
+            .transpose()
+            .map_err(retryable)?;
+        let denials = match &result {
+            Ok(out) => out.permission_denials.as_slice(),
+            Err(e) => e.permission_denials(),
+        };
+        let denials: Vec<_> = denials
+            .iter()
+            .map(|d| {
+                let raw =
+                    serde_json::to_string(&d.input).unwrap_or_else(|_| "[unavailable]".into());
+                let (clean, _) = turtle_context::redact(&raw);
+                json!({"tool": d.tool, "input": trim_chars(&clean, 2_000)})
+            })
+            .collect();
         let (end, error_text, usage) = match &result {
             Ok(out) => (RunEnd::Succeeded, None, out.usage),
             Err(e) => (
                 RunEnd::Failed {
-                    retryable: matches!(e, AgentError::Retryable(_)),
+                    retryable: e.retryable(),
                 },
                 Some(e.to_string()),
-                UsageValue::Unavailable,
+                e.usage().unwrap_or(UsageValue::Unavailable),
             ),
         };
+        let error_text = error_text.map(|message| turtle_context::redact(&message).0);
         let charge = match usage {
             UsageValue::Reported { usage } | UsageValue::Estimated { usage } => Some(usage.total()),
             // A successful run that reported nothing still used something; assume the estimate.
@@ -363,9 +426,28 @@ where
                 s.transaction(|tx| {
                     tx.finish_run(run_id, end, error_text.as_deref(), usage)?;
                     match charge {
-                        Some(tokens) => tx.settle_with_estimation(run_id, tokens, &path)?,
-                        None => tx.release(run_id, "run failed; usage unknown")?,
+                        Some(tokens) if result_ok(end) => {
+                            tx.settle_with_estimation(run_id, tokens, &path)?;
+                        }
+                        Some(tokens) => {
+                            tx.settle(run_id, tokens)?;
+                        }
+                        None => {
+                            tx.release(run_id, "run failed; usage unknown")?;
+                        }
                     };
+                    if let Some((hash, size)) = transcript_blob {
+                        tx.set_transcript_blob(run_id, hash, size)?;
+                    }
+                    for denial in &denials {
+                        tx.append_event(&NewEvent {
+                            project_id: Some(project_id),
+                            job_id: Some(job_id),
+                            kind: "run.policy_denied".into(),
+                            payload: json!({"run": run_id.to_string(), "denial": denial}),
+                            actor: Actor::AgentRun { id: run_id },
+                        })?;
+                    }
                     if result_ok(end) {
                         tx.append_event(&NewEvent {
                             project_id: Some(project_id),
@@ -826,6 +908,7 @@ where
         let out = turtle_exec::run(spec).await.map_err(retryable)?;
         let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&out.stderr));
+        text = redact_gate_output(&text);
         let tail: String = {
             let chars: Vec<char> = text.chars().collect();
             chars[chars.len().saturating_sub(OUTPUT_TAIL_CHARS)..]
@@ -1078,5 +1161,20 @@ where
                 Ok(ExecOutcome::done(json!({"note": "nothing to do yet"})))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+
+    #[test]
+    fn transcript_and_gate_redaction_remove_corpus_secrets() {
+        let secret = "api_key = ghp_123456789012345678901234567890123456";
+        let stored = redacted_transcript(&format!("{{\"message\":\"{secret}\"}}\n"));
+        assert!(!stored.contains("ghp_123456789012345678901234567890123456"));
+        assert!(stored.contains("[REDACTED:"));
+        let gate = redact_gate_output(&format!("test output: {secret}"));
+        assert!(!gate.contains("ghp_123456789012345678901234567890123456"));
     }
 }
