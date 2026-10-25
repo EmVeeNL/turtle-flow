@@ -18,6 +18,7 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::json;
 use time::{OffsetDateTime, Time};
 use turtle_domain::{Actor, BudgetId, JobId, ProjectId, ReservationId, Role, RunId, UsageValue};
+use turtle_tokens::{EstimateBasis, ReservationSize};
 
 use crate::clock::format_ts;
 use crate::error::{Result, StoreError};
@@ -344,6 +345,40 @@ impl Tx<'_> {
     /// Reserves `tokens` for a run against every budget that applies, all or nothing (B-1).
     /// The run row must exist (`begin_run`).
     pub fn reserve(&mut self, run: RunId, job: JobId, tokens: u64) -> Result<ReservationOutcome> {
+        self.reserve_inner(run, job, tokens, None)
+    }
+
+    pub fn reserve_estimated(
+        &mut self,
+        run: RunId,
+        job: JobId,
+        size: &ReservationSize,
+    ) -> Result<ReservationOutcome> {
+        let basis = match size.estimate.basis {
+            EstimateBasis::ColdStart => json!({"kind": "cold_start"}),
+            EstimateBasis::Bucket {
+                level,
+                observations,
+            } => json!({"kind": "bucket", "level": level, "observations": observations}),
+        };
+        self.reserve_inner(
+            run,
+            job,
+            size.tokens,
+            Some(json!({
+                "p10": size.estimate.p10, "p50": size.estimate.p50, "p90": size.estimate.p90,
+                "confidence": size.estimate.confidence.label(), "basis": basis,
+            })),
+        )
+    }
+
+    fn reserve_inner(
+        &mut self,
+        run: RunId,
+        job: JobId,
+        tokens: u64,
+        estimate: Option<serde_json::Value>,
+    ) -> Result<ReservationOutcome> {
         let budgets = self.budgets_for_job(job)?;
         if budgets.is_empty() {
             return Ok(ReservationOutcome::Unmetered);
@@ -394,6 +429,7 @@ impl Tx<'_> {
                 "run": run.to_string(), "tokens": tokens,
                 "budgets": budgets.iter().map(|b| b.id.to_string()).collect::<Vec<_>>(),
                 "soft_exceeded": soft_exceeded.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "estimate": estimate,
             }),
             actor: Actor::Scheduler,
         })?;

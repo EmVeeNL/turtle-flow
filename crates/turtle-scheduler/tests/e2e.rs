@@ -10,7 +10,7 @@ use turtle_agents::{AgentError, FakeRunner, Step};
 use turtle_artifacts::BlobStore;
 use turtle_domain::{
     Actor, ApprovalStatus, ArtifactKind, GateKind, JobId, JobState, JobType, Priority,
-    ProjectCommands, ProjectSettings, Role,
+    ProjectCommands, ProjectSettings, Role, TokenUsage, UsageValue,
 };
 use turtle_git::{Identity, Repo};
 use turtle_scheduler::{
@@ -36,6 +36,75 @@ struct Env {
     cfg: Arc<ExecConfig>,
     runner: Arc<FakeRunner>,
     job: JobId,
+}
+
+#[tokio::test]
+async fn reported_runs_change_future_reservations_but_unreported_runs_do_not() {
+    let usage = TokenUsage {
+        input: 1_000,
+        output: 200,
+        ..TokenUsage::default()
+    };
+    let plan = serde_json::json!({"tasks": (1..=12).map(|n| serde_json::json!({
+        "id": format!("T{n}"), "title": format!("Task {n}"), "instructions": "write a file",
+        "expected_paths": [format!("feature_t{n}.txt")], "criteria": if n == 1 { vec!["AC-1"] } else { vec![] },
+        "depends_on": [], "complexity": null
+    })).collect::<Vec<_>>()});
+    let runner = FakeRunner::new()
+        .with_script(Role::Planner, vec![Step::Output(plan)])
+        .with_usage_script(
+            Role::Implementer,
+            std::iter::repeat_n(UsageValue::Reported { usage }, 10)
+                .chain([UsageValue::Estimated { usage }, UsageValue::Unavailable])
+                .collect(),
+        );
+    let env = Env::new(runner, settings(Some("test -f feature_t12.txt"), None)).await;
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let id = env.job;
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("budget");
+    let job = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(job.job.state, JobState::Done);
+    let events = b
+        .store
+        .with(move |s| s.list_events(Some(env.job)))
+        .await
+        .expect("events");
+    let conn = Store::open(&env.db, Arc::new(SystemClock)).expect("store");
+    let reservations: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "ledger.reserved")
+        .filter(|e| e.payload["estimate"]["basis"].is_object())
+        .filter(|e| e.payload["estimate"]["p50"].is_number())
+        .filter_map(|e| {
+            let run = e.payload["run"].as_str()?;
+            let role: String = conn
+                .raw_connection()
+                .query_row("SELECT role FROM agent_runs WHERE id=?1", [run], |r| {
+                    r.get(0)
+                })
+                .ok()?;
+            (role == "implementer")
+                .then(|| e.payload["tokens"].as_u64())
+                .flatten()
+        })
+        .collect();
+    assert_eq!(reservations.len(), 12, "{reservations:?}");
+    assert_eq!(reservations[0], 40_000);
+    assert!(reservations[10] < 40_000, "{reservations:?}");
+    assert_eq!(reservations[10], reservations[11]);
 }
 
 struct Booted {
@@ -204,6 +273,7 @@ impl Booted {
                 return Ok(());
             }
             JobState::ScopeApproval => GateKind::Scope,
+            JobState::PlanApproval => GateKind::Plan,
             JobState::AcceptanceApproval => GateKind::Acceptance,
             _ => return Ok(()),
         };

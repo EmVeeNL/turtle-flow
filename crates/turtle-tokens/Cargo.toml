@@ -14,3 +14,6 @@ workspace = true
 [dependencies]
 turtle-domain = { workspace = true }
 turtle-policy = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

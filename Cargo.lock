@@ -1015,6 +1015,7 @@ dependencies = [
  "turtle-policy",
  "turtle-scheduler",
  "turtle-store",
+ "turtle-tokens",
  "turtle-workflow",
 ]
 
@@ -1077,6 +1078,7 @@ dependencies = [
  "time",
  "turtle-domain",
  "turtle-policy",
+ "turtle-tokens",
  "turtle-workflow",
  "ulid",
 ]
@@ -1085,6 +1087,7 @@ dependencies = [
 name = "turtle-tokens"
 version = "0.0.1"
 dependencies = [
+ "proptest",
  "turtle-domain",
  "turtle-policy",
 ]

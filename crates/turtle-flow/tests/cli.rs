@@ -4,7 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
 use tempfile::TempDir;
+use turtle_artifacts::BlobStore;
+use turtle_domain::{Actor, ArtifactKind, JobKey};
+use turtle_store::{NewRevision, Store, SystemClock};
 
 struct World {
     _dir: TempDir,
@@ -170,6 +174,68 @@ fn jobs_are_created_listed_and_have_an_event_history() {
     assert!(w.ok(&["job", "list", "--active"]).contains("PAY-1"));
     w.ok(&["job", "cancel", "PAY-1"]);
     assert!(!w.ok(&["job", "list", "--active"]).contains("PAY-1"));
+}
+
+#[test]
+fn a_planned_job_shows_an_honest_preflight_range() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Add a greeting"]);
+    assert!(
+        w.ok(&["budget", "estimate", "PAY-1"])
+            .contains("estimate unknown")
+    );
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let id = store.find_job(&key).expect("job").job.id;
+    let blobs = BlobStore::open(w.home.join("blobs")).expect("blobs");
+    let documents = [
+        (
+            ArtifactKind::Specification,
+            serde_json::json!({
+                "summary":"Add a greeting", "criteria":[{"id":"AC-1","statement":"greeting appears","verification":"test"}],
+                "affected_areas":["src/**"], "risks":[]
+            }),
+        ),
+        (
+            ArtifactKind::Plan,
+            serde_json::json!({"tasks":[{
+                "id":"T1", "title":"Greeting", "instructions":"Add greeting", "expected_paths":["src/main.rs"],
+                "criteria":["AC-1"]
+            }]}),
+        ),
+    ];
+    for (kind, value) in documents {
+        let bytes = serde_json::to_vec(&value).expect("json");
+        let hash = blobs.put(&bytes).expect("blob");
+        store
+            .transaction(|tx| {
+                tx.add_revision(&NewRevision {
+                    job_id: id,
+                    kind,
+                    sha256: hash,
+                    size_bytes: bytes.len() as u64,
+                    media_type: "application/json".into(),
+                    schema_id: None,
+                    author: Actor::Scheduler,
+                })
+            })
+            .expect("revision");
+    }
+    drop(store);
+    let show = w.ok(&["job", "show", "PAY-1"]);
+    assert!(
+        show.contains("estimate") && show.contains("unknown confidence"),
+        "{show}"
+    );
+    let report = w.ok(&["budget", "estimate", "PAY-1"]);
+    assert!(
+        report.contains("estimate")
+            && report.contains("confidence   unknown")
+            && report.contains("envelope")
+            && report.contains("planned runs only"),
+        "{report}"
+    );
 }
 
 #[test]

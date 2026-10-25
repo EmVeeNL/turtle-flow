@@ -36,6 +36,9 @@ use turtle_store::{
     DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, NewRun, ProjectRecord,
     ReservationOutcome, RevisionRecord, RunEnd,
 };
+use turtle_tokens::{
+    BucketPath, cold_start_estimate, estimate, reservation_size, score_complexity,
+};
 use turtle_workflow::{Effect, JobCommand, ReviewVerdict, VerificationOutcome};
 
 use crate::approvals::ApprovalService;
@@ -75,19 +78,6 @@ fn git_error(e: GitError) -> ExecError {
         // Policy refusals are deterministic: retrying cannot help.
         GitError::CommitRefused(_) | GitError::Invalid(_) => fatal(e),
         other => retryable(other),
-    }
-}
-
-/// What a run is expected to cost in tokens processed (cache reads and writes included), used
-/// to reserve budget before the run. A fixed cold-start guess per role, taken from the first
-/// real runs; the historical estimator (`docs/TOKEN-INTELLIGENCE.md` §7) replaces it.
-const fn cold_start_estimate(role: Role) -> u64 {
-    match role {
-        Role::Discovery | Role::Planner | Role::Verifier => 25_000,
-        Role::SpecWriter => 20_000,
-        Role::Implementer | Role::Fixer => 40_000,
-        Role::Reviewer => 30_000,
-        Role::Summarizer | Role::ReleaseNotes => 10_000,
     }
 }
 
@@ -234,7 +224,20 @@ where
     ) -> Result<AgentOutput, ExecError> {
         let (run_id, role, provider) = (req.run_id, req.role, self.runner.name().to_owned());
         let job_id = job.job.id;
-        let estimate = cold_start_estimate(role);
+        let complexity = req
+            .spec
+            .as_ref()
+            .map_or(turtle_domain::Complexity::XS, |spec| {
+                score_complexity(spec, req.plan.as_ref()).class
+            });
+        let path = BucketPath::new(
+            &job.project_id.to_string(),
+            role,
+            complexity,
+            &provider,
+            self.runner.model(),
+        );
+        let lookup_path = path.clone();
         let new_run = NewRun {
             id: run_id,
             job_id,
@@ -249,15 +252,18 @@ where
             .with(move |s| {
                 s.transaction(|tx| {
                     tx.begin_run(&new_run)?;
-                    let outcome = tx.reserve(run_id, job_id, estimate)?;
+                    let buckets = tx.estimation_buckets(&lookup_path)?;
+                    let size = reservation_size(estimate(&buckets, cold_start_estimate(role)));
+                    let outcome = tx.reserve_estimated(run_id, job_id, &size)?;
                     if matches!(outcome, ReservationOutcome::Denied { .. }) {
                         tx.cancel_run(run_id, "refused: no budget")?;
                     }
-                    Ok(outcome)
+                    Ok((outcome, size.tokens))
                 })
             })
             .await
             .map_err(retryable)?;
+        let (reserved, reserved_tokens) = reserved;
         if let ReservationOutcome::Denied { budget, requested } = &reserved {
             return Err(ExecError::Hold {
                 command: JobCommand::BudgetExhausted,
@@ -287,7 +293,7 @@ where
         let charge = match usage {
             UsageValue::Reported { usage } | UsageValue::Estimated { usage } => Some(usage.total()),
             // A successful run that reported nothing still used something; assume the estimate.
-            UsageValue::Unavailable if result.is_ok() => Some(estimate),
+            UsageValue::Unavailable if result.is_ok() => Some(reserved_tokens),
             UsageValue::Unavailable => None,
         };
         self.store
@@ -295,7 +301,7 @@ where
                 s.transaction(|tx| {
                     tx.finish_run(run_id, end, error_text.as_deref(), usage)?;
                     match charge {
-                        Some(tokens) => tx.settle(run_id, tokens)?,
+                        Some(tokens) => tx.settle_with_estimation(run_id, tokens, &path)?,
                         None => tx.release(run_id, "run failed; usage unknown")?,
                     };
                     if result_ok(end) {

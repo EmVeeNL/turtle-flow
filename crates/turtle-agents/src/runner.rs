@@ -99,12 +99,51 @@ pub struct RecordedCall {
 pub struct FakeRunner {
     scripts: Mutex<HashMap<Role, VecDeque<Step>>>,
     calls: Mutex<Vec<RecordedCall>>,
+    reported_usage: bool,
+    usage_scripts: Mutex<HashMap<Role, VecDeque<UsageValue>>>,
 }
 
 impl FakeRunner {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with_reported_usage(mut self) -> Self {
+        self.reported_usage = true;
+        self
+    }
+
+    #[must_use]
+    pub fn with_usage_script(self, role: Role, usage: Vec<UsageValue>) -> Self {
+        self.usage_scripts
+            .lock()
+            .expect("lock")
+            .insert(role, usage.into());
+        self
+    }
+
+    fn next_usage(&self, role: Role) -> UsageValue {
+        self.usage_scripts
+            .lock()
+            .expect("lock")
+            .get_mut(&role)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| self.usage())
+    }
+
+    fn usage(&self) -> UsageValue {
+        let usage = TokenUsage {
+            input: 1_000,
+            output: 200,
+            ..TokenUsage::default()
+        };
+        if self.reported_usage {
+            UsageValue::Reported { usage }
+        } else {
+            UsageValue::Estimated { usage }
+        }
     }
 
     /// Queues steps for `role`; each run of that role consumes one, then falls back to default.
@@ -136,21 +175,11 @@ impl FakeRunner {
     }
 }
 
-fn usage() -> UsageValue {
-    UsageValue::Estimated {
-        usage: TokenUsage {
-            input: 1_000,
-            output: 200,
-            ..TokenUsage::default()
-        },
-    }
-}
-
-fn json_output(value: &impl serde::Serialize, text: &str) -> AgentOutput {
+fn json_output(value: &impl serde::Serialize, text: &str, usage: UsageValue) -> AgentOutput {
     AgentOutput {
         structured: Some(serde_json::to_value(value).expect("fake documents serialize")),
         text: text.to_owned(),
-        usage: usage(),
+        usage,
     }
 }
 
@@ -197,6 +226,7 @@ impl AgentRunner for FakeRunner {
             had_feedback: req.feedback.is_some(),
         });
         let step = self.next_step(req.role);
+        let usage = self.next_usage(req.role);
         let workdir = req.workdir.as_deref();
 
         match &step {
@@ -205,7 +235,7 @@ impl AgentRunner for FakeRunner {
                 return Ok(AgentOutput {
                     structured: Some(v.clone()),
                     text: "scripted output".into(),
-                    usage: usage(),
+                    usage,
                 });
             }
             _ => {}
@@ -215,6 +245,7 @@ impl AgentRunner for FakeRunner {
             Role::Discovery => Ok(json_output(
                 &serde_json::json!({"summary": "fake discovery", "relevant_files": [], "risks": []}),
                 "discovery done",
+                usage,
             )),
             Role::SpecWriter => Ok(json_output(
                 &Specification {
@@ -232,6 +263,7 @@ impl AgentRunner for FakeRunner {
                     assumptions: vec![],
                 },
                 "spec written",
+                usage,
             )),
             Role::Planner => {
                 let criteria: Vec<String> = req
@@ -258,6 +290,7 @@ impl AgentRunner for FakeRunner {
                         }],
                     },
                     "plan written",
+                    usage,
                 ))
             }
             Role::Implementer | Role::Fixer => {
@@ -300,7 +333,7 @@ impl AgentRunner for FakeRunner {
                 Ok(AgentOutput {
                     structured: None,
                     text: "changes made".into(),
-                    usage: usage(),
+                    usage,
                 })
             }
             Role::Reviewer => Ok(json_output(
@@ -309,6 +342,7 @@ impl AgentRunner for FakeRunner {
                     ..ReviewReport::default()
                 },
                 "review done",
+                usage,
             )),
             Role::Verifier => {
                 let criteria = req
@@ -331,12 +365,13 @@ impl AgentRunner for FakeRunner {
                         structural: false,
                     },
                     "verified",
+                    usage,
                 ))
             }
             Role::Summarizer | Role::ReleaseNotes => Ok(AgentOutput {
                 structured: None,
                 text: "ok".into(),
-                usage: usage(),
+                usage,
             }),
         }
     }

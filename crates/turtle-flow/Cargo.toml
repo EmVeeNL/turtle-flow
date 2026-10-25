@@ -24,6 +24,7 @@ turtle-policy = { workspace = true }
 turtle-scheduler = { workspace = true }
 turtle-store = { workspace = true }
 turtle-workflow = { workspace = true }
+turtle-tokens = { workspace = true }
 rusqlite = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
