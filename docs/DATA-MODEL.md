@@ -300,6 +300,12 @@ CREATE TABLE estimation_buckets (
   updated_at   TEXT NOT NULL
 );
 
+-- Added by forward migration 0002: idempotent calibration even for unmetered runs.
+CREATE TABLE estimation_observations (
+  run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+  observed_at TEXT NOT NULL
+);
+
 CREATE TABLE preflight_reports (
   id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), stage TEXT NOT NULL,
   revision_id TEXT NOT NULL REFERENCES artifact_revisions(id),

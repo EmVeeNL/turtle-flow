@@ -96,10 +96,10 @@ pub enum ReservationOutcome {
 Implemented in `turtle-store::ledger` and used by the executor: the budget scopes job (lifetime), project and global (monthly, rolled over into a new period row), `reserve` (atomic across scopes, B-1 checked inside the transaction), `settle`, `release`, overrun events, `abandon_open_runs` on restart, and `verify_ledger` (cached `settled`/`reserved` recomputed from the entries). Differences from the design above, all deliberate for now:
 
 - The unit is **tokens processed** (input, cache reads and writes, output). Currency budgets and the price table are not built.
-- The task scope is not used; reservations are per run, and the reservation size is a fixed cold-start guess per role instead of P90 × (1 + buffer), because the historical estimator (§7) does not exist yet.
+- The task scope is not used. Reservations use historical P90 × (1 + confidence buffer) when reported runs exist for the role/complexity bucket, and retain the original fixed per-role size for a cold start. The `ledger.reserved` event records the estimate range, confidence and bucket level.
 - A run that fails reports no usage, so its reservation is **released** and its usage record is `unavailable`: the ledger under-counts rather than invents a number. A successful run that reports nothing is charged the reservation.
 - The budget-increase approval of §6.3 is not wired in. A held job (`awaiting_budget`, no attempt used) is resumed by raising the budget (`turtle budget set`), which is recorded as a `limit_change` entry; the scheduler then lifts the hold, because `BudgetRestored` is a machine-only command.
-- No preflight envelope: a job has a budget only if the user sets one.
+- `turtle budget estimate <job-key>` and `turtle job show` expose planned-job ranges and confidence after the plan exists. The report is advisory and is not yet attached to an approval or stored as a preflight artifact; a job has a budget only if the user sets one.
 
 ## 5. Complexity Estimation
 
@@ -117,6 +117,8 @@ Complexity is computed deterministically from features available at each stage, 
 | Plan task count and dependency depth | planning | 10 (re-scored) |
 
 `score ∈ [0,100]` → class: **XS** < 10 ≤ **S** < 25 ≤ **M** < 50 ≤ **L** < 75 ≤ **XL**. Weights are configuration, and recalibrated offline against actual token usage (post-MVP: simple linear regression on log tokens).
+
+Current implementation uses only summary/in-scope text length, acceptance criteria, affected areas, named risk tags and plan task/dependency count. It normalizes their available weights to 100. Job type, attachments, affected-file LOC, languages and agent self-assessment have no structured input in the current spec/plan, so they are omitted. The weights are compiled defaults, not configuration yet.
 
 **XL policy:** preflight recommends splitting the job; proceeding requires explicit approval.
 
@@ -213,6 +215,8 @@ Evaluated top to bottom; first matching row wins.
 
 ### 6.4 Example preflight report (abridged)
 
+The current CLI preflight sums sequential spec, plan, implementation, review and verification runs (plus discovery when enabled by the profile). It uses only route-independent role/class history because the CLI has no provisional route. It checks configured token-budget headroom; provider eligibility and profile token thresholds are not available to it. Retry and fix-loop probabilities (§11) are not measured yet, so the displayed range and decision exclude rework; the CLI labels this limit. This is an advisory calculation after planning, not an automatic approval gate.
+
 ```json
 {
   "job": "API-42",
@@ -273,6 +277,8 @@ When `n ≥ 30`, empirical quantiles from the reservoir replace the log-normal a
 ### 7.4 Calibration feedback
 
 For every finished job, record whether actual ∈ [P10, P90]. Target coverage is 80%. If rolling coverage over the last 50 jobs < 70%, widen σ by a calibration factor `c = clamp(c × 1.1, 1, 3)`; if > 90%, narrow (`c × 0.95`). Calibration factors are stored per project. This is simple, robust, and explainable.
+
+Implementation status: run-level log-space statistics and a bounded reservoir are updated once per reported run, in the same transaction as ledger settlement, even when no budget applies. Estimated and unavailable usage never trains the buckets. The current confidence threshold uses the selected bucket's own `n` (and log-normal coefficient of variation), rather than the proposed capped `n_eff`. Job-level coverage and adaptive calibration factors are not implemented because there is no persisted job preflight envelope to evaluate against. Cold-start ranges are deliberately wide (¼–4× the role default) and have `unknown` confidence; the cold-start reservation itself stays at the old role default.
 
 ### 7.5 Explaining uncertainty to users
 

@@ -38,19 +38,19 @@ turtle approvals
 |---|---|
 | M0 spikes | Claude Code headless contract verified; Codex error path only (usage-limited). S-3 to S-7 not started. |
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
-| M2 first real agent | In progress: Claude Code adapter and token ledger with budgets work; the estimator and the context builder are next. |
+| M2 first real agent | In progress: Claude Code adapter, token ledger, historical run estimator and planned-job CLI preflight work; the context builder is next. |
 | M3 and later | Not started: Codex, review routing, rate-limit handling, dashboard API, strict profile, releases. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard UI (`dashboard/`) is built against a mock API; no server serves it yet (M4).
 
 What works:
 
-- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals` and `approve` (interactive terminal only, you type the bound hash back), `budget show|set`, `audit verify`, `up|down|status`
+- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals` and `approve` (interactive terminal only, you type the bound hash back), `budget show|set|estimate`, `audit verify`, `up|down|status`
 - `turtle up --agent claude` runs real jobs through Claude Code (headless, isolated, with structured output and a per-run spend cap); `--agent demo` runs a scripted placeholder agent so you can watch the workflow without spending tokens
-- a token ledger: every run is recorded with its usage as measured, estimated or unknown; budgets per job, project (monthly) and globally are reserved before each run and settled after it, a job that runs out of budget waits for you (`turtle budget set`), and `turtle audit verify` checks the ledger as well as the event chain
+- a token ledger and estimator: every run is recorded with its usage as measured, estimated or unknown; reported usage trains role/complexity buckets; budgets per job, project (monthly) and globally are reserved before each run and settled after it, a job that runs out of budget waits for you (`turtle budget set`), and `turtle audit verify` checks the ledger as well as the event chain
 - the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
 
-What does not exist yet: token estimation and preflight (reservations use a fixed guess per role), currency budgets, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, currency budgets, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported history, reservations retain the fixed per-role cold-start size.
 
 ### Development
 
