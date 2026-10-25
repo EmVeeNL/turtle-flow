@@ -1,0 +1,28 @@
+{
+  "name": "turtle-flow-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.8",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "deploy": "astro build && wrangler deploy"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@iconify-json/fluent": "^1.2.60",
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.4.2",
+    "astro-icon": "^1.2.0",
+    "gsap": "^3.15.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3"
+  }
+}
