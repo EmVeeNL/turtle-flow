@@ -92,4 +92,4 @@ The architecture and product documentation package is in [`docs/`](docs/README.m
 
 ## License
 
-Proprietary: the source is private and all rights are reserved ([OQ-02](docs/PRD.md#26-open-questions) was decided on 2026-10-25, see [docs/LICENSING.md §8](docs/LICENSING.md#8-open-source--source-availability-strategy-oq-02)). Terms for any free binary are still open.
+Proprietary: the source is private and all rights are reserved ([OQ-02](docs/PRD.md#26-open-questions) was decided on 2026-10-25, see [docs/LICENSING.md §8](docs/LICENSING.md#8-open-source--source-availability-strategy-oq-02)). There will be a free tier, shipped as a free binary; its end-user license terms are still to be written.
