@@ -11,6 +11,7 @@ use turtle_store::{
     BudgetScope, JobUsage, LedgerVerdict, ManualClock, NewJob, NewProject, NewRun,
     ReservationOutcome, RunEnd, Store,
 };
+use turtle_tokens::{BucketPath, EstimateBasis, cold_start_estimate, estimate, reservation_size};
 use turtle_workflow::Profile;
 
 struct World {
@@ -119,6 +120,118 @@ fn consistent(w: &World) {
             LedgerVerdict::Consistent { .. }
         ),
         "cached columns must equal the ledger"
+    );
+}
+
+#[test]
+fn reported_runs_train_each_bucket_once_but_estimated_and_unknown_do_not() {
+    let mut w = world();
+    let job = w.job;
+    set(&mut w, BudgetScope::Job(job), 1_000_000, true);
+    let path = BucketPath::new(
+        &w.project.to_string(),
+        Role::Implementer,
+        turtle_domain::Complexity::S,
+        "fake",
+        "fake-1",
+    );
+    let cold = cold_start_estimate(Role::Implementer);
+    let mut reservations = Vec::new();
+    for provenance in [
+        "reported",
+        "reported",
+        "reported",
+        "estimated",
+        "unavailable",
+    ] {
+        let r = run(&mut w);
+        let size = reservation_size(estimate(
+            &w.store.estimation_buckets(&path).expect("buckets"),
+            cold,
+        ));
+        reservations.push(size.tokens);
+        assert!(matches!(
+            w.store
+                .transaction(|tx| tx.reserve_estimated(r, w.job, &size))
+                .expect("reserve"),
+            ReservationOutcome::Reserved { .. }
+        ));
+        let usage = turtle_domain::TokenUsage {
+            input: 1_000,
+            output: 200,
+            ..Default::default()
+        };
+        let value = match provenance {
+            "reported" => UsageValue::Reported { usage },
+            "estimated" => UsageValue::Estimated { usage },
+            _ => UsageValue::Unavailable,
+        };
+        w.store
+            .transaction(|tx| {
+                tx.finish_run(r, RunEnd::Succeeded, None, value)?;
+                tx.settle_with_estimation(r, 1_200, &path)?;
+                assert!(!tx.settle_with_estimation(r, 1_200, &path)?);
+                Ok(())
+            })
+            .expect("settle");
+    }
+    let buckets = w.store.estimation_buckets(&path).expect("buckets");
+    assert!(buckets.iter().all(|b| b.as_ref().is_some_and(|b| b.n == 3)));
+    assert_eq!(reservations[0], cold);
+    assert!(
+        reservations[3] < cold,
+        "learned reservation should move toward 1200: {reservations:?}"
+    );
+    assert_eq!(
+        reservations[3], reservations[4],
+        "unreported usage must not train"
+    );
+    assert!(matches!(
+        estimate(&buckets, cold).basis,
+        EstimateBasis::Bucket {
+            level: 0,
+            observations: 3
+        }
+    ));
+    consistent(&w);
+}
+
+#[test]
+fn unmetered_reported_run_still_trains_once() {
+    let mut w = world();
+    let path = BucketPath::new(
+        &w.project.to_string(),
+        Role::Implementer,
+        turtle_domain::Complexity::XS,
+        "fake",
+        "fake-1",
+    );
+    let r = run(&mut w);
+    w.store
+        .transaction(|tx| {
+            tx.finish_run(
+                r,
+                RunEnd::Succeeded,
+                None,
+                UsageValue::Reported {
+                    usage: turtle_domain::TokenUsage {
+                        input: 1_000,
+                        output: 200,
+                        ..Default::default()
+                    },
+                },
+            )?;
+            assert!(tx.settle_with_estimation(r, 1_200, &path)?);
+            assert!(!tx.settle_with_estimation(r, 1_200, &path)?);
+            Ok(())
+        })
+        .expect("record");
+    assert!(
+        w.store
+            .estimation_buckets(&path)
+            .expect("buckets")
+            .iter()
+            .all(|b| b.as_ref().is_some_and(|b| b.n == 1))
     );
 }
 
