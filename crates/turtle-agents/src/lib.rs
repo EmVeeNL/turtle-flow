@@ -14,5 +14,6 @@ pub mod schemas;
 pub use claude_runner::{ClaudeConfig, ClaudeRunner};
 pub use discovery::{CompatStatus, ProviderId, ProviderInfo, discover};
 pub use runner::{
-    AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, RecordedCall, Step,
+    AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, RecordedCall,
+    Step,
 };

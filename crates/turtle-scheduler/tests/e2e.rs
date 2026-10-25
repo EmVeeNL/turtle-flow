@@ -447,6 +447,7 @@ async fn a_whole_job_runs_from_backlog_to_delivered() {
     for kind in [
         ArtifactKind::Specification,
         ArtifactKind::Plan,
+        ArtifactKind::ContextManifest,
         ArtifactKind::GateResult,
         ArtifactKind::ReviewReport,
         ArtifactKind::VerificationReport,
@@ -459,6 +460,36 @@ async fn a_whole_job_runs_from_backlog_to_delivered() {
             .expect("query");
         assert!(rev.is_some(), "{kind:?} missing");
     }
+    let id = env.job;
+    let context_links = b
+        .store
+        .with(move |s| s.run_context_manifest_revisions(id))
+        .await
+        .expect("context links");
+    assert!(
+        context_links.len() >= 5,
+        "expected context on every agent run: {context_links:?}"
+    );
+    assert!(
+        context_links.iter().all(Option::is_some),
+        "every run should link its manifest: {context_links:?}"
+    );
+    let id = env.job;
+    let manifest_revisions = b
+        .store
+        .with(move |s| s.list_revisions(id, ArtifactKind::ContextManifest))
+        .await
+        .expect("manifest revisions");
+    let revision_ids: std::collections::BTreeSet<_> = manifest_revisions
+        .into_iter()
+        .map(|revision| revision.id)
+        .collect();
+    assert!(
+        context_links
+            .iter()
+            .flatten()
+            .all(|revision| revision_ids.contains(revision))
+    );
     let id = env.job;
     let approvals = b
         .store

@@ -231,6 +231,8 @@ Tasks come from a specific **plan revision**. If the plan is revised, tasks of t
 | `release_plan`, `release_notes` | release roles | release approval |
 | `job_report` | export | user |
 
+**Implementation status (M2, 2026-10-25):** `context_manifest` revisions are produced for repository-context runs and their revision IDs are recorded in `agent_runs.context_manifest_rev`. The v1 artifact describes repository-only context; resources and knowledge are not included.
+
 **Invariants**
 - A-1: Revisions are immutable; content stored as blob addressed by SHA-256 of canonical bytes (canonical JSON — RFC 8785 JCS — for structured artifacts).
 - A-2: `rev` increments monotonically per artifact; `author` ∈ {`agent_run:<id>`, `user:<id>`, `system`}.

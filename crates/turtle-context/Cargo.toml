@@ -1,6 +1,6 @@
 [package]
 name = "turtle-context"
-description = "Context packaging: relevance selection, FTS retrieval, resource extraction, secret redaction."
+description = "Deterministic repository context packaging and secret redaction."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-turtle-domain = { workspace = true }
-turtle-artifacts = { workspace = true }
-turtle-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+globset = "0.4.16"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

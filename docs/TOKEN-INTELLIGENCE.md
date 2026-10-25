@@ -324,6 +324,8 @@ Input tokens dominate agent cost; the context builder ([ADR-010](adr/ADR-010-pro
 
 Each context manifest records estimated tokens per item category, so analytics can show "where input tokens come from".
 
+**Implementation status (M2, 2026-10-25):** repository context v1 is implemented in `turtle-context`. It reads only sorted `git ls-files` paths, includes relevant files and key project documents plus a size-capped map, uses a replaceable chars/4 estimate with a 12k-token package cap, redacts supported credential patterns, and records included/dropped items in a content-hashed manifest linked from each run. Per-role budgets, artifact excerpts, symbols, gate-output trimming, review windowing, and resource/knowledge retrieval are not implemented.
+
 ## 11. Retry Cost Estimation
 
 From history per bucket: `p_fix` (probability a task needs ≥ 1 fix), `E[fix_iterations | fix]`, `fix_cost_ratio` (fix run tokens ÷ implementer run tokens), `p_backtransition` per stage. Preflight includes `expected_retry_tokens = Σ_tasks impl_p50 × p_fix × E[iter] × fix_cost_ratio + Σ_stages p_back × stage_cost`. Shown as a separate line ("expected rework: ~22% of total").

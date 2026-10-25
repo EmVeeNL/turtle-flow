@@ -137,10 +137,10 @@ Agent processes receive only: `PATH` (sanitized), `HOME`, `USER`, `LANG`/`LC_*`,
 
 ### 6.3 Secret detection and redaction (SEC-003)
 
-- **Never-include globs** (default): `.env*`, `*.pem`, `*.key`, `id_*`, `*.p12`, `*.keystore`, `.npmrc`, `.pypirc`, `**/secrets/**`, `*.tfstate`, plus project config.
-- **Scanner:** regex rules for common providers (AWS, GCP, Azure, GitHub, Slack, Stripe, OpenAI/Anthropic key formats, private key blocks, JWTs) + Shannon entropy heuristic for long tokens in assignment contexts. Implemented in Rust (no network).
-- **Where applied:** context packages (before send), gate output (before inclusion in fixer context), transcripts (before persistence), job exports, diffs (new-secret gate).
-- **Redaction format:** `[REDACTED:aws_access_key:sha256-8]` preserving a short hash so repeated occurrences correlate without revealing content.
+- **Never-include names:** `.env*`, `*.pem`, `*.key`, `id_*`, common keystore extensions, `.npmrc`, `.pypirc`, credential-named files, and files inside a `secrets/` directory. Broader project-specific exclusions are planned.
+- **Scanner:** context v1 redacts private-key blocks, AWS access-key IDs, GitHub/Slack/Stripe/Google token prefixes, JWTs, and common API-key/secret/password/token assignments. This is a deliberate SEC-003 subset; entropy scanning and additional provider formats are not implemented.
+- **Where applied:** repository context packages before send. Gate output, transcripts, job exports, and diffs do not yet use this redactor.
+- **Redaction format:** stable non-reversible `[REDACTED:kind]` markers.
 - Limitation: agents can still read secrets from disk themselves when sandbox permits reads; the never-include list prevents *Turtle Flow* from sending them, and the sandbox/tool policy is the control for agent reads (spike S-4).
 
 ### 6.4 Local dashboard and API (SEC-001, SEC-002)

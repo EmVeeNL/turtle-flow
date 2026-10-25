@@ -73,6 +73,7 @@ fn run(w: &mut World) -> RunId {
                 provider: "fake".into(),
                 model: "fake-1".into(),
                 adapter_version: "0".into(),
+                context_manifest_rev: None,
             })
         })
         .expect("begin run");
