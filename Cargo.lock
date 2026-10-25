@@ -1003,11 +1003,19 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
+ "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "turtle-agents",
+ "turtle-artifacts",
+ "turtle-domain",
  "turtle-git",
+ "turtle-policy",
+ "turtle-scheduler",
+ "turtle-store",
+ "turtle-workflow",
 ]
 
 [[package]]

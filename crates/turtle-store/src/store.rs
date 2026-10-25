@@ -233,6 +233,66 @@ impl Store {
         rebuild_job(&self.conn, id)
     }
 
+    /// All registered projects, oldest first.
+    pub fn list_projects(&self) -> Result<Vec<crate::projects::ProjectRecord>> {
+        let ids = self.ids("SELECT id FROM projects ORDER BY created_at, id", [])?;
+        ids.into_iter()
+            .map(|id| crate::projects::load_project(&self.conn, id))
+            .collect()
+    }
+
+    pub fn project_by_slug(&self, slug: &str) -> Result<crate::projects::ProjectRecord> {
+        let ids: Vec<ProjectId> = self.ids("SELECT id FROM projects WHERE slug = ?1", [slug])?;
+        let id = ids
+            .into_iter()
+            .next()
+            .ok_or_else(|| StoreError::NotFound(format!("project `{slug}`")))?;
+        crate::projects::load_project(&self.conn, id)
+    }
+
+    /// Jobs of one project (or all), newest first.
+    pub fn list_jobs(&self, project: Option<ProjectId>) -> Result<Vec<JobRecord>> {
+        let ids: Vec<JobId> = match project {
+            Some(p) => self.ids(
+                "SELECT id FROM jobs WHERE project_id = ?1 ORDER BY created_at DESC, id DESC",
+                [p.to_string()],
+            )?,
+            None => self.ids("SELECT id FROM jobs ORDER BY created_at DESC, id DESC", [])?,
+        };
+        ids.into_iter().map(|id| load_job(&self.conn, id)).collect()
+    }
+
+    /// Looks a job up by its human key (`API-42`).
+    pub fn find_job(&self, key: &JobKey) -> Result<JobRecord> {
+        let ids: Vec<JobId> = self.ids(
+            "SELECT j.id FROM jobs j JOIN projects p ON p.id = j.project_id
+             WHERE p.key_prefix = ?1 AND j.number = ?2",
+            params![key.prefix(), key.number()],
+        )?;
+        let id = ids
+            .into_iter()
+            .next()
+            .ok_or_else(|| StoreError::NotFound(format!("job {key}")))?;
+        load_job(&self.conn, id)
+    }
+
+    fn ids<I: std::str::FromStr>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<I>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let raw = stmt
+            .query_map(params, |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        raw.into_iter()
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| StoreError::Corrupt(format!("bad id `{s}`")))
+            })
+            .collect()
+    }
+
     /// Escape hatch for tests that simulate tampering with the file.
     #[doc(hidden)]
     pub fn raw_connection(&self) -> &Connection {

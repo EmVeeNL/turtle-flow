@@ -32,7 +32,7 @@ turtle approvals
 
 ## Status
 
-**Early development (milestones M0/M1).** Turtle Flow is not usable yet. What exists so far:
+**Early development (milestones M0/M1).** Turtle Flow cannot drive a real AI agent yet (that is M2), but the whole workflow runs end to end with a scripted demo agent. What exists so far:
 
 - the Cargo workspace (13 crates)
 - core domain types
@@ -46,7 +46,7 @@ turtle approvals
 - the effect executors: worktree, task commits, gates, review, verification, approvals and delivery, tested end to end with a scripted fake agent, including crashes at every step
 - artifacts and approvals: content-addressed blob store, artifact revisions, specification and plan documents with validation, hash-bound approvals checked against the current state at every guard
 - the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
-- `turtle doctor`
+- the `turtle` CLI and daemon: `turtle doctor`, `project`, `job`, `approvals`/`approve` (interactive terminal only), `audit verify`, `up`/`down`/`status`
 
 There is no daemon process, CLI job commands or agent execution yet.
 
