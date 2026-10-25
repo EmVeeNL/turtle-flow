@@ -73,7 +73,7 @@ Other risks tracked but not top-10: SQLite single-writer throughput (low likelih
 8. ✅ **Walking skeleton (M1)** with FakeAdapter: worktree → task → commit → gates → local squash delivery, end-to-end from CLI.
 9. 🚧 (adapter done, ledger next) **Claude Code adapter + ledger/reservations (M2)**, then **approvals, review, verification, Codex (M3)**.
 10. **Recruit 5–10 design-partner developers** for dogfooding from M2; instrument (locally) time-to-first-job, approval latency and estimate coverage.
-11. Resolve OQ-02 (open-core vs. source-available) before the first public release; it affects repository structure and contributor policy.
+11. ~~Resolve OQ-02 (open-core vs. source-available)~~ Resolved 2026-10-25: source stays private (proprietary). Remaining: terms for any free binary before launch.
 12. ~~Decide the final product and binary name (OQ-07).~~ Resolved: **Turtle Flow**, binary `turtle`. Remaining: logo and trademark check before public launch.
 
 ## 5. Package Validation Report

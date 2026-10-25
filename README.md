@@ -92,4 +92,4 @@ The architecture and product documentation package is in [`docs/`](docs/README.m
 
 ## License
 
-To be decided ([OQ-02](docs/PRD.md#26-open-questions): open-core vs. source-available). Until a license is added, all rights are reserved.
+Proprietary: the source is private and all rights are reserved ([OQ-02](docs/PRD.md#26-open-questions) was decided on 2026-10-25, see [docs/LICENSING.md §8](docs/LICENSING.md#8-open-source--source-availability-strategy-oq-02)). Terms for any free binary are still open.

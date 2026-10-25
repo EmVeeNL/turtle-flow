@@ -184,6 +184,8 @@ No hostile measures: no remote kill switch, no obfuscated checks that break buil
 
 ## 8. Open-Source / Source-Availability Strategy (OQ-02)
 
+**Decision (2026-10-25, product owner): the source stays private (option C, proprietary).** The repository remains private because of the paid tiers. Consequences to plan for: the trust cost named in the table below is real for a tool that runs agents on users' source code, so compensate with what can be public without the code: the security model (`SECURITY.md`), the verifiable audit log (`turtle audit verify`), documented network behavior (none beyond the providers the user already uses), and, later, an independent security review or source escrow for Business and Enterprise customers. Whether to publish a free binary, and under what terms of use, is still open and belongs with the launch plan. The options below are kept for the record.
+
 | Option | Pros | Cons |
 |---|---|---|
 | A. Open-core: Apache-2.0 local core; proprietary server/enterprise crates | Trust, community adapters, security review by users | Competitors can fork the core |
