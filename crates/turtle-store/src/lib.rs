@@ -7,6 +7,7 @@ pub mod artifacts;
 pub mod chain;
 pub mod clock;
 pub mod error;
+pub mod estimation;
 pub mod ledger;
 pub mod migrate;
 pub mod projects;

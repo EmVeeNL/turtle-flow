@@ -15,6 +15,7 @@ workspace = true
 turtle-domain = { workspace = true }
 turtle-policy = { workspace = true }
 turtle-workflow = { workspace = true }
+turtle-tokens = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

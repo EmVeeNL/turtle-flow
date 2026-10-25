@@ -13,10 +13,16 @@ pub(crate) struct Migration {
     pub(crate) sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/0002_estimation_observations.sql"),
+    },
+];
 
 /// Newest schema generation this build understands.
 #[must_use]
@@ -83,6 +89,33 @@ mod tests {
             )
             .expect("count");
         assert_eq!(tables, 4);
+    }
+
+    #[test]
+    fn upgrading_v1_preserves_estimation_buckets() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        migrate_with(&mut conn, &MIGRATIONS[..1], None, "t").expect("v1");
+        conn.execute(
+            "INSERT INTO estimation_buckets(bucket_key,level,n,mean_ln,m2_ln,reservoir,updated_at)
+            VALUES ('r:implementer|c:S',3,1,7.0,0.0,'[1200]','2026-01-01')",
+            [],
+        )
+        .expect("bucket");
+        migrate(&mut conn, None, "t").expect("v2");
+        let count: i64 = conn
+            .query_row(
+                "SELECT n FROM estimation_buckets WHERE bucket_key='r:implementer|c:S'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("bucket retained");
+        assert_eq!(count, 1);
+        let observations: i64 = conn
+            .query_row("SELECT count(*) FROM estimation_observations", [], |r| {
+                r.get(0)
+            })
+            .expect("new table");
+        assert_eq!(observations, 0);
     }
 
     #[test]
