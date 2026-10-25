@@ -148,10 +148,64 @@ pub trait AgentRunner: Send + Sync + 'static {
         "default"
     }
 
+    /// Resolve a provider before a run is reserved. Single-provider runners retain their
+    /// previous behavior; a routing runner overrides this and `run_selected`.
+    fn select(&self, context: &RouteContext) -> Result<RouteSelection, AgentError> {
+        let independent = matches!(context.role, Role::Reviewer | Role::Verifier)
+            && context.implementer_provider.as_deref() == Some(self.name());
+        if independent && context.independence == Independence::Required {
+            return Err(AgentError::Fatal(
+                "independent review requires another available provider".into(),
+            ));
+        }
+        Ok(RouteSelection {
+            provider: self.name().to_owned(),
+            model: self.model().to_owned(),
+            candidates: serde_json::json!([{"provider": self.name(), "model": self.model(), "eligible": true}]),
+            reason: if independent && context.independence == Independence::Preferred {
+                "independent provider unavailable; preferred review fell back to the implementer provider".into()
+            } else {
+                format!("single provider for {:?}", context.role)
+            },
+            override_used: false,
+        })
+    }
+
+    fn run_selected(
+        &self,
+        req: &AgentRequest,
+        _provider: &str,
+    ) -> impl Future<Output = Result<AgentOutput, AgentError>> + Send {
+        self.run(req)
+    }
+
     fn run(
         &self,
         req: &AgentRequest,
     ) -> impl Future<Output = Result<AgentOutput, AgentError>> + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Independence {
+    Off,
+    Preferred,
+    Required,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteContext {
+    pub role: Role,
+    pub independence: Independence,
+    pub implementer_provider: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteSelection {
+    pub provider: String,
+    pub model: String,
+    pub candidates: Value,
+    pub reason: String,
+    pub override_used: bool,
 }
 
 /// What a scripted fake run does instead of its default behavior.
@@ -571,5 +625,29 @@ mod tests {
             .await
             .expect_err("no workdir");
         assert!(matches!(err, AgentError::Fatal(_)));
+    }
+
+    #[test]
+    fn a_single_runner_obeys_required_review_independence() {
+        let runner = FakeRunner::new();
+        let context = RouteContext {
+            role: Role::Reviewer,
+            independence: Independence::Required,
+            implementer_provider: Some("fake".into()),
+        };
+        let err = runner
+            .select(&context)
+            .expect_err("no independent provider");
+        assert!(
+            err.to_string()
+                .contains("requires another available provider")
+        );
+        let preferred = runner
+            .select(&RouteContext {
+                independence: Independence::Preferred,
+                ..context
+            })
+            .expect("fallback");
+        assert!(preferred.reason.contains("fell back"));
     }
 }

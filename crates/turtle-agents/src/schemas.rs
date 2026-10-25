@@ -151,6 +151,28 @@ pub fn for_role(role: Role) -> Option<Value> {
     }
 }
 
+/// Codex's strict structured-output contract requires every declared object property. Empty
+/// arrays and nullable values preserve the meaning of optional fields in our domain types.
+#[must_use]
+pub fn codex_for_role(role: Role) -> Option<Value> {
+    fn require_all(value: &mut Value) {
+        if let Some(properties) = value.get_mut("properties").and_then(Value::as_object_mut) {
+            let keys = properties.keys().cloned().map(Value::String).collect();
+            for property in properties.values_mut() {
+                require_all(property);
+            }
+            value["required"] = Value::Array(keys);
+        }
+        if let Some(items) = value.get_mut("items") {
+            require_all(items);
+        }
+    }
+    for_role(role).map(|mut schema| {
+        require_all(&mut schema);
+        schema
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +322,36 @@ mod tests {
     fn only_document_roles_have_schemas() {
         assert!(for_role(Role::Implementer).is_none());
         assert!(for_role(Role::Planner).is_some());
+    }
+
+    #[test]
+    fn codex_requires_every_property_at_every_object_level() {
+        fn assert_strict(schema: &Value) {
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                let required = schema["required"].as_array().expect("required");
+                assert_eq!(required.len(), properties.len());
+                for key in properties.keys() {
+                    assert!(
+                        required.contains(&Value::String(key.clone())),
+                        "missing {key}"
+                    );
+                }
+                for property in properties.values() {
+                    assert_strict(property);
+                }
+            }
+            if let Some(items) = schema.get("items") {
+                assert_strict(items);
+            }
+        }
+        for role in [
+            Role::Discovery,
+            Role::SpecWriter,
+            Role::Planner,
+            Role::Reviewer,
+            Role::Verifier,
+        ] {
+            assert_strict(&codex_for_role(role).expect("schema"));
+        }
     }
 }
