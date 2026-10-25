@@ -17,7 +17,10 @@ use turtle_scheduler::{
     ApprovalService, ContextConfig, CrashPlan, DispatchError, Dispatcher, DispatcherConfig, Engine,
     EngineError, ExecConfig, FactoryExecutor, RepoGitFacts, SharedStore, StoreContext,
 };
-use turtle_store::{ChainVerdict, Decision, JobRecord, NewJob, NewProject, Store, SystemClock};
+use turtle_store::{
+    BudgetScope, ChainVerdict, Decision, JobRecord, LedgerVerdict, NewJob, NewProject, Store,
+    SystemClock,
+};
 use turtle_workflow::Profile;
 
 type Ctx = StoreContext<RepoGitFacts>;
@@ -670,6 +673,21 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
         let mut plans = crashes.iter().map(|&n| CrashPlan::at(n));
         let first = plans.next().unwrap_or_else(CrashPlan::never);
         let (mut b, _) = env.boot(first.clone()).await;
+        let id = env.job;
+        b.store
+            .with(move |s| {
+                s.transaction(|tx| {
+                    tx.set_budget(
+                        BudgetScope::Job(id),
+                        50_000_000,
+                        true,
+                        Some(id),
+                        &Actor::local_user(),
+                    )
+                })
+            })
+            .await
+            .expect("budget");
         let mut restarts = 0;
         for _ in 0..800 {
             let step = async {
@@ -698,6 +716,21 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
         }
         let job = b.job(env.job).await;
         assert_eq!(job.job.state, JobState::Done, "crashes {crashes:?}");
+        // However often the daemon died mid-run, no reservation leaks and the cached budget
+        // columns still equal the ledger.
+        let (verdict, budgets) = b
+            .store
+            .with(|s| Ok::<_, turtle_store::StoreError>((s.verify_ledger()?, s.list_budgets()?)))
+            .await
+            .expect("ledger");
+        assert!(
+            matches!(verdict, LedgerVerdict::Consistent { .. }),
+            "crashes {crashes:?}: {verdict:?}"
+        );
+        assert!(
+            budgets.iter().all(|b| b.reserved_tokens == 0),
+            "crashes {crashes:?}: leaked reservation {budgets:?}"
+        );
         assert!(
             matches!(
                 b.store.with(|s| s.verify_chain()).await.expect("verify"),
@@ -837,4 +870,157 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
         crashed += 1;
     }
     assert!(crashed >= 6);
+}
+
+#[tokio::test]
+async fn a_budget_that_cannot_cover_the_next_run_holds_the_job_until_it_is_raised() {
+    let env = Env::new(
+        FakeRunner::new(),
+        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+    )
+    .await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("release branch");
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let id = env.job;
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("tiny budget");
+
+    // Start the job and let the dispatcher run until the first agent run is refused.
+    for _ in 0..200 {
+        b.human_step(id, &ApprovalPolicy::approve_all())
+            .await
+            .expect("human step");
+        b.dispatcher.tick().await.expect("tick");
+        if !b.job(id).await.job.holds.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let held = b.job(id).await;
+    assert_eq!(held.job.holds, vec![turtle_workflow::Hold::AwaitingBudget]);
+    assert_ne!(held.job.state, JobState::Blocked, "a hold is not a failure");
+    assert_eq!(env.runner.calls().len(), 0, "no agent was paid for");
+    assert!(kinds(&b, id).await.contains(&"ledger.denied".to_owned()));
+
+    // Ticking while held does nothing, and the refused effect is waiting, not failed.
+    for _ in 0..5 {
+        b.dispatcher.tick().await.expect("tick");
+    }
+    assert!(b.unfinished().await > 0);
+    assert_eq!(env.runner.calls().len(), 0);
+
+    // The user raises the budget and lifts the hold; the same effect then runs.
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("raise");
+    assert!(
+        turtle_scheduler::lift_budget_hold(b.dispatcher.engine(), id)
+            .await
+            .expect("lift"),
+        "the budget has room again"
+    );
+
+    let job = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(job.job.state, JobState::Done);
+    let (verdict, budgets, usage) = b
+        .store
+        .with(move |s| {
+            Ok::<_, turtle_store::StoreError>((
+                s.verify_ledger()?,
+                s.list_budgets()?,
+                s.job_usage(id)?,
+            ))
+        })
+        .await
+        .expect("ledger");
+    assert!(matches!(verdict, LedgerVerdict::Consistent { .. }));
+    assert_eq!(budgets[0].reserved_tokens, 0);
+    // The fake agent states 1,200 tokens per run (as an estimate, not a measurement), and every
+    // run was settled with exactly that.
+    assert_eq!(usage.tokens_estimated, 1_200 * usage.runs);
+    assert_eq!(
+        budgets[0].settled_tokens,
+        usage.tokens_reported + usage.tokens_estimated
+    );
+    assert!(usage.runs >= 5, "{usage:?}");
+}
+
+#[tokio::test]
+async fn a_failed_run_gives_its_reservation_back_and_records_unknown_usage() {
+    let runner = FakeRunner::new().with_script(
+        Role::SpecWriter,
+        vec![Step::Fail(AgentError::Fatal("not logged in".into()))],
+    );
+    let env = Env::new(runner, settings(Some(NEEDS_FEATURE_FILE), Some("release"))).await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("release branch");
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let id = env.job;
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("budget");
+    let job = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(job.job.state, JobState::Blocked);
+
+    let (budgets, usage, verdict) = b
+        .store
+        .with(move |s| {
+            Ok::<_, turtle_store::StoreError>((
+                s.list_budgets()?,
+                s.job_usage(id)?,
+                s.verify_ledger()?,
+            ))
+        })
+        .await
+        .expect("ledger");
+    assert!(matches!(verdict, LedgerVerdict::Consistent { .. }));
+    assert_eq!(budgets[0].reserved_tokens, 0);
+    assert_eq!(
+        usage.runs_unavailable, 1,
+        "the failed attempt has no usage numbers"
+    );
+    assert_eq!(
+        budgets[0].settled_tokens,
+        usage.tokens_reported + usage.tokens_estimated,
+        "only runs with usage numbers are charged"
+    );
 }

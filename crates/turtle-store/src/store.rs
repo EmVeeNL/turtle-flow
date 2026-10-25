@@ -859,7 +859,7 @@ pub(crate) fn from_s<T: DeserializeOwned>(s: &str) -> Result<T> {
 }
 
 /// SQLite integers are signed 64-bit.
-fn db_int(v: u64) -> Result<i64> {
+pub(crate) fn db_int(v: u64) -> Result<i64> {
     i64::try_from(v)
         .map_err(|_| StoreError::Corrupt(format!("{v} does not fit a database integer")))
 }

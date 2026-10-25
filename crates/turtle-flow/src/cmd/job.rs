@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use turtle_domain::{Actor, JobKey, JobState, JobType, Priority};
-use turtle_store::{JobRecord, NewJob, ProjectRecord};
+use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord};
 use turtle_workflow::{JobCommand, PauseMode, Profile, ProfileBase};
 
 use crate::runtime::{Runtime, label, parse_label};
@@ -33,6 +33,9 @@ pub enum JobCommandLine {
         /// fast, standard or strict (default: the project's profile).
         #[arg(long, value_parser = ["fast", "standard", "strict"])]
         profile: Option<String>,
+        /// Token budget for this job, e.g. `400k`; the job waits for you when it is used up.
+        #[arg(long)]
+        budget: Option<String>,
         /// Start the job right away.
         #[arg(long)]
         start: bool,
@@ -88,8 +91,13 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
             job_type,
             priority,
             profile,
+            budget,
             start,
         } => {
+            let budget = budget
+                .as_deref()
+                .map(crate::cmd::budget::parse_tokens)
+                .transpose()?;
             let description = match (description, file) {
                 (_, Some(path)) => std::fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?,
@@ -116,6 +124,23 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
                 "Created {} \"{}\" ({profile_name}).",
                 record.key, record.title
             );
+            if let Some(limit) = budget {
+                let id = record.job.id;
+                rt.store
+                    .with(move |s| {
+                        s.transaction(|tx| {
+                            tx.set_budget(
+                                BudgetScope::Job(id),
+                                limit,
+                                true,
+                                Some(id),
+                                &Actor::local_user(),
+                            )
+                        })
+                    })
+                    .await?;
+                println!("Budget: {limit} tokens (the job waits for you when it is used up).");
+            }
             if start {
                 submit(rt, &record, JobCommand::Start).await?;
                 println!(
@@ -302,6 +327,30 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             label(&a.gate),
             label(&a.status),
             a.subject_hash.short()
+        );
+    }
+    let usage = rt.store.with(move |s| s.job_usage(id)).await?;
+    if usage.runs > 0 {
+        println!(
+            "  tokens       {} measured, {} estimated over {} runs{}",
+            usage.tokens_reported,
+            usage.tokens_estimated,
+            usage.runs,
+            if usage.runs_unavailable > 0 {
+                format!(" ({} with unknown usage)", usage.runs_unavailable)
+            } else {
+                String::new()
+            }
+        );
+    }
+    if job
+        .job
+        .holds
+        .contains(&turtle_workflow::Hold::AwaitingBudget)
+    {
+        println!(
+            "  waiting      out of budget: turtle budget set <tokens> --job {}",
+            job.key
         );
     }
     println!(

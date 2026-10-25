@@ -116,6 +116,10 @@ impl AgentRunner for ClaudeRunner {
         "claude-code"
     }
 
+    fn model(&self) -> &str {
+        self.config.model.as_deref().unwrap_or("default")
+    }
+
     async fn run(&self, req: &AgentRequest) -> Result<AgentOutput, AgentError> {
         let workdir = req.workdir.clone().ok_or_else(|| {
             AgentError::Fatal("a Claude Code run needs a working directory".into())

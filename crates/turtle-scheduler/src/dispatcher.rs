@@ -72,6 +72,11 @@ pub enum ExecError {
     /// Permanent: the effect fails now and the job is blocked.
     #[error("{0}")]
     Fatal(String),
+    /// Not a failure: the job must wait (for example, for budget). The workflow command is
+    /// applied and the effect goes back to the queue without using up an attempt; it is
+    /// claimed again once the hold is lifted.
+    #[error("held: {reason}")]
+    Hold { command: JobCommand, reason: String },
 }
 
 /// Performs effects. Must be idempotent per `effect.idempotency_key`.
@@ -281,6 +286,11 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
             Err(ExecError::Fatal(msg)) => {
                 self.engine
                     .fail_effect(&effect, &instance, &msg, None)
+                    .await?
+            }
+            Err(ExecError::Hold { command, reason }) => {
+                self.engine
+                    .defer_effect(&effect, &instance, command, &reason)
                     .await?
             }
         };

@@ -335,7 +335,7 @@ Command envelope (all state-changing requests):
 
 ### 7.2 CLI surface (excerpt)
 
-Implemented as of M1: `up` (with `--agent claude|demo`), `down`, `status`, `daemon`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals`, `approve` (also `--request-changes` and `--reject`, each needing `-c`), `audit verify` and `doctor`. Everything else below is planned. Differences so far: there is no separate `turtle reject`, `job pause --hard` waits for the current run, and `job cancel` has no `--delete-branch`.
+Implemented as of M1: `up` (with `--agent claude|demo`), `down`, `status`, `daemon`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals`, `approve` (also `--request-changes` and `--reject`, each needing `-c`), `budget show|set` (token limits only; `job create --budget`), `audit verify` (event chain and ledger) and `doctor`. Everything else below is planned. Differences so far: there is no separate `turtle reject`, `job pause --hard` waits for the current run, and `job cancel` has no `--delete-branch`.
 
 ```text
 turtle init                         # onboarding wizard

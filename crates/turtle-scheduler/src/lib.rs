@@ -6,6 +6,7 @@
 
 pub mod approvals;
 pub mod binding;
+pub mod budget;
 pub mod context;
 pub mod crash;
 pub mod dispatcher;
@@ -20,6 +21,7 @@ pub use binding::{
     ArtifactSnapshot, BindingError, GitFacts, GitFactsProvider, NoGit, POLICY_VERSION,
     build_binding, profile_hash,
 };
+pub use budget::lift_budget_hold;
 pub use context::{ContextConfig, StoreContext};
 pub use crash::{CrashPlan, Crashed};
 pub use dispatcher::{
