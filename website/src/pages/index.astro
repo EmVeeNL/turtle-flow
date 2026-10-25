@@ -1,5 +1,7 @@
 ---
+import { Image, Picture } from 'astro:assets';
 import { Icon } from 'astro-icon/components';
+import logo from '../assets/turtle-flow-logo.png';
 import Base from '../layouts/Base.astro';
 
 // The real workflow stages (docs/WORKFLOW.md). The two gates are where the job waits for you.
@@ -41,7 +43,7 @@ const stages = [
         class="flex items-center gap-2.5 text-[1.0625rem] font-bold tracking-tight text-text no-underline"
         aria-label="Turtle Flow, home"
       >
-        <img src="/assets/turtle-flow-logo.png" alt="" width="51" height="24" class="h-6 w-auto" />
+        <Image src={logo} alt="" width={102} format="webp" loading="eager" class="h-6 w-auto" />
         <span>Turtle <span class="text-blue">Flow</span></span>
       </a>
       <p
@@ -59,17 +61,18 @@ const stages = [
         <div class="order-2 lg:order-1" data-copy>
           <h1
             class="text-[clamp(2.3rem,5.2vw,4.375rem)] leading-[1.02] font-[650] tracking-[-0.03em]"
+            style="--i: 0"
             data-hide
           >
             Supervised AI software delivery.
           </h1>
-          <p class="mt-6 max-w-[34rem] text-[1.1875rem] leading-relaxed text-muted" data-hide>
+          <p class="mt-6 max-w-[34rem] text-[1.1875rem] leading-relaxed text-muted" style="--i: 1" data-hide>
             Turtle Flow runs Claude Code and Codex on your own machine and stops at every decision
             that is yours. You approve the exact spec and the exact diff, and the approval is void
             the moment either one changes.
           </p>
 
-          <div class="mt-9 flex flex-wrap items-center gap-x-5 gap-y-3" data-hide>
+          <div class="mt-9 flex flex-wrap items-center gap-x-5 gap-y-3" style="--i: 2" data-hide>
             <p
               class="inline-flex cursor-default items-center gap-2.5 rounded-full bg-blue px-6 py-3 text-lg font-semibold text-ink shadow-[0_12px_28px_-14px_rgb(18_164_255/0.5)]"
             >
@@ -81,13 +84,17 @@ const stages = [
         </div>
 
         <div class="order-1 lg:order-2" data-turtle>
-          <img
-            src="/assets/turtle-flow-logo.png"
+          <Picture
+            src={logo}
+            formats={['avif', 'webp']}
+            fallbackFormat="webp"
+            widths={[480, 640, 960, 1280]}
+            sizes="(min-width: 1024px) 600px, min(100vw - 3rem, 34rem)"
             alt="A blue sea turtle with speed streaks trailing behind it, the Turtle Flow logo"
-            width="1439"
-            height="673"
             class="mx-auto h-auto w-[min(100%,34rem)] drop-shadow-[0_28px_40px_rgb(0_20_80/0.55)] lg:w-full"
+            loading="eager"
             fetchpriority="high"
+            decoding="async"
           />
         </div>
       </section>
@@ -227,22 +234,14 @@ const stages = [
       const LINE = 2.4;
       const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
 
-      tl.to('[data-hide]', { opacity: 1, y: 0, duration: 0.9, stagger: 0.09 }, 0.05);
-      gsap.set('[data-hide]', { y: 18 });
-
-      // The turtle swims in from off the left edge and settles.
-      tl.fromTo(
-        turtle,
-        { x: () => -(window.innerWidth * 0.45), opacity: 0, filter: 'blur(10px)' },
-        {
-          x: 0,
-          opacity: 1,
-          filter: 'blur(0px)',
-          duration: GLIDE,
-          ease: 'power3.out',
-          clearProps: 'filter',
+      // The hero entrance (copy rising, the turtle gliding in) is pure CSS, so first paint never
+      // waits for this script. The turtle starts drifting once its glide has finished.
+      tl.call(
+        () => {
+          gsap.to(turtle, { y: -9, duration: 3.4, ease: 'sine.inOut', yoyo: true, repeat: -1 });
         },
-        0,
+        [],
+        GLIDE,
       );
 
       // The line follows it across the page, lighting each stage as it passes.
@@ -281,14 +280,6 @@ const stages = [
 
       tl.call(() => {
         root.classList.add('settled');
-        // Idle: the turtle drifts, slowly.
-        gsap.to(turtle, {
-          y: -9,
-          duration: 3.4,
-          ease: 'sine.inOut',
-          yoyo: true,
-          repeat: -1,
-        });
       });
     }
   </script>

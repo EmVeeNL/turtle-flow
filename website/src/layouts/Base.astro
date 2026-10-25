@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import headingFont from '@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2?url';
 
 interface Props {
   title: string;
@@ -31,6 +32,7 @@ const og = new URL('/assets/og.png', Astro.site).href;
       type="font/woff2"
       crossorigin
     />
+    <link rel="preload" href={headingFont} as="font" type="font/woff2" crossorigin />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Turtle Flow" />
     <meta property="og:title" content={title} />

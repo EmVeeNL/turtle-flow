@@ -1,6 +1,28 @@
 @import 'tailwindcss';
-@import '@fontsource-variable/jetbrains-mono/index.css';
-@import '@fontsource-variable/space-grotesk/index.css';
+
+/* Only the latin subsets that the page uses are shipped, so nothing waits on faces for
+   scripts it never renders. */
+@font-face {
+  font-family: 'Space Grotesk Variable';
+  src: url('../../node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2')
+    format('woff2-variations');
+  font-weight: 300 700;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2')
+    format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 @font-face {
   font-family: 'Asap Sharp';
@@ -25,7 +47,7 @@
   --color-ok: #3fb950;
   --font-sans: 'Asap Sharp', system-ui, sans-serif;
   --font-display: 'Space Grotesk Variable', 'Asap Sharp', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 @property --p {
@@ -225,8 +247,13 @@
    does the page start from the hidden state and build up. */
 
 @media (prefers-reduced-motion: no-preference) {
-  .js:not(.settled) [data-hide] {
-    opacity: 0;
+  /* The hero builds up from CSS alone: no script is on the path to first paint. */
+  [data-hide] {
+    animation: rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 90ms + 40ms);
+  }
+  [data-turtle] {
+    animation: glide 1.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .js:not(.settled) .track {
     --p: 0;
@@ -242,6 +269,33 @@
   }
   .stage {
     transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes glide {
+  0% {
+    opacity: 0;
+    transform: translateX(-38vw);
+    filter: blur(10px);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
   }
 }
 
