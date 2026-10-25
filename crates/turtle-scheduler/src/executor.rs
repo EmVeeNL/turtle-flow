@@ -240,12 +240,18 @@ where
                 .into_iter()
                 .filter_map(|value| value.as_str().map(str::to_owned))
                 .collect();
-            let package = turtle_context::build(
-                workdir,
-                &areas,
-                &relevant,
-                turtle_context::DEFAULT_TOKEN_BUDGET,
-            )
+            // Walking and reading the checkout is blocking file IO; keep it off the async threads.
+            let root = workdir.to_path_buf();
+            let package = tokio::task::spawn_blocking(move || {
+                turtle_context::build(
+                    &root,
+                    &areas,
+                    &relevant,
+                    turtle_context::DEFAULT_TOKEN_BUDGET,
+                )
+            })
+            .await
+            .map_err(retryable)?
             .map_err(fatal)?;
             req.context = Some(AgentContext {
                 text: package.text,
