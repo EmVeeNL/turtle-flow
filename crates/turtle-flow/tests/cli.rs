@@ -1,5 +1,7 @@
 //! Black-box tests of the `turtle` binary against a throwaway data directory and repository.
 
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -74,6 +76,112 @@ impl World {
             "true",
         ]);
     }
+}
+
+#[test]
+fn dashboard_refuses_without_tty() {
+    let world = World::new();
+    let error = world.fails(&["dashboard"]);
+    assert!(error.contains("interactive terminal"), "{error}");
+}
+
+fn http(port: u16, method: &str, path: &str, headers: &str, body: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect API");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("timeout");
+    write!(stream,"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",body.len()).expect("request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("response");
+    response
+}
+
+#[test]
+fn daemon_serves_authenticated_api_and_static_dashboard() {
+    use sha2::Digest;
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Add a greeting"]);
+    let dist = w.home.parent().expect("parent").join("dashboard-dist");
+    std::fs::create_dir_all(dist.join("jobs/view")).expect("static directories");
+    std::fs::write(
+        dist.join("index.html"),
+        "<!doctype html><title>Test dashboard</title>",
+    )
+    .expect("index");
+    std::fs::write(
+        dist.join("jobs/view/index.html"),
+        "<!doctype html><title>Job detail</title>",
+    )
+    .expect("detail");
+    let _daemon = Daemon(
+        w.command(&["daemon", "--agent", "demo"])
+            .env("TURTLE_DASHBOARD_DIR", &dist)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("daemon"),
+    );
+    let port_file = w.home.join("run/api.port");
+    wait_for("API port", || port_file.exists());
+    let port: u16 = std::fs::read_to_string(&port_file)
+        .expect("port")
+        .parse()
+        .expect("number");
+    assert!(
+        w.ok(&["status"])
+            .contains(&format!("http://127.0.0.1:{port}"))
+    );
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&port_file)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert!(http(port, "GET", "/api/v1/health", "", "").contains("200 OK"));
+    assert!(http(port, "GET", "/api/v1/overview", "", "").contains("401 Unauthorized"));
+    let code = "0123456789abcdef0123456789abcdef";
+    let hash: String = sha2::Sha256::digest(code.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    store
+        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z")
+        .expect("code");
+    drop(store);
+    let session = http(
+        port,
+        "POST",
+        "/api/v1/session",
+        &format!(
+            "Origin: http://127.0.0.1:{port}\r\nX-Turtle-Request: 1\r\nContent-Type: application/json\r\n"
+        ),
+        &format!("{{\"code\":\"{code}\"}}"),
+    );
+    assert!(session.contains("200 OK"), "{session}");
+    let cookie = session
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|line| line.split(';').next())
+        .expect("session cookie");
+    let auth = format!("Cookie: {cookie}\r\n");
+    let overview = http(port, "GET", "/api/v1/overview", &auth, "");
+    assert!(
+        overview.contains("200 OK") && overview.contains("PAY-1"),
+        "{overview}"
+    );
+    assert!(http(port, "GET", "/", &auth, "").contains("Test dashboard"));
+    assert!(http(port, "GET", "/jobs/view?id=PAY-1", &auth, "").contains("Job detail"));
+    assert!(http(port, "GET", "/does-not-exist", &auth, "").contains("404 Not Found"));
+    w.ok(&["down"]);
+    wait_for("API port cleanup", || !port_file.exists());
 }
 
 fn git(dir: &Path, args: &[&str]) {

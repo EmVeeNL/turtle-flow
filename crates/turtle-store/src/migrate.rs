@@ -26,6 +26,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         sql: include_str!("../migrations/0003_provider_quota.sql"),
     },
+    Migration {
+        version: 4,
+        sql: include_str!("../migrations/0004_dashboard_login.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -138,6 +142,20 @@ mod tests {
         ).expect("table");
         assert_eq!(reset_column, 1);
         assert_eq!(snapshots, 1);
+    }
+
+    #[test]
+    fn upgrading_v3_adds_one_use_dashboard_codes() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        migrate_with(&mut conn, &MIGRATIONS[..3], None, "t").expect("v3");
+        assert_eq!(current_version(&conn).expect("version"), 3);
+        migrate(&mut conn, None, "t").expect("v4");
+        let tables: i64=conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('dashboard_login_codes','api_command_keys')",
+            [], |r|r.get(0)
+        ).expect("tables");
+        assert_eq!(tables, 2);
+        assert_eq!(current_version(&conn).expect("version"), 4);
     }
 
     #[test]

@@ -16,3 +16,25 @@ turtle-domain = { workspace = true }
 turtle-workflow = { workspace = true }
 turtle-policy = { workspace = true }
 turtle-store = { workspace = true }
+turtle-scheduler = { workspace = true }
+turtle-artifacts = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+tokio = { workspace = true, features = ["net", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-stream = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
+getrandom = "0.3"
+subtle = "2.6"
+mime_guess = "2.0"
+rust-embed = { version = "8.7", optional = true }
+
+[features]
+embedded-dashboard = ["dep:rust-embed"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+futures-util = "0.3"

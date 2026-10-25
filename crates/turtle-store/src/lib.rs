@@ -6,6 +6,8 @@ pub mod approvals;
 pub mod artifacts;
 pub mod chain;
 pub mod clock;
+pub mod dashboard;
+pub mod dashboard_reads;
 pub mod error;
 pub mod estimation;
 pub mod ledger;
@@ -18,6 +20,7 @@ pub mod store;
 pub use approvals::{ApprovalRecord, Decision};
 pub use artifacts::{NewRevision, RevisionRecord};
 pub use clock::{Clock, ManualClock, StepClock, SystemClock};
+pub use dashboard_reads::{DashboardEstimate, ProjectStats, TaskRow};
 pub use error::{Result, StoreError};
 pub use ledger::{
     BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRoutingDecision, NewRun,

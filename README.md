@@ -41,8 +41,9 @@ turtle approvals
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
 | M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
 | M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. Strict delivery and PR delivery remain. |
+| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, and static dashboard serving are implemented. The live dashboard build is functional; its richer layouts remain in the mock preview. Browser verification is pending. |
 
-Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard UI (`dashboard/`) is built against a mock API; no server serves it yet (M4).
+Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 
 What works:
 
@@ -54,7 +55,17 @@ What works:
 - redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
 - the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
 
-What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, strict-profile delivery semantics, PR delivery, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, strict-profile delivery semantics, PR delivery, the Unix-socket CLI API transport (the CLI reads the database directly), `turtle init`, licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
+
+Local dashboard quick start:
+
+```bash
+cd dashboard && npm ci && PUBLIC_API_ADAPTER=real npm run build
+cargo run -p turtle-flow -- up --agent demo
+cargo run -p turtle-flow -- dashboard   # interactive terminal; opens a one-use login URL
+```
+
+The daemon chooses a random loopback port and records it in `<TURTLE_HOME>/run/api.port`. Use `turtle status` to see the address and `turtle down` to stop it. `--no-api` disables the web server; `--api-port` selects a fixed loopback port.
 
 The public website (a coming-soon page, [turtle-flow.com](https://turtle-flow.com)) lives in [`website/`](website/README.md) and is deployed with Cloudflare Workers Static Assets.
 

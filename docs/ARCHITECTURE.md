@@ -307,31 +307,11 @@ Schema: [DATA-MODEL.md](DATA-MODEL.md). Artifacts/resources storage: [ADR-013](a
 
 ### 7.1 Local HTTP API (versioned `/api/v1`)
 
-Same API for CLI and dashboard. Examples:
+The daemon now runs Axum beside the dispatcher, sharing its `SharedStore`, engine, approval service and blob store. It binds `127.0.0.1` only, chooses a random port unless `--api-port` is set, and writes `<TURTLE_HOME>/run/api.port` (0600) until shutdown. `--no-api` disables it. `turtle status` reports the address; `turtle dashboard` launches an interactive, one-use login. The CLI still opens SQLite directly. The planned Unix-socket CLI transport and OpenAPI generation are not implemented.
 
-| Method & path | Purpose |
-|---|---|
-| `GET /api/v1/projects` / `POST /api/v1/projects` | List / register projects |
-| `POST /api/v1/projects/{id}/jobs` | Create job |
-| `GET /api/v1/jobs/{id}` | Job aggregate incl. stage, loops, tasks, approvals |
-| `POST /api/v1/jobs/{id}/commands` | Pause, resume, cancel, retry-stage, override-route (command envelope with `expected_version`) |
-| `GET /api/v1/approvals?status=pending` | Approval queue |
-| `POST /api/v1/approvals/{id}/decision` | Approve / reject / request changes — body must echo the bound `subject_hash` |
-| `GET /api/v1/runs/{id}/transcript` | Normalized transcript (paged) |
-| `GET /api/v1/events/stream?project=…&job=…&since=<event_seq>` | SSE stream; resumable via `Last-Event-ID` |
-| `GET /api/v1/analytics/usage?group_by=provider,model&from=…` | Token analytics |
-| `GET /api/v1/openapi.json` | OpenAPI document |
+The implemented read endpoints are `/overview`, `/projects/{slug}`, `/jobs/{key}` (with `include` for related records), `/approvals/{id}`, `/runs/{id}`, `/runs/{id}/transcript`, `/artifacts/{id}`, `/analytics/usage`, and `/events/stream`, all under `/api/v1`. SSE uses the hash-chained event `seq` as its ID and resumes from `Last-Event-ID` or `lastEventId`. The implemented writes are `/approvals/{id}/decisions` and `/jobs/{key}/commands`. Command idempotency markers commit in the same transaction as the job transition. The full request and response contract is in [dashboard/API-ASSUMPTIONS.md](../dashboard/API-ASSUMPTIONS.md).
 
-Command envelope (all state-changing requests):
-
-```json
-{
-  "command": "pause_job",
-  "expected_version": 17,
-  "idempotency_key": "cli-01JB7Y3ZQ4K8B6…",
-  "params": { "mode": "soft" }
-}
-```
+Project and job creation, retries and route overrides, resource upload, provider configuration, full analytics, and `/openapi.json` are later work. Overview fields with no measured or stored source are `null` or `unavailable`; project health and provider availability are not inferred from an absence of rate-limit records. For local source builds, static files are read from `TURTLE_DASHBOARD_DIR` or `dashboard/dist`; a build without assets serves a clear instruction page. Release builds can enable `turtle-flow/embedded-dashboard` after building `dashboard/dist`.
 
 ### 7.2 CLI surface (excerpt)
 
