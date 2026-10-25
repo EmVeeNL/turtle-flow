@@ -48,7 +48,7 @@ turtle approvals
 - the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
 - the `turtle` CLI and daemon: `turtle doctor`, `project`, `job`, `approvals`/`approve` (interactive terminal only), `audit verify`, `up`/`down`/`status`
 
-There is no daemon process, CLI job commands or agent execution yet.
+There is no real agent execution yet: the daemon only runs with the scripted `--demo-agent` until the Claude Code adapter lands (M2).
 
 ### Development
 
