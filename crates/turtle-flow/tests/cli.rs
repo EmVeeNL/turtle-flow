@@ -114,6 +114,73 @@ fn wait_for(what: &str, mut check: impl FnMut() -> bool) {
 }
 
 #[test]
+fn provider_commands_report_capabilities_and_validate_routing_flags() {
+    let w = World::new();
+    use std::os::unix::fs::PermissionsExt;
+    let bin = w.home.parent().expect("parent").join("provider-bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    for (name, script) in [
+        (
+            "claude",
+            "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo '2.1.310 (Claude Code)'; else echo '{\"loggedIn\":true}'; fi\n",
+        ),
+        (
+            "codex",
+            "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo 'codex-cli 0.163.0'; else echo 'Logged in using ChatGPT' >&2; fi\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, script).expect("script");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let out = w
+        .command(&["providers", "list"])
+        .env("PATH", &bin)
+        .output()
+        .expect("providers");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let providers = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        providers.contains("claude-code:") && providers.contains("codex:"),
+        "{providers}"
+    );
+    assert!(
+        providers.contains("login=LoggedIn")
+            && providers.contains("schema=true")
+            && providers.contains("quota="),
+        "{providers}"
+    );
+    assert!(
+        w.fails(&["daemon", "--agent", "claude,bogus"])
+            .contains("--agent must")
+    );
+    assert!(
+        w.fails(&[
+            "daemon",
+            "--agent",
+            "claude,codex",
+            "--role-agent",
+            "bogus=codex"
+        ])
+        .contains("unknown role")
+    );
+    assert!(
+        w.fails(&[
+            "daemon",
+            "--agent",
+            "demo",
+            "--role-agent",
+            "reviewer=codex"
+        ])
+        .contains("requires two providers")
+    );
+}
+
+#[test]
 fn project_add_accepts_a_repository_and_rejects_the_rest() {
     let w = World::new();
     assert!(

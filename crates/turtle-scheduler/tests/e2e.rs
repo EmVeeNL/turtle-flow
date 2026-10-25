@@ -6,7 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tempfile::TempDir;
-use turtle_agents::{AgentError, FakeRunner, Step};
+use turtle_agents::{
+    AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, ProviderSlot, RoutingRunner,
+    Step,
+};
 use turtle_artifacts::BlobStore;
 use turtle_domain::{
     Actor, ApprovalStatus, ArtifactKind, GateKind, JobId, JobState, JobType, Priority,
@@ -24,17 +27,17 @@ use turtle_store::{
 use turtle_workflow::Profile;
 
 type Ctx = StoreContext<RepoGitFacts>;
-type Exec = FactoryExecutor<FakeRunner, Ctx, RepoGitFacts>;
-type Disp = Dispatcher<Exec, Ctx>;
+type Exec<R> = FactoryExecutor<R, Ctx, RepoGitFacts>;
+type Disp<R> = Dispatcher<Exec<R>, Ctx>;
 
-struct Env {
+struct Env<R: AgentRunner> {
     _dir: TempDir,
     root: PathBuf,
     repo_path: PathBuf,
     db: PathBuf,
     blobs: Arc<BlobStore>,
     cfg: Arc<ExecConfig>,
-    runner: Arc<FakeRunner>,
+    runner: Arc<R>,
     job: JobId,
 }
 
@@ -107,8 +110,8 @@ async fn reported_runs_change_future_reservations_but_unreported_runs_do_not() {
     assert_eq!(reservations[10], reservations[11]);
 }
 
-struct Booted {
-    dispatcher: Disp,
+struct Booted<R: AgentRunner> {
+    dispatcher: Disp<R>,
     approvals: ApprovalService<Ctx, RepoGitFacts>,
     store: SharedStore,
 }
@@ -122,9 +125,9 @@ fn git_env(repo: Repo) -> Repo {
         })
 }
 
-impl Env {
+impl<R: AgentRunner> Env<R> {
     /// A project repository on `main` with one commit, a data directory, and one job.
-    async fn new(runner: FakeRunner, settings: ProjectSettings) -> Self {
+    async fn new(runner: R, settings: ProjectSettings) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().canonicalize().expect("canonical");
         let repo_path = root.join("project");
@@ -195,7 +198,7 @@ impl Env {
     }
 
     /// (Re)starts the whole system on the same files: a new process after a crash.
-    async fn boot(&self, crash: CrashPlan) -> (Booted, turtle_store::RecoveryReport) {
+    async fn boot(&self, crash: CrashPlan) -> (Booted<R>, turtle_store::RecoveryReport) {
         let store = SharedStore::new(Store::open(&self.db, Arc::new(SystemClock)).expect("store"));
         let git = Arc::new(RepoGitFacts::new(store.clone(), Arc::clone(&self.cfg)));
         let ctx = Arc::new(StoreContext::new(
@@ -241,7 +244,7 @@ impl Env {
     }
 }
 
-impl Booted {
+impl<R: AgentRunner> Booted<R> {
     async fn job(&self, id: JobId) -> JobRecord {
         self.store
             .with(move |s| s.load_job(id))
@@ -338,7 +341,7 @@ fn settings(test_cmd: Option<&str>, target: Option<&str>) -> ProjectSettings {
 }
 
 /// Runs the job until it is Done or Blocked (and all effects finished). Returns the final job.
-async fn drive(env: &Env, b: &Booted, approve: &ApprovalPolicy) -> JobRecord {
+async fn drive<R: AgentRunner>(env: &Env<R>, b: &Booted<R>, approve: &ApprovalPolicy) -> JobRecord {
     for _ in 0..600 {
         b.human_step(env.job, approve).await.expect("human step");
         let r = b.dispatcher.tick().await.expect("tick");
@@ -357,7 +360,7 @@ async fn drive(env: &Env, b: &Booted, approve: &ApprovalPolicy) -> JobRecord {
     panic!("job did not settle: {:?}", b.job(env.job).await.job.state);
 }
 
-async fn kinds(b: &Booted, job: JobId) -> Vec<String> {
+async fn kinds<R: AgentRunner>(b: &Booted<R>, job: JobId) -> Vec<String> {
     b.store
         .with(move |s| s.list_events(Some(job)))
         .await
@@ -372,6 +375,128 @@ fn exists(root: &Path, rel: &str) -> bool {
 }
 
 const NEEDS_FEATURE_FILE: &str = "test -f feature_t1.txt";
+
+#[derive(Debug)]
+struct TrackingFake {
+    inner: FakeRunner,
+    calls: Arc<std::sync::Mutex<Vec<Role>>>,
+}
+
+impl AgentRunner for TrackingFake {
+    async fn run(&self, req: &AgentRequest) -> Result<AgentOutput, AgentError> {
+        self.calls.lock().expect("calls").push(req.role);
+        self.inner.run(req).await
+    }
+}
+
+#[tokio::test]
+async fn standard_review_routes_to_an_independent_provider_and_records_the_decision() {
+    let claude_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let codex_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let router = RoutingRunner::new(
+        ProviderSlot::new(
+            TrackingFake {
+                inner: FakeRunner::new(),
+                calls: Arc::clone(&claude_calls),
+            },
+            "claude-code",
+            None,
+        ),
+        ProviderSlot::new(
+            TrackingFake {
+                inner: FakeRunner::new(),
+                calls: Arc::clone(&codex_calls),
+            },
+            "codex",
+            None,
+        ),
+    )
+    .with_role_default(Role::Reviewer, "codex");
+    let env = Env::new(router, settings(Some(NEEDS_FEATURE_FILE), Some("release"))).await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("branch");
+    let (booted, _) = env.boot(CrashPlan::never()).await;
+    let job = drive(&env, &booted, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(job.job.state, JobState::Done);
+    let primary = claude_calls.lock().expect("calls").clone();
+    let alternate = codex_calls.lock().expect("calls").clone();
+    assert!(primary.contains(&Role::Implementer), "{primary:?}");
+    assert!(
+        !primary.contains(&Role::Reviewer) && !primary.contains(&Role::Verifier),
+        "{primary:?}"
+    );
+    assert!(
+        alternate.contains(&Role::Reviewer) && alternate.contains(&Role::Verifier),
+        "{alternate:?}"
+    );
+    let store = Store::open(&env.db, Arc::new(SystemClock)).expect("store");
+    let mut stmt = store
+        .raw_connection()
+        .prepare(
+            "SELECT a.role,a.provider,a.model,d.chosen,d.reason,d.candidates,d.override
+         FROM agent_runs a JOIN routing_decisions d ON d.id=a.routing_decision_id
+         WHERE a.job_id=?1 AND a.role IN ('implementer','reviewer','verifier')",
+        )
+        .expect("query");
+    let rows: Vec<(String, String, String, String, String, String, i64)> = stmt
+        .query_map([env.job.to_string()], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .expect("rows")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert!(
+        rows.iter()
+            .any(|r| r.0 == "implementer" && r.1 == "claude-code")
+    );
+    assert!(
+        rows.iter().any(|r| r.0 == "reviewer"
+            && r.1 == "codex"
+            && r.4.contains("independent")
+            && r.6 == 1)
+    );
+    assert!(rows.iter().any(|r| r.0 == "verifier" && r.1 == "codex"));
+    for row in &rows {
+        assert_eq!(row.3, format!("{}/{}", row.1, row.2));
+        let candidates: serde_json::Value = serde_json::from_str(&row.5).expect("candidates");
+        assert_eq!(candidates.as_array().expect("array").len(), 2);
+    }
+    let tip = env
+        .main_repo()
+        .branch_tip("release")
+        .await
+        .expect("tip")
+        .expect("branch");
+    let message = env
+        .main_repo()
+        .run(&["log", "-1", "--format=%B", &tip])
+        .await
+        .expect("message");
+    assert!(
+        message.contains("Turtle-Provider: claude-code"),
+        "{message}"
+    );
+    let worktree = env.worktree_dir();
+    let commits = env
+        .main_repo()
+        .run(&["log", "--all", "--format=%B", "--", "feature_t1.txt"])
+        .await
+        .expect("commits");
+    assert!(
+        commits.contains("Turtle-Provider: claude-code"),
+        "{commits}; worktree={worktree:?}"
+    );
+}
 
 #[tokio::test]
 async fn a_whole_job_runs_from_backlog_to_delivered() {
