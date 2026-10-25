@@ -19,7 +19,7 @@
   --color-blue: #12a4ff;
   --color-cyan: #62cbff;
   --color-text: #eaf3ff;
-  --color-muted: #93a9cc;
+  --color-muted: #adbfdc;
   --color-ok: #3fb950;
   --font-sans: 'Asap Sharp', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
@@ -143,9 +143,13 @@
     box-shadow 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The two human gates carry an outer ring, so they read as different from the machine stages. */
 .stage[data-gate] .node {
   border-color: var(--color-blue);
   color: var(--color-cyan);
+  box-shadow:
+    0 0 0 4px var(--color-ink),
+    0 0 0 5.5px var(--color-blue);
 }
 
 .stage.lit .node {
@@ -158,6 +162,10 @@
 .stage[data-gate].lit .node {
   background: var(--color-blue);
   border-color: var(--color-blue);
+  box-shadow:
+    0 0 0 4px var(--color-ink),
+    0 0 0 5.5px var(--color-cyan),
+    0 8px 22px -2px rgb(18 164 255 / 0.6);
 }
 
 .chip {
@@ -166,12 +174,12 @@
   gap: 0.4rem;
   margin-top: 0.55rem;
   padding: 0.3rem 0.6rem;
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--color-blue);
   border-radius: 6px;
   background: var(--color-deep);
   color: var(--color-cyan);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   letter-spacing: 0.01em;
   white-space: nowrap;
 }

@@ -17,7 +17,7 @@ Cloudflare Workers Static Assets (`wrangler.jsonc`): the Worker `turtle-flow-web
 
 ## Notes
 
-- The email field is intentionally disabled: there is no signup backend yet. Wire it to a service (and add a privacy notice) before enabling it.
+- There is no signup form: a disabled form read as broken, so the page shows a "Coming soon" label instead. Add a real form only together with a signup service and a privacy notice.
 - The two hashes in the stage line are examples from a test run and are labeled as such on the page. Do not replace them with anything that looks like live data.
 - Motion: one GSAP timeline on load (turtle glides in, the line draws and lights the stages, the two approval hashes resolve). It is skipped under `prefers-reduced-motion`, and content is visible without JavaScript.
 - Licenses for the fonts are in `licenses/`.
