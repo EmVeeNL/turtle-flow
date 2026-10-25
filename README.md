@@ -24,7 +24,8 @@ Rust owns the workflow state, policies, budgets, approvals and Git operations. T
 - **Local-first.** A single binary with SQLite. No account and no cloud dependency beyond the AI providers you already use.
 
 ```bash
-turtle up --agent claude
+turtle providers list
+turtle up --agent claude,codex --role-agent reviewer=codex
 turtle project add ~/dev/payments-api
 turtle job create -p payments-api "Add per-client rate limiting" --start
 turtle approvals
@@ -36,23 +37,23 @@ turtle approvals
 
 | Milestone | State |
 |---|---|
-| M0 spikes | Claude Code headless contract verified; Codex error path only (usage-limited). S-3 to S-7 not started. |
+| M0 spikes | Claude Code headless contract and Codex structured/read-only and workspace-write success paths recorded. S-3 to S-7 not started. |
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
-| M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator and repository context builder work; the capability registry and a live run on a real project remain. |
-| M3 and later | Not started: Codex, review routing, rate-limit handling, dashboard API, strict profile, releases. |
+| M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
+| M3 | Part 1 done: Codex adapter, provider selection, review independence routing and decision records. Rate-limit handling and later M3 work remain. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard UI (`dashboard/`) is built against a mock API; no server serves it yet (M4).
 
 What works:
 
 - `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
-- `turtle up --agent claude` runs real jobs through Claude Code (headless, isolated, with structured output and a per-run spend cap); `--agent demo` runs a scripted placeholder agent so you can watch the workflow without spending tokens
+- `turtle up --agent claude|codex` runs real jobs through an isolated CLI; `--agent claude,codex` uses ordered fallbacks and independent review where the profile asks for it. `--role-agent reviewer=codex` changes a role's priority. `--agent demo` runs a scripted placeholder without spending tokens
 - a token ledger and estimator: reported failed-run usage is charged and closes its reservation, while estimator learning uses reported successful runs only; budgets per job, project (monthly) and globally are reserved before each run and settled after it
 - a deterministic, redacted repository context package for runs with a checkout or worktree, with a token-capped manifest stored as an artifact and linked from the run record
 - redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
 - the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
 
-What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported successful history, reservations retain the fixed per-role cold-start size.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported successful history, reservations retain the fixed per-role cold-start size.
 
 ### Development
 

@@ -196,6 +196,8 @@ pub struct ProviderCapabilities {
 - **Model information:** if a CLI cannot list models, the adapter supplies a static, versioned list with `source = adapter_static` and the user can add model IDs manually. Model metadata (context window, relative price tier, modalities) comes from the editable price/model table ([TOKEN-INTELLIGENCE.md §8](TOKEN-INTELLIGENCE.md#8-pricing-and-cost)).
 - **Compatibility ranges:** each adapter declares `supported: ">=X.Y, <Z"` per CLI. Outside range: `Untested` → allowed with a warning banner and contract self-test (`turtle providers test`).
 
+**Implementation status (M3 part 1, 2026-10-25):** `turtle-agents::discover_capabilities` combines `--version` and noninteractive login checks with capabilities verified in S-1/S-2. `turtle providers list` reports installation, compatibility, login, native schema support, sandbox modes, effort levels and quota visibility. Codex quota remains `unknown`; model enumeration and other unverified capabilities are not inferred. Snapshots are in memory at daemon start, not yet persisted to `provider_capabilities`; refresh, contract self-tests and health caching remain open.
+
 ## 5. Tool Policies and Permissions per Role
 
 Turtle Flow defines a provider-neutral `ToolPolicy`; adapters map it to CLI flags/settings. If a restriction cannot be expressed, the adapter returns `AdapterError::PolicyNotExpressible` unless the policy marks it `best_effort`, in which case the gap is recorded and compensated by post-run checks.
@@ -230,6 +232,8 @@ Routing decision is made per agent run by the router in `turtle-tokens` ([ADR-01
    `score = w_q·quality(role, complexity) − w_c·normalized_cost(P50) − w_r·risk_penalty + w_p·user_preference + w_h·health`
 4. **Select** the top candidate; record a `routing_decision` with all candidates, scores, filters applied, and the reason string.
 5. **Exploration (post-MVP):** with probability ε (default 0 in MVP; 0.05 when enabled) pick the second-best eligible candidate on low-risk runs to keep historical data fresh.
+
+**Implementation status (M3 part 1):** the composition root accepts an ordered `--agent claude,codex` or `codex,claude` list and repeated `--role-agent role=provider` priorities. The first available provider in that order runs each role. `standard` prefers a reviewer and verifier on a provider different from the last successful implementer; `strict` requires one and fails clearly if none is available. A preferred review with no alternative falls back with an explicit reason. Installation and login exclusions appear in the candidates JSON. The executor records each selection in `routing_decisions` and links it from `agent_runs` in the run-start transaction. The small router lives in `turtle-agents` and takes a provider-neutral independence policy from the scheduler, keeping `turtle-agents` independent of the workflow and store crates. Scoring, budgets, quota holds, rate-limit failover and persisted registry snapshots are later work. Single-provider runners use the trait's default selection.
 
 <!-- diagram: 05-agent-routing-sequence -->
 ```mermaid
@@ -330,7 +334,7 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 
 ### 9.1 Claude Code CLI adapter (`claude-code`)
 
-| Concern | Expected mechanism (verify) | Fallback |
+| Concern | Mechanism and S-2 status (Codex 0.163.0) | Fallback |
 |---|---|---|
 | Headless execution | `claude -p` (print mode), prompt via stdin | — (required) |
 | Streaming output | `--output-format stream-json` (with `--verbose`); events include `system/init`, `assistant`, `user` (tool results), final `result` | `--output-format json` (final only) |
@@ -353,18 +357,20 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 
 | Concern | Expected mechanism (verify) | Fallback |
 |---|---|---|
-| Headless execution | `codex exec` with prompt via stdin or argument | — (required) |
-| Streaming output | `--json` → JSONL events (`thread.started`, `turn.started`, `item.*` with types such as agent message, reasoning, command execution, file change; `turn.completed`; `turn.failed`/`error`) | Plain text + `--output-last-message <file>` |
-| Usage | `turn.completed` usage with `input_tokens`, `cached_input_tokens`, `output_tokens` | Estimate |
+| Headless execution | `codex exec --json --ephemeral --ignore-user-config` with prompt on stdin (`-`) | — (required) |
+| Streaming output | JSONL `thread.started`, `turn.started`, `item.*`, `turn.completed`, `turn.failed`/`error`; edits may have no stream item | Git snapshot is authoritative for edits |
+| Usage | `turn.completed.usage`; `input_tokens` includes `cached_input_tokens`, so uncached input is the difference; reasoning is part of output | Unavailable on failure without usage |
 | Cost | Not reported (compute from price table) | — |
 | Model selection | `-m/--model` | Config default (recorded) |
-| Sandbox | `--sandbox read-only | workspace-write | danger-full-access`; no `-a` flag on `exec` ✔ (approvals never prompt headless); network off by default in workspace-write | Required capability for implementer role |
-| Structured output | `--output-schema <file>` (**verify** availability per version) | Final JSON extraction |
+| Sandbox | `-s read-only` for document/review roles; `-s workspace-write` for implementer/fixer. Recorded workspace-write blocked `.git/index.lock` | Factory Git policy still checks post-run |
+| Structured output | `--output-schema <file>` from a private per-run directory; final `agent_message.text` contains the JSON document | Missing/invalid document fails the run |
 | Working dir | `-C/--cd <dir>`; may require `--skip-git-repo-check` in some layouts | Spawn with cwd |
 | Config overrides | `-c key=value`, `--profile` | — |
 | Sessions | `codex exec resume <id>` (**verify**) | Fresh run |
 | Auth | CLI login or API key env var | `blocked` with remediation |
-| Config isolation | `CODEX_HOME` (OQ-03) | Global config |
+| Config isolation | `--ignore-user-config`, `--ephemeral`; allowlisted `CODEX_HOME` and `OPENAI_API_KEY` pass through | — |
+
+**Implementation status:** `CodexRunner` uses the recorded success and usage-limit fixtures, a process-boundary stand-in test, timeout and output limits, and the existing redacted transcript and failed-usage ledger path. Codex's strict schema form is derived by requiring every declared object property, including nested properties. It has no native `--max-budget-usd` equivalent; Turtle Flow's reservation still applies. Rate-limit holds and reset scheduling remain out of scope.
 
 ### 9.3 Verification spikes
 

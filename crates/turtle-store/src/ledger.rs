@@ -114,6 +114,17 @@ pub struct NewRun {
     pub context_manifest_rev: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct NewRoutingDecision<'a> {
+    pub run: RunId,
+    pub job: JobId,
+    pub role: Role,
+    pub chosen: &'a str,
+    pub candidates: &'a serde_json::Value,
+    pub reason: &'a str,
+    pub override_used: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunRecord {
     pub id: String,
@@ -624,6 +635,30 @@ impl Tx<'_> {
             ],
         )?;
         Ok(())
+    }
+
+    /// The decision and its run link are written in the same transaction as the reservation.
+    pub fn record_routing_decision(&mut self, decision: &NewRoutingDecision<'_>) -> Result<()> {
+        let now = self.now()?;
+        self.tx.execute(
+            "INSERT INTO routing_decisions(id,job_id,role,chosen,candidates,reason,override,created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![decision.run.to_string(), decision.job.to_string(), crate::store::to_s(&decision.role)?, decision.chosen,
+                decision.candidates.to_string(), decision.reason, i64::from(decision.override_used), now],
+        )?;
+        self.tx.execute(
+            "UPDATE agent_runs SET routing_decision_id=?1 WHERE id=?1",
+            [decision.run.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn latest_implementer_provider(&self, job: JobId) -> Result<Option<String>> {
+        self.tx.query_row(
+            "SELECT provider FROM agent_runs WHERE job_id=?1 AND role='implementer' AND status='succeeded'
+             ORDER BY created_at DESC, id DESC LIMIT 1",
+            [job.to_string()], |r| r.get(0),
+        ).optional().map_err(Into::into)
     }
 
     /// Marks a run that never started (for example, refused for budget). It has no usage record:

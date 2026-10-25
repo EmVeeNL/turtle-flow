@@ -6,7 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use turtle_agents::{AgentRunner, ClaudeConfig, ClaudeRunner, FakeRunner};
+use turtle_agents::{
+    AgentRunner, CapabilityRegistry, ClaudeConfig, ClaudeRunner, CodexConfig, CodexRunner,
+    FakeRunner, ProviderId, ProviderSlot, RoutingRunner,
+};
+use turtle_domain::Role;
 use turtle_scheduler::{CrashPlan, Dispatcher, DispatcherConfig, FactoryExecutor};
 
 use crate::paths::Home;
@@ -37,48 +41,189 @@ fn running(home: &Home) -> bool {
     matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock))
 }
 
-/// Which agent drives the jobs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum AgentChoice {
-    /// Claude Code CLI, headless and isolated.
-    Claude,
-    /// Scripted placeholder agent that writes dummy files; for trying the workflow.
-    Demo,
+/// Daemon provider selection and per-provider settings.
+#[derive(Debug, Clone, Default)]
+pub struct DaemonOptions {
+    pub agent: Option<String>,
+    pub role_agent: Vec<String>,
+    pub claude_model: Option<String>,
+    pub claude_effort: Option<String>,
+    pub max_run_usd: Option<f64>,
+    pub codex_model: Option<String>,
+    pub codex_effort: Option<String>,
 }
 
-/// Settings for the Claude Code agent.
-#[derive(Debug, Clone, Default)]
-pub struct ClaudeOptions {
-    pub model: Option<String>,
-    pub effort: Option<String>,
-    pub max_run_usd: Option<f64>,
+fn parse_role(name: &str) -> Result<Role> {
+    match name {
+        "discovery" => Ok(Role::Discovery),
+        "spec_writer" => Ok(Role::SpecWriter),
+        "planner" => Ok(Role::Planner),
+        "implementer" => Ok(Role::Implementer),
+        "fixer" => Ok(Role::Fixer),
+        "reviewer" => Ok(Role::Reviewer),
+        "verifier" => Ok(Role::Verifier),
+        "summarizer" => Ok(Role::Summarizer),
+        "release_notes" => Ok(Role::ReleaseNotes),
+        _ => bail!("unknown role `{name}` in --role-agent"),
+    }
+}
+
+fn parse_agents(options: &DaemonOptions) -> Result<Vec<&str>> {
+    let Some(agent) = options.agent.as_deref() else {
+        bail!(
+            "choose an agent: `--agent claude`, `--agent codex`, `--agent claude,codex`, or `--agent demo`"
+        );
+    };
+    let agents: Vec<_> = agent.split(',').collect();
+    if agents.is_empty()
+        || agents.len() > 2
+        || agents
+            .iter()
+            .any(|p| !matches!(*p, "claude" | "codex" | "demo"))
+    {
+        bail!("--agent must be claude, codex, claude,codex, codex,claude, or demo");
+    }
+    if agents.contains(&"demo") && agents.len() != 1 || agents.len() == 2 && agents[0] == agents[1]
+    {
+        bail!("--agent needs distinct real providers, or demo alone");
+    }
+    if !options.role_agent.is_empty() && agents.len() != 2 {
+        bail!("--role-agent requires two providers in --agent");
+    }
+    for assignment in &options.role_agent {
+        let Some((role, provider)) = assignment.split_once('=') else {
+            bail!("--role-agent needs role=provider")
+        };
+        parse_role(role)?;
+        if !agents.contains(&provider) {
+            bail!("provider `{provider}` in --role-agent is not in --agent")
+        }
+    }
+    Ok(agents)
 }
 
 /// Runs the dispatcher in the foreground until interrupted.
-pub async fn run(home: Home, agent: Option<AgentChoice>, claude: ClaudeOptions) -> Result<()> {
-    let Some(agent) = agent else {
-        bail!(
-            "choose an agent: `--agent claude` runs Claude Code (it must be installed and logged in), \
-             `--agent demo` runs a scripted placeholder so you can watch the workflow.\n\
-             Codex arrives later in milestone M3."
-        );
+pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
+    let agents = parse_agents(&options)?;
+    let mut claude_config = ClaudeConfig {
+        model: options.claude_model.clone(),
+        effort: options.claude_effort.clone(),
+        ..ClaudeConfig::default()
     };
+    if let Some(usd) = options.max_run_usd {
+        claude_config.max_budget_usd = Some(usd);
+    }
+    let codex_config = CodexConfig {
+        model: options.codex_model.clone(),
+        effort: options.codex_effort.clone(),
+        ..CodexConfig::default()
+    };
+    let registry = if agents[0] == "demo" {
+        None
+    } else {
+        Some(CapabilityRegistry::discover().await)
+    };
+    let mut availability = std::collections::HashMap::new();
+    for agent in &agents {
+        let provider = match *agent {
+            "claude" => ProviderId::ClaudeCode,
+            "codex" => ProviderId::Codex,
+            _ => continue,
+        };
+        let caps = registry
+            .as_ref()
+            .expect("real providers have registry")
+            .get(provider);
+        availability.insert(*agent, caps.exclusion_reason());
+    }
+    if agents
+        .iter()
+        .filter(|agent| **agent != "demo")
+        .all(|agent| availability.get(agent).is_some_and(Option::is_some))
+        && agents[0] != "demo"
+    {
+        bail!(
+            "no configured provider is available: {}",
+            agents
+                .iter()
+                .map(|agent| format!(
+                    "{agent}: {}",
+                    availability
+                        .get(agent)
+                        .and_then(Option::as_deref)
+                        .unwrap_or("unknown")
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    if agents.len() == 1
+        && let Some(Some(reason)) = availability.get(agents[0])
+    {
+        bail!("{} is unavailable: {reason}", agents[0]);
+    }
     let _lock = lock(&home)?;
     let rt = Runtime::open(home.clone())?;
     std::fs::write(home.daemon_pid(), std::process::id().to_string())?;
-    let result = match agent {
-        AgentChoice::Demo => serve(&rt, FakeRunner::new(), "demo agent").await,
-        AgentChoice::Claude => {
-            let mut config = ClaudeConfig {
-                model: claude.model,
-                effort: claude.effort,
-                ..ClaudeConfig::default()
-            };
-            if let Some(usd) = claude.max_run_usd {
-                config.max_budget_usd = Some(usd);
+    let result = match agents.as_slice() {
+        ["demo"] => serve(&rt, FakeRunner::new(), "demo agent").await,
+        ["claude"] => serve(&rt, ClaudeRunner::new(claude_config), "Claude Code").await,
+        ["codex"] => serve(&rt, CodexRunner::new(codex_config), "Codex").await,
+        ["claude", "codex"] => {
+            let mut router = RoutingRunner::new(
+                ProviderSlot::from_capabilities(
+                    ClaudeRunner::new(claude_config),
+                    registry
+                        .as_ref()
+                        .expect("registry")
+                        .get(ProviderId::ClaudeCode),
+                ),
+                ProviderSlot::from_capabilities(
+                    CodexRunner::new(codex_config),
+                    registry.as_ref().expect("registry").get(ProviderId::Codex),
+                ),
+            );
+            for assignment in &options.role_agent {
+                let (role, provider) = assignment.split_once('=').expect("validated assignment");
+                router = router.with_role_default(
+                    parse_role(role)?,
+                    if provider == "claude" {
+                        "claude-code"
+                    } else {
+                        "codex"
+                    },
+                );
             }
-            serve(&rt, ClaudeRunner::new(config), "Claude Code").await
+            serve(&rt, router, "Claude Code, Codex").await
         }
+        ["codex", "claude"] => {
+            let mut router = RoutingRunner::new(
+                ProviderSlot::from_capabilities(
+                    CodexRunner::new(codex_config),
+                    registry.as_ref().expect("registry").get(ProviderId::Codex),
+                ),
+                ProviderSlot::from_capabilities(
+                    ClaudeRunner::new(claude_config),
+                    registry
+                        .as_ref()
+                        .expect("registry")
+                        .get(ProviderId::ClaudeCode),
+                ),
+            );
+            for assignment in &options.role_agent {
+                let (role, provider) = assignment.split_once('=').expect("validated assignment");
+                router = router.with_role_default(
+                    parse_role(role)?,
+                    if provider == "claude" {
+                        "claude-code"
+                    } else {
+                        "codex"
+                    },
+                );
+            }
+            serve(&rt, router, "Codex, Claude Code").await
+        }
+        _ => unreachable!("parse_agents validated the list"),
     };
     let _ = std::fs::remove_file(home.daemon_pid());
     result?;
@@ -117,7 +262,8 @@ async fn serve<R: AgentRunner>(rt: &Runtime, runner: R, label: &str) -> Result<(
     Ok(())
 }
 
-pub async fn up(home: &Home, agent: Option<AgentChoice>, claude: &ClaudeOptions) -> Result<()> {
+pub async fn up(home: &Home, options: &DaemonOptions) -> Result<()> {
+    parse_agents(options)?;
     home.ensure()?;
     if running(home) {
         println!("Already running.");
@@ -130,24 +276,26 @@ pub async fn up(home: &Home, agent: Option<AgentChoice>, claude: &ClaudeOptions)
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon");
-    if let Some(agent) = agent {
-        cmd.args([
-            "--agent",
-            if agent == AgentChoice::Demo {
-                "demo"
-            } else {
-                "claude"
-            },
-        ]);
+    if let Some(agent) = &options.agent {
+        cmd.args(["--agent", agent]);
     }
-    if let Some(model) = &claude.model {
+    for assignment in &options.role_agent {
+        cmd.args(["--role-agent", assignment]);
+    }
+    if let Some(model) = &options.claude_model {
         cmd.args(["--claude-model", model]);
     }
-    if let Some(effort) = &claude.effort {
+    if let Some(effort) = &options.claude_effort {
         cmd.args(["--claude-effort", effort]);
     }
-    if let Some(usd) = claude.max_run_usd {
+    if let Some(usd) = options.max_run_usd {
         cmd.args(["--max-run-usd", &usd.to_string()]);
+    }
+    if let Some(model) = &options.codex_model {
+        cmd.args(["--codex-model", model]);
+    }
+    if let Some(effort) = &options.codex_effort {
+        cmd.args(["--codex-effort", effort]);
     }
     let child = cmd
         .env("TURTLE_HOME", &home.root)

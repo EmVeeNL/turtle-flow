@@ -1,11 +1,12 @@
 //! Provider adapters: CLI discovery, output parsers verified against real transcripts (spike
-//! S-1/S-2, `spikes/fixtures/`), the Claude Code runner with its role prompts and document
-//! schemas, and a scripted `FakeRunner`. The Codex runner and the full `ProviderAdapter` trait
-//! (capabilities, cancellation) follow `docs/AGENT-PROTOCOL.md` §3.
+//! S-1/S-2, `spikes/fixtures/`), Claude Code and Codex runners with role prompts and document
+//! schemas, capability discovery, ordered routing, and a scripted `FakeRunner`. The larger
+//! `ProviderAdapter` contract (health caching, cancellation) remains in the design.
 
 pub mod claude;
 pub mod claude_runner;
 pub mod codex;
+pub mod codex_runner;
 pub mod discovery;
 pub mod prompts;
 pub mod runner;
@@ -13,8 +14,14 @@ pub mod schemas;
 
 pub use claude::PermissionDenial;
 pub use claude_runner::{ClaudeConfig, ClaudeRunner};
-pub use discovery::{CompatStatus, ProviderId, ProviderInfo, discover};
-pub use runner::{
-    AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, RecordedCall,
-    Step,
+pub use codex_runner::{CodexConfig, CodexRunner};
+pub use discovery::{
+    AuthStatus, CapabilityRegistry, CompatStatus, ProviderCapabilities, ProviderId, ProviderInfo,
+    discover, discover_capabilities,
 };
+pub use runner::{
+    AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, Independence,
+    RecordedCall, RouteContext, RouteSelection, Step,
+};
+pub mod routing;
+pub use routing::{ProviderSlot, RoutingRunner};

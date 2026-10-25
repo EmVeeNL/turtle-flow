@@ -1,0 +1,1 @@
+{"type": "object", "additionalProperties": false, "required": ["summary", "relevant_files", "risks"], "properties": {"summary": {"type": "string"}, "relevant_files": {"type": "array", "items": {"type": "string"}}, "risks": {"type": "array", "items": {"type": "string"}}}}

@@ -20,7 +20,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use turtle_agents::{AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner};
+use turtle_agents::{
+    AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, Independence, RouteContext,
+};
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
@@ -33,13 +35,13 @@ use turtle_git::delivery::{DeliveryOutcome, SquashRequest};
 use turtle_git::worktree::WorktreeOutcome;
 use turtle_git::{GitError, Repo};
 use turtle_store::{
-    DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, NewRun, ProjectRecord,
-    ReservationOutcome, RevisionRecord, RunEnd,
+    DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, NewRoutingDecision, NewRun,
+    ProjectRecord, ReservationOutcome, RevisionRecord, RunEnd,
 };
 use turtle_tokens::{
     BucketPath, cold_start_estimate, estimate, reservation_size, score_complexity,
 };
-use turtle_workflow::{Effect, JobCommand, ReviewVerdict, VerificationOutcome};
+use turtle_workflow::{Effect, JobCommand, ReviewIndependence, ReviewVerdict, VerificationOutcome};
 
 use crate::approvals::ApprovalService;
 use crate::binding::GitFactsProvider;
@@ -309,8 +311,30 @@ where
         } else {
             None
         };
-        let (run_id, role, provider) = (req.run_id, req.role, self.runner.name().to_owned());
+        let (run_id, role) = (req.run_id, req.role);
         let job_id = job.job.id;
+        let implementer_provider = if matches!(role, Role::Reviewer | Role::Verifier) {
+            self.store
+                .with(move |s| s.transaction(|tx| tx.latest_implementer_provider(job_id)))
+                .await
+                .map_err(retryable)?
+        } else {
+            None
+        };
+        let independence = match job.job.profile.review_independence {
+            ReviewIndependence::Off => Independence::Off,
+            ReviewIndependence::Preferred => Independence::Preferred,
+            ReviewIndependence::Required => Independence::Required,
+        };
+        let route = self
+            .runner
+            .select(&RouteContext {
+                role,
+                independence,
+                implementer_provider,
+            })
+            .map_err(agent_error)?;
+        let provider = route.provider.clone();
         let complexity = req
             .spec
             .as_ref()
@@ -322,7 +346,7 @@ where
             role,
             complexity,
             &provider,
-            self.runner.model(),
+            &route.model,
         );
         let lookup_path = path.clone();
         let new_run = NewRun {
@@ -331,7 +355,7 @@ where
             role,
             stage: label(&job.job.state),
             provider: provider.clone(),
-            model: self.runner.model().to_owned(),
+            model: route.model.clone(),
             adapter_version: env!("CARGO_PKG_VERSION").to_owned(),
             context_manifest_rev: context_revision,
         };
@@ -340,6 +364,15 @@ where
             .with(move |s| {
                 s.transaction(|tx| {
                     tx.begin_run(&new_run)?;
+                    tx.record_routing_decision(&NewRoutingDecision {
+                        run: run_id,
+                        job: job_id,
+                        role,
+                        chosen: &format!("{}/{}", route.provider, route.model),
+                        candidates: &route.candidates,
+                        reason: &route.reason,
+                        override_used: route.override_used,
+                    })?;
                     let buckets = tx.estimation_buckets(&lookup_path)?;
                     let size = reservation_size(estimate(&buckets, cold_start_estimate(role)));
                     let outcome = tx.reserve_estimated(run_id, job_id, &size)?;
@@ -363,7 +396,7 @@ where
             });
         }
 
-        let result = self.runner.run(&req).await;
+        let result = self.runner.run_selected(&req, &provider).await;
         let (project_id, event_usage) = (
             job.project_id,
             result.as_ref().map_or_else(
@@ -547,15 +580,34 @@ where
         out
     }
 
-    fn trailers(&self, job: &JobRecord, task: Option<String>, run: RunId) -> Trailers {
-        Trailers {
+    async fn trailers(
+        &self,
+        job: &JobRecord,
+        task: Option<String>,
+        run: RunId,
+    ) -> Result<Trailers, ExecError> {
+        let run_key = run.to_string();
+        let job_id = job.job.id;
+        let agent_commit = task.is_some();
+        let provider = self
+            .store
+            .with(move |s| {
+                if agent_commit {
+                    s.run_by_id(&run_key).map(|r| Some(r.provider))
+                } else {
+                    s.transaction(|tx| tx.latest_implementer_provider(job_id))
+                }
+            })
+            .await
+            .map_err(retryable)?;
+        Ok(Trailers {
             job: job.key.to_string(),
             task,
             run: Some(run.to_string()),
-            provider: Some(self.runner.name().to_owned()),
+            provider: Some(provider.unwrap_or_else(|| self.runner.name().to_owned())),
             model: None,
             context: None,
-        }
+        })
     }
 
     // ------------------------------------------------------------ effects
@@ -773,7 +825,9 @@ where
         wt.commit_all(
             &format!("fix({key}): address open issues"),
             "",
-            &self.trailers(job, Some(format!("fix/{run_id}")), run_id),
+            &self
+                .trailers(job, Some(format!("fix/{run_id}")), run_id)
+                .await?,
         )
         .await
         .map_err(git_error)?;
@@ -874,7 +928,7 @@ where
             wt.commit_all(
                 &format!("feat({key}): {}", task.title),
                 &task.instructions,
-                &self.trailers(&job, Some(task_key), run_id),
+                &self.trailers(&job, Some(task_key), run_id).await?,
             )
             .await
             .map_err(git_error)?;
@@ -1062,7 +1116,7 @@ where
             let (spec, _): (Specification, _) = self
                 .need_doc(&job, ArtifactKind::Specification, "specification")
                 .await?;
-            let trailers = self.trailers(&job, None, RunId::new()).render();
+            let trailers = self.trailers(&job, None, RunId::new()).await?.render();
             let req = SquashRequest {
                 target_branch: &target,
                 job_branch: &layout.spec.branch,

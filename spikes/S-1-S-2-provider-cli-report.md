@@ -7,7 +7,7 @@
 | Claude Code | 2.1.310 |
 | Codex CLI | 0.163.0 |
 | Raw material | [`raw/`](raw/) (`--help` captures), [`fixtures/`](fixtures/) (recorded headless transcripts) |
-| Status | S-1 partially complete (3 runs). S-2 blocked by account usage limit; only the error path is recorded. |
+| Status | S-1 partially complete (3 runs). S-2 error, read-only structured output and workspace-write success paths recorded; cancellation and network checks remain. |
 
 Fixtures were recorded in a throwaway Git repository containing `main.rs` and `README.md`. Session IDs and local paths are left in on purpose because the parsers must handle them. No secrets are present.
 
@@ -81,7 +81,7 @@ Assumption **A-03 is false for Claude Code with subscription auth.** Window util
 |---|---|---|
 | Headless | `codex exec`, prompt via stdin with `-` ✔ | as designed |
 | Streaming | `--json` → JSONL ✔ (`thread.started`, `turn.started`, `error`, `turn.failed` observed) | as designed |
-| Structured output | `--output-schema <FILE>` (flag present; success path not yet observed) | as designed |
+| Structured output | `--output-schema <FILE>` (success path recorded in §2.3) | final `agent_message.text` contains the JSON |
 | Sandbox | `-s read-only \| workspace-write \| danger-full-access` | as designed |
 | Approvals | **No `-a/--ask-for-approval` on `exec`.** `--approve-for-me` routes approvals to automatic review | Remove `-a never` from the docs |
 | Config isolation | `--ignore-user-config` (auth still read from `CODEX_HOME`), `--ignore-rules`, `--strict-config` | Use `--ignore-user-config` by default, the Codex equivalent of §1.3 |
@@ -101,14 +101,23 @@ Assumption **A-03 is false for Claude Code with subscription auth.** Window util
 - There is no structured retry field. The retry time is a **local wall-clock string** ("3:36 PM") with no date or timezone. Parse it as the next occurrence in local time and fall back to the backoff policy if parsing fails.
 - Exit code was 1. Classify as `RateLimited` from the message pattern `hit your usage limit`.
 
+### 2.3 Success path (recorded 2026-10-25, Codex 0.163.0, model `gpt-6-luna`, effort low)
+
+Fixtures: `fixtures/codex/02-readonly-structured.ndjson` (read-only, `--output-schema`, schema in `02-discovery-schema.json`) and `03-implementer-commit-attempt.ndjson` (workspace-write; the prompt asks the agent to commit). Invocation used: `codex exec --json --ephemeral --ignore-user-config -m <model> -c model_reasoning_effort=low -s <read-only|workspace-write> [--output-schema FILE] -C <dir> -` with the prompt on stdin.
+
+- **Event stream:** `thread.started`, `turn.started`, `item.started`/`item.completed` (types `agent_message` and `command_execution` with `command`, `aggregated_output`, `exit_code`, `status`), `turn.completed`. File edits made through Codex's patch tool did **not** appear as items in run 03: the Git post-run snapshot, not the stream, is the source of truth for what changed.
+- **Structured output** has no separate field: the final `agent_message` `text` is the JSON document (valid against the schema). Take the last `agent_message` of the turn.
+- **Usage** is in `turn.completed.usage`: `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`. In run 02, `input_tokens` 52,515 with `cached_input_tokens` 34,432: **`input_tokens` includes the cached reads** (OpenAI convention), unlike Claude Code, whose `input_tokens` excludes them. Adding the two would double count. Reasoning tokens are part of `output_tokens`.
+- **Sandbox:** in `workspace-write` the agent could create `HELLO.md` but `git add` failed (`Git could not create .git/index.lock`, exit 128): the Codex sandbox protects `.git`. The agent reported this honestly. Defense in depth for "agents never commit", though the factory-side policy check still decides.
+- Auth came from `CODEX_HOME` even with `--ignore-user-config`; no `--approve-for-me` was needed for these runs.
+
 ## 3. Required documentation updates
 
 Applied in this commit: AGENT-PROTOCOL §9 (verified facts), PRD A-03 (falsified for Claude Code), TOKEN-INTELLIGENCE §14 (quota visibility).
 
-## 4. Next spike runs (when Codex quota resets)
+## 4. Next spike runs
 
-1. Codex read-only + `--output-schema` success path (usage fields on `turn.completed`).
-2. Codex `workspace-write` implementer: file edits, attempted `git commit`, network attempt.
-3. Claude: cancellation (SIGTERM mid-run). Does the stream end with a `result`? Is partial usage reported?
-4. Claude: auth-missing error shape (run with an empty `CLAUDE_CONFIG_DIR`).
+1. Codex `workspace-write` network attempt and cancellation behavior.
+2. Claude: cancellation (SIGTERM mid-run). Does the stream end with a `result`? Is partial usage reported?
+3. Claude: auth-missing error shape (run with an empty `CLAUDE_CONFIG_DIR`).
 5. S-4 sandbox: can an implementer read `~/.turtle`, write outside the worktree, or reach `127.0.0.1`?
