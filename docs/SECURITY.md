@@ -146,11 +146,11 @@ Agent processes receive only: `PATH` (sanitized), `HOME`, `USER`, `LANG`/`LC_*`,
 
 ### 6.4 Local dashboard and API (SEC-001, SEC-002)
 
-- Bind `127.0.0.1:<port>` and `[::1]:<port>` only; random port by default stored in `~/.turtle/run/`; MVP builds refuse non-loopback binds.
+- The implemented server binds `127.0.0.1:<port>` only; random port by default, recorded at `<TURTLE_HOME>/run/api.port` (0600). Binding any non-loopback IP is rejected in code. IPv6 loopback binding is not yet enabled.
 - `turtle dashboard` creates a one-time login code (128-bit, 60 s TTL) and opens `http://127.0.0.1:<port>/login#code=…` (fragment avoids server logs/referrers); the SPA exchanges it for an `HttpOnly; SameSite=Strict; Path=/` session cookie (session 12 h, sliding).
 - Every request: `Host` must be in the allowlist; state-changing requests require `Origin` equal to the server origin and a custom header (`X-Turtle-Request: 1`) — defeating CSRF and DNS rebinding.
-- CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'`. No third-party assets. `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
-- CLI uses the Unix socket (`0600`); peer credentials (`SO_PEERCRED`/`getpeereid`) verify the same UID.
+- The HTTP response uses Astro’s built CSP hashes for built HTML and adds `frame-ancestors 'none'`; the login page uses external same-origin JavaScript. Responses also have `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY`. No CORS headers or third-party assets are served.
+- The CLI still opens SQLite directly. The Unix socket and peer-credential checks are not implemented.
 
 ### 6.5 Approval bypass prevention
 
@@ -169,7 +169,7 @@ Approval integrity is the most important property of the product and the hardest
 
 Residual risk (documented, top-10 risk in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md)): on Linux without a keyring ACL and without container isolation, a same-user process outside any sandbox could in theory read the HMAC key; L8 is the complete mitigation.
 
-> **Implementation status of the layers above.** L1 (agents cannot decide: only users, enforced in the store and the engine), L2 (hash echo, plus recomputation at guard time) and L7-style re-verification at guard time are implemented and mutation-tested. **L6 (per-row HMAC with a keychain-held key) is not implemented yet**, so a same-user process that edits the database file can still forge an approval row; the guard recomputation limits what a forged row can approve, but does not prevent it. L3–L5 and L8 depend on the sandbox spike (S-4) and the daemon.
+> **Implementation status of the layers above.** L1 is enforced by the authenticated dashboard decision handler and the existing store/engine user-actor checks; agent output is never interpreted as a decision. L2 is enforced by the echoed hash, service-side binding rebuild, and workflow guard. L5 now has TTY-only login-code issuance, database storage of the code hash only, single-use 60-second redemption, and an in-memory hashed session table with a 12-hour sliding expiry. The session cookie is `HttpOnly; SameSite=Strict; Path=/`; `Secure` is omitted because browsers need to send it over plain loopback HTTP. L7-style binding re-verification exists, but not the proposed HMAC or audit-continuity checks. **L6 (per-row HMAC and keychain key), the Unix-socket L4 control, and L8 are not implemented.** L3 remains limited to existing provider-native and command-policy controls pending the sandbox spike. A malicious same-user process that can reach the database or create a pseudo-terminal is still a residual risk; a TTY check is not an OS isolation boundary. Browser cookies are scoped to host rather than port, so a malicious server on another loopback port could receive this cookie if the browser is directed there. The remaining isolation layers are needed for the stronger same-user threat claim.
 
 ### 6.6 Git hardening (SEC-014)
 

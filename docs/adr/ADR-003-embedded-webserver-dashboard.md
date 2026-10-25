@@ -80,6 +80,10 @@ The dashboard is a rich, private, local client; an SPA over the Rust JSON API is
 
 **What this gives up.** TanStack Router's typed search params, TanStack Query's cache, and the React component ecosystem (diff viewers, charts) are not available off the shelf; the API client, SSE reconnect logic and the virtualized log are written in `dashboard/src/lib`. Client-side navigation between pages is full page loads, which is acceptable on loopback. If interactive state outgrows islands (for example many cross-linked live panels), revisit this decision before building more of the app inside islands: the data layer is framework-neutral TypeScript, so a move to an SPA would reuse it.
 
-**Unchanged:** Axum on loopback, `/api/v1`, SSE with `Last-Event-ID`, the CLI and dashboard sharing one API, and the typography and icon-set decisions. Astro with Starlight remains the recommendation for the future public docs site.
+**Unchanged in the design:** Axum on loopback, `/api/v1`, SSE with `Last-Event-ID`, eventual CLI and dashboard API reuse, and the typography and icon-set decisions. Astro with Starlight remains the recommendation for the future public docs site.
 
 The implementation and its deviations from DASHBOARD-UX.md are documented in [`dashboard/README.md`](../../dashboard/README.md).
+
+## Implementation note (M4)
+
+The daemon now serves Axum and the static Astro build on loopback. `rust-embed` is an opt-in Cargo feature; source builds can serve `dashboard/dist` or `TURTLE_DASHBOARD_DIR` and do not require a frontend build. Built HTML's Astro CSP hashes are copied to the HTTP header. SSE resumes from a database event sequence using a bounded cursor query and fallback poll. The real dashboard build uses a client view that reads the local API, while the richer static layouts remain the mock design preview. The CLI still opens SQLite directly, and the Unix-socket transport and OpenAPI generation from the original decision remain unimplemented.
