@@ -122,6 +122,51 @@ impl<C: ContextProvider> Engine<C> {
         Err(EngineError::TooManyConflicts)
     }
 
+    /// Dashboard command with optimistic version and replay marker committed alongside the
+    /// transition. A crash cannot apply the command without recording its idempotency key.
+    pub async fn submit_api_command(
+        &self,
+        job: JobId,
+        cmd: JobCommand,
+        actor: Actor,
+        expected_version: u64,
+        key: String,
+        label: String,
+    ) -> Result<(JobRecord, bool), EngineError> {
+        let record = self.store.with(move |s| s.load_job(job)).await?;
+        if record.job.version != expected_version {
+            return Err(StoreError::VersionConflict {
+                job,
+                expected: expected_version,
+            }
+            .into());
+        }
+        let cx = self.ctx.context(&record).await;
+        let decision = decide(&record.job, &cmd, &actor, &cx)?;
+        self.crash.point("submit:decided")?;
+        let outcome = self
+            .store
+            .with(move |s| {
+                s.transaction(|tx| {
+                    if let Some((saved_job, saved_label, _)) = tx.command_replay(&key)? {
+                        if saved_job != job.to_string() || saved_label != label {
+                            return Err(StoreError::Forbidden(
+                                "idempotency key belongs to another command".into(),
+                            ));
+                        }
+                        return Ok((tx.load_job(job)?, true));
+                    }
+                    tx.apply_decision(expected_version, &decision, &cmd, &actor)?;
+                    let updated = tx.load_job(job)?;
+                    tx.remember_command(&key, &job.to_string(), &label, updated.job.version)?;
+                    Ok((updated, false))
+                })
+            })
+            .await?;
+        self.crash.point("submit:committed")?;
+        Ok(outcome)
+    }
+
     /// Completes an effect and, in the **same transaction**, applies the command its execution
     /// produced. A crash can therefore never complete an effect without applying its result, or
     /// apply the result without completing the effect.

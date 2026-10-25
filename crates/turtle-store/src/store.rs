@@ -78,6 +78,7 @@ pub struct EventRow {
     pub id: String,
     pub occurred_at: String,
     pub job_id: Option<String>,
+    pub project_id: Option<String>,
     pub kind: String,
     pub payload: Value,
     pub actor_kind: String,
@@ -212,6 +213,35 @@ impl Store {
 
     pub fn list_events(&self, job: Option<JobId>) -> Result<Vec<EventRow>> {
         list_events(&self.conn, job)
+    }
+
+    /// Indexed cursor for live clients. A fixed batch bounds work and memory per connection.
+    pub fn events_after(
+        &self,
+        seq: i64,
+        project: Option<&str>,
+        job: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EventRow>> {
+        let mut stmt = self.conn.prepare("SELECT seq, id, occurred_at, job_id, project_id, type, payload, actor_kind, actor_id, prev_hash, hash FROM events WHERE seq>?1 AND (?2 IS NULL OR project_id=?2) AND (?3 IS NULL OR job_id=?3) ORDER BY seq LIMIT ?4")?;
+        let rows = stmt.query_map(params![seq, project, job, limit.min(256) as i64], |r| {
+            let payload: String = r.get(6)?;
+            Ok(EventRow {
+                seq: r.get(0)?,
+                id: r.get(1)?,
+                occurred_at: r.get(2)?,
+                job_id: r.get(3)?,
+                project_id: r.get(4)?,
+                kind: r.get(5)?,
+                payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
+                actor_kind: r.get(7)?,
+                actor_id: r.get(8)?,
+                prev_hash: r.get(9)?,
+                hash: r.get(10)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     /// True when every job this one depends on is delivered (`done` or `awaiting_release`).
@@ -688,22 +718,23 @@ pub(crate) fn load_job(conn: &Connection, id: JobId) -> Result<JobRecord> {
 
 fn list_events(conn: &Connection, job: Option<JobId>) -> Result<Vec<EventRow>> {
     let mut stmt = conn.prepare(
-        "SELECT seq, id, occurred_at, job_id, type, payload, actor_kind, actor_id, prev_hash, hash
+        "SELECT seq, id, occurred_at, job_id, project_id, type, payload, actor_kind, actor_id, prev_hash, hash
          FROM events WHERE (?1 IS NULL OR job_id = ?1) ORDER BY seq",
     )?;
     let rows = stmt.query_map([job.map(|j| j.to_string())], |r| {
-        let payload: String = r.get(5)?;
+        let payload: String = r.get(6)?;
         Ok(EventRow {
             seq: r.get(0)?,
             id: r.get(1)?,
             occurred_at: r.get(2)?,
             job_id: r.get(3)?,
-            kind: r.get(4)?,
+            project_id: r.get(4)?,
+            kind: r.get(5)?,
             payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
-            actor_kind: r.get(6)?,
-            actor_id: r.get(7)?,
-            prev_hash: r.get(8)?,
-            hash: r.get(9)?,
+            actor_kind: r.get(7)?,
+            actor_id: r.get(8)?,
+            prev_hash: r.get(9)?,
+            hash: r.get(10)?,
         })
     })?;
     rows.collect::<Result<_, _>>().map_err(Into::into)

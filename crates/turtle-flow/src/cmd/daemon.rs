@@ -2,6 +2,7 @@
 //! an exclusive lock on `daemon.lock` that the operating system drops if the process dies.
 
 use std::fs::{File, OpenOptions, TryLockError};
+use std::io::IsTerminal;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use turtle_agents::{
     AgentRunner, CapabilityRegistry, ClaudeConfig, ClaudeRunner, CodexConfig, CodexRunner,
     FakeRunner, ProviderId, ProviderSlot, RoutingRunner,
 };
+use turtle_api::{ApiServer, Services};
 use turtle_domain::Role;
 use turtle_scheduler::{CrashPlan, Dispatcher, DispatcherConfig, FactoryExecutor};
 
@@ -44,6 +46,8 @@ fn running(home: &Home) -> bool {
 /// Daemon provider selection and per-provider settings.
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
+    pub no_api: bool,
+    pub api_port: Option<u16>,
     pub agent: Option<String>,
     pub role_agent: Vec<String>,
     pub claude_model: Option<String>,
@@ -163,12 +167,31 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
         bail!("{} is unavailable: {reason}", agents[0]);
     }
     let _lock = lock(&home)?;
+    let _ = std::fs::remove_file(home.root.join("run/api.port"));
     let rt = Runtime::open(home.clone())?;
     std::fs::write(home.daemon_pid(), std::process::id().to_string())?;
     let result = match agents.as_slice() {
-        ["demo"] => serve(&rt, FakeRunner::new(), "demo agent").await,
-        ["claude"] => serve(&rt, ClaudeRunner::new(claude_config), "Claude Code").await,
-        ["codex"] => serve(&rt, CodexRunner::new(codex_config), "Codex").await,
+        ["demo"] => serve(&rt, &home, &options, FakeRunner::new(), "demo agent").await,
+        ["claude"] => {
+            serve(
+                &rt,
+                &home,
+                &options,
+                ClaudeRunner::new(claude_config),
+                "Claude Code",
+            )
+            .await
+        }
+        ["codex"] => {
+            serve(
+                &rt,
+                &home,
+                &options,
+                CodexRunner::new(codex_config),
+                "Codex",
+            )
+            .await
+        }
         ["claude", "codex"] => {
             let mut router = RoutingRunner::new(
                 ProviderSlot::from_capabilities(
@@ -194,7 +217,7 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
                     },
                 );
             }
-            serve(&rt, router, "Claude Code, Codex").await
+            serve(&rt, &home, &options, router, "Claude Code, Codex").await
         }
         ["codex", "claude"] => {
             let mut router = RoutingRunner::new(
@@ -221,7 +244,7 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
                     },
                 );
             }
-            serve(&rt, router, "Codex, Claude Code").await
+            serve(&rt, &home, &options, router, "Codex, Claude Code").await
         }
         _ => unreachable!("parse_agents validated the list"),
     };
@@ -231,7 +254,13 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
     Ok(())
 }
 
-async fn serve<R: AgentRunner>(rt: &Runtime, runner: R, label: &str) -> Result<()> {
+async fn serve<R: AgentRunner>(
+    rt: &Runtime,
+    home: &Home,
+    options: &DaemonOptions,
+    runner: R,
+    label: &str,
+) -> Result<()> {
     let executor = Arc::new(FactoryExecutor::new(
         rt.store.clone(),
         Arc::clone(&rt.blobs),
@@ -253,12 +282,45 @@ async fn serve<R: AgentRunner>(rt: &Runtime, runner: R, label: &str) -> Result<(
     .await?;
     eprintln!("turtle daemon running ({label}). Recovery: {report:?}");
 
+    let api = if options.no_api {
+        None
+    } else {
+        let source_dist =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dashboard/dist");
+        let dashboard_dir = std::env::var_os("TURTLE_DASHBOARD_DIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| source_dist.exists().then_some(source_dist));
+        let services = Services {
+            store: rt.store.clone(),
+            engine: rt.engine.clone(),
+            approvals: rt.approvals.clone(),
+            blobs: Arc::clone(&rt.blobs),
+        };
+        let api = ApiServer::bind(
+            services,
+            &home.root.join("run"),
+            dashboard_dir,
+            options.api_port.unwrap_or(0),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("starting local API: {e}"))?;
+        eprintln!("turtle API listening at http://127.0.0.1:{}", api.port());
+        Some(api)
+    };
+
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let signal_tx = stop_tx.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
-        let _ = stop_tx.send(true);
+        let _ = signal_tx.send(true);
     });
-    dispatcher.run(stop_rx).await?;
+    let api_task = api.map(|api| tokio::spawn(api.run(stop_rx.clone())));
+    let result = dispatcher.run(stop_rx).await;
+    let _ = stop_tx.send(true);
+    if let Some(task) = api_task {
+        task.await??;
+    }
+    result?;
     Ok(())
 }
 
@@ -276,6 +338,12 @@ pub async fn up(home: &Home, options: &DaemonOptions) -> Result<()> {
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon");
+    if options.no_api {
+        cmd.arg("--no-api");
+    }
+    if let Some(port) = options.api_port {
+        cmd.args(["--api-port", &port.to_string()]);
+    }
     if let Some(agent) = &options.agent {
         cmd.args(["--agent", agent]);
     }
@@ -306,7 +374,7 @@ pub async fn up(home: &Home, options: &DaemonOptions) -> Result<()> {
         .context("starting the daemon")?;
     for _ in 0..40 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if running(home) {
+        if running(home) && (options.no_api || home.root.join("run/api.port").exists()) {
             println!(
                 "Started (pid {}). Log: {}",
                 child.id(),
@@ -345,6 +413,11 @@ pub async fn status(home: &Home) -> Result<()> {
     if running(home) {
         let pid = std::fs::read_to_string(home.daemon_pid()).unwrap_or_default();
         println!("Daemon running (pid {}).", pid.trim());
+        if let Ok(port) = std::fs::read_to_string(home.root.join("run/api.port")) {
+            println!("API: http://127.0.0.1:{}", port.trim());
+        } else {
+            println!("API: disabled or starting.");
+        }
     } else {
         println!("Daemon not running. Start it with: turtle up --agent claude");
     }
@@ -367,6 +440,36 @@ pub async fn status(home: &Home) -> Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+pub async fn dashboard(home: &Home) -> Result<()> {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        bail!("turtle dashboard requires an interactive terminal");
+    }
+    if !running(home) {
+        bail!("the daemon is not running; start it with turtle up --agent demo");
+    }
+    let port = std::fs::read_to_string(home.root.join("run/api.port"))
+        .context("the daemon API is not running; restart without --no-api")?;
+    let port: u16 = port
+        .trim()
+        .parse()
+        .context("the API port file is invalid")?;
+    let rt = Runtime::open(home.clone())?;
+    let code = turtle_api::issue_login_code(&rt.store)
+        .await
+        .map_err(|e| anyhow::anyhow!("creating dashboard login code: {e}"))?;
+    let url = format!("http://127.0.0.1:{port}/login#code={code}");
+    let launcher = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    match std::process::Command::new(launcher).arg(&url).status() {
+        Ok(status) if status.success() => println!("Dashboard opened."),
+        _ => println!("Open this URL within 60 seconds: {url}"),
     }
     Ok(())
 }

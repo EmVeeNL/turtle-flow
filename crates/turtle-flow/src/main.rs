@@ -1,5 +1,5 @@
-//! `turtle`: the Turtle Flow CLI. Milestone M1 commands work on the local database directly;
-//! the HTTP API and dashboard arrive in M4 (`docs/MVP.md` §6).
+//! `turtle`: the Turtle Flow CLI. CLI commands use the local database directly; the M4 daemon
+//! also hosts the dashboard API (`docs/MVP.md` §6).
 
 mod cmd;
 mod doctor;
@@ -50,6 +50,8 @@ enum Command {
     Down,
     /// Say whether the daemon is running.
     Status,
+    /// Open the local dashboard using a one-time interactive login code.
+    Dashboard,
     /// Run the daemon in the foreground (what `up` starts).
     Daemon {
         #[command(flatten)]
@@ -89,6 +91,12 @@ enum Command {
 
 #[derive(Debug, clap::Args)]
 struct AgentArgs {
+    /// Disable the local HTTP API.
+    #[arg(long)]
+    no_api: bool,
+    /// Fixed loopback API port (default: random available port).
+    #[arg(long)]
+    api_port: Option<u16>,
     /// Ordered provider list: claude, codex, or both (demo runs alone).
     #[arg(long)]
     agent: Option<String>,
@@ -115,6 +123,8 @@ struct AgentArgs {
 impl AgentArgs {
     fn options(&self) -> DaemonOptions {
         DaemonOptions {
+            no_api: self.no_api,
+            api_port: self.api_port,
             agent: self.agent.clone(),
             role_agent: self.role_agent.clone(),
             claude_model: self.claude_model.clone(),
@@ -164,6 +174,7 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home).await?,
+        Command::Dashboard => cmd::daemon::dashboard(&home).await?,
         Command::Daemon { agent } => {
             let options = agent.options();
             cmd::daemon::run(home, options).await?;

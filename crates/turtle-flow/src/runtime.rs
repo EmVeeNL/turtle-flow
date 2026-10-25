@@ -1,6 +1,6 @@
 //! The services every command works through, wired the way the daemon wires them.
 //!
-//! Until the HTTP API exists (M4) the CLI opens the database directly. That is safe: every write
+//! The CLI still opens the database directly. That is safe: every write
 //! is an immediate transaction with optimistic job versions, and effects are only ever executed
 //! by the daemon, which owns the dispatcher.
 

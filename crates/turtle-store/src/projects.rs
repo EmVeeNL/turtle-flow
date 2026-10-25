@@ -13,6 +13,8 @@ pub struct ProjectRecord {
     pub slug: String,
     pub key_prefix: String,
     pub name: String,
+    pub description: String,
+    pub status: String,
     pub repo_path: String,
     pub default_branch: String,
     pub default_profile: String,
@@ -47,7 +49,7 @@ pub struct DeliveryRecord {
 pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result<ProjectRecord> {
     let row = conn
         .query_row(
-            "SELECT slug, key_prefix, name, repo_path, default_branch, settings_json, default_profile
+            "SELECT slug, key_prefix, name, repo_path, default_branch, settings_json, default_profile, description, status
              FROM projects WHERE id = ?1",
             [id.to_string()],
             |r| {
@@ -59,6 +61,8 @@ pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
                     r.get::<_, String>(4)?,
                     r.get::<_, String>(5)?,
                     r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
                 ))
             },
         )
@@ -69,6 +73,8 @@ pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
         slug: row.0,
         key_prefix: row.1,
         name: row.2,
+        description: row.7,
+        status: row.8,
         repo_path: row.3,
         default_branch: row.4,
         default_profile: row.6,

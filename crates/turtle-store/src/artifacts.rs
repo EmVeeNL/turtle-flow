@@ -225,6 +225,22 @@ impl Tx<'_> {
 }
 
 impl crate::store::Store {
+    pub fn all_revisions(&self) -> Result<Vec<RevisionRecord>> {
+        let mut stmt = self
+            .raw_connection()
+            .prepare(&format!("{SELECT} ORDER BY r.created_at DESC, r.id DESC"))?;
+        let rows = stmt.query_map([], map)?;
+        rows.map(|r| build(r?)).collect()
+    }
+
+    pub fn revision_by_id(&self, id: &str) -> Result<RevisionRecord> {
+        self.raw_connection()
+            .query_row(&format!("{SELECT} WHERE r.id=?1"), [id], map)
+            .optional()?
+            .map(build)
+            .transpose()?
+            .ok_or_else(|| StoreError::NotFound(format!("artifact revision {id}")))
+    }
     pub fn latest_revision(
         &self,
         job: JobId,

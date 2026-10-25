@@ -128,6 +128,9 @@ pub struct NewRoutingDecision<'a> {
 #[derive(Debug, Clone)]
 pub struct RunRecord {
     pub id: String,
+    pub job_id: String,
+    pub cli_version: Option<String>,
+    pub routing_reason: Option<String>,
     pub role: String,
     pub provider: String,
     pub model: String,
@@ -754,6 +757,12 @@ impl Tx<'_> {
 }
 
 impl Store {
+    pub fn recent_runs(&self, limit: usize) -> Result<Vec<RunRecord>> {
+        let mut runs = read_runs(self.raw_connection(), None, None)?;
+        runs.reverse();
+        runs.truncate(limit);
+        Ok(runs)
+    }
     pub fn runs_for_job(&self, job: JobId) -> Result<Vec<RunRecord>> {
         read_runs(self.raw_connection(), Some(job), None)
     }
@@ -864,7 +873,7 @@ fn read_runs(
     job: Option<JobId>,
     id: Option<&str>,
 ) -> Result<Vec<RunRecord>> {
-    let sql = "SELECT a.id,a.role,a.provider,a.model,a.status,IFNULL(u.input_tokens,0),IFNULL(u.cached_read,0),IFNULL(u.cached_write,0),IFNULL(u.output_tokens,0),IFNULL(u.provenance,'unavailable'),a.started_at,a.ended_at,CASE WHEN a.started_at IS NOT NULL AND a.ended_at IS NOT NULL THEN CAST(MAX(0,ROUND((julianday(a.ended_at)-julianday(a.started_at))*86400000)) AS INTEGER) END,a.transcript_blob FROM agent_runs a LEFT JOIN usage_records u ON u.run_id=a.id WHERE (?1 IS NULL OR a.job_id=?1) AND (?2 IS NULL OR a.id=?2) ORDER BY a.created_at,a.id";
+    let sql = "SELECT a.id,a.role,a.provider,a.model,a.status,IFNULL(u.input_tokens,0),IFNULL(u.cached_read,0),IFNULL(u.cached_write,0),IFNULL(u.output_tokens,0),IFNULL(u.provenance,'unavailable'),a.started_at,a.ended_at,CASE WHEN a.started_at IS NOT NULL AND a.ended_at IS NOT NULL THEN CAST(MAX(0,ROUND((julianday(a.ended_at)-julianday(a.started_at))*86400000)) AS INTEGER) END,a.transcript_blob,a.job_id,a.cli_version,(SELECT reason FROM routing_decisions WHERE id=a.routing_decision_id) FROM agent_runs a LEFT JOIN usage_records u ON u.run_id=a.id WHERE (?1 IS NULL OR a.job_id=?1) AND (?2 IS NULL OR a.id=?2) ORDER BY a.created_at,a.id";
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt
         .query_map(params![job.map(|j| j.to_string()), id], |r| {
@@ -884,6 +893,9 @@ fn read_runs(
                 r.get::<_, Option<String>>(11)?,
                 r.get::<_, Option<i64>>(12)?,
                 hash,
+                r.get::<_, String>(14)?,
+                r.get::<_, Option<String>>(15)?,
+                r.get::<_, Option<String>>(16)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -891,6 +903,9 @@ fn read_runs(
         .map(|r| {
             Ok(RunRecord {
                 id: r.0,
+                job_id: r.14,
+                cli_version: r.15,
+                routing_reason: r.16,
                 role: r.1,
                 provider: r.2,
                 model: r.3,
