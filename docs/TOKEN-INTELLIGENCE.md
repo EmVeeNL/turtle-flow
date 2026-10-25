@@ -93,6 +93,8 @@ pub enum ReservationOutcome {
 
 ### 4.3 Implementation status (2026-10-25)
 
+*Provider quirk:* when Claude Code cuts a run off (for example `error_max_budget_usd`) the final event's top-level `usage` is all zeros while `modelUsage` holds the real spend. The adapter takes the larger of the two (spike S-1 run 04, fixture `04-max-budget-stop.ndjson`).
+
 Implemented in `turtle-store::ledger` and used by the executor: the budget scopes job (lifetime), project and global (monthly, rolled over into a new period row), `reserve` (atomic across scopes, B-1 checked inside the transaction), `settle`, `release`, overrun events, `abandon_open_runs` on restart, and `verify_ledger` (cached `settled`/`reserved` recomputed from the entries). Differences from the design above, all deliberate for now:
 
 - The unit is **tokens processed** (input, cache reads and writes, output). Currency budgets and the price table are not built.

@@ -151,6 +151,14 @@ impl StreamParser {
                             .filter(|&t| t > 0),
                     });
                 }
+                // When the run is cut off (for example `error_max_budget_usd`) the top-level
+                // `usage` can be all zeros while `modelUsage` still holds what was really spent
+                // (seen in spike S-1 run 04). Never report less than the per-model totals.
+                if let Some(per_model) = sum_model_usage(&v["modelUsage"])
+                    && s.usage.is_none_or(|u| per_model.total() > u.total())
+                {
+                    s.usage = Some(per_model);
+                }
                 s.permission_denials = v["permission_denials"]
                     .as_array()
                     .map(|a| {
@@ -172,6 +180,28 @@ impl StreamParser {
     pub fn finish(self) -> RunSummary {
         self.summary
     }
+}
+
+/// Totals of the per-model usage block, or `None` when it is absent or empty.
+fn sum_model_usage(v: &Value) -> Option<TokenUsage> {
+    let models = v.as_object()?;
+    let mut sum = TokenUsage::default();
+    let mut any = false;
+    for m in models.values() {
+        let n = |key: &str| m[key].as_u64();
+        any = true;
+        sum.input += n("inputTokens").unwrap_or(0);
+        sum.output += n("outputTokens").unwrap_or(0);
+        sum.cached_input_read =
+            Some(sum.cached_input_read.unwrap_or(0) + n("cacheReadInputTokens").unwrap_or(0));
+        sum.cached_input_write =
+            Some(sum.cached_input_write.unwrap_or(0) + n("cacheCreationInputTokens").unwrap_or(0));
+        let thinking = n("thinkingTokens").unwrap_or(0);
+        if thinking > 0 {
+            sum.reasoning = Some(sum.reasoning.unwrap_or(0) + thinking);
+        }
+    }
+    (any && sum.total() > 0).then_some(sum)
 }
 
 fn string_list(v: &Value) -> Vec<String> {
@@ -218,6 +248,24 @@ mod tests {
         let mut p = StreamParser::new();
         text.lines().for_each(|l| p.on_line(l));
         p.finish()
+    }
+
+    #[test]
+    fn a_run_cut_off_by_its_spend_cap_still_reports_what_it_used() {
+        // Real stream: the top-level usage is all zeros, `modelUsage` has the spend ($0.012).
+        let s = fixture("04-max-budget-stop.ndjson");
+        assert_eq!(s.is_error, Some(true));
+        let usage = s.usage.expect("usage recovered from modelUsage");
+        assert_eq!(
+            (
+                usage.input,
+                usage.output,
+                usage.cached_input_read,
+                usage.cached_input_write
+            ),
+            (2, 668, Some(4_276), Some(1_240))
+        );
+        assert!(s.cost_reported_usd.expect("cost") > 0.01);
     }
 
     #[test]

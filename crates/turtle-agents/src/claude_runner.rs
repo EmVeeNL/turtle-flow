@@ -409,6 +409,19 @@ mod tests {
     }
 
     #[test]
+    fn a_run_stopped_by_its_spend_cap_fails_but_carries_its_real_usage() {
+        let out = output(
+            &fixture("04-max-budget-stop.ndjson"),
+            ExitOutcome::Exited(1),
+        );
+        let err = interpret(&out, Role::SpecWriter).expect_err("the cap stopped the run");
+        match err.usage() {
+            Some(UsageValue::Reported { usage }) => assert_eq!(usage.total(), 6_186),
+            other => panic!("the spend must be reported, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn a_recorded_run_that_loaded_connectors_fails_isolation() {
         let out = output(
             &fixture("01-readonly-stream.ndjson"),
