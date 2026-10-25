@@ -13,7 +13,7 @@ pnpm deploy       # build + wrangler deploy
 
 ## Deployment
 
-Cloudflare Workers Static Assets (`wrangler.jsonc`): the Worker `turtle-flow-website` serves `dist/` and owns the custom domains `turtle-flow.com` and `www.turtle-flow.com` (the zone is in the same Cloudflare account, so `wrangler deploy` creates the DNS records and certificates). Deploy with a logged-in `wrangler` (`wrangler login`).
+Cloudflare Workers Static Assets (`wrangler.jsonc`): the Worker `turtle-flow-website` serves `dist/` and owns the custom domains `turtle-flow.com` and `www.turtle-flow.com` (the zone is in the same Cloudflare account, so `wrangler deploy` creates the DNS records and certificates). Deploy with a logged-in `wrangler` (`wrangler login`). `worker.js` runs first and 301-redirects `www.turtle-flow.com` and plain `http://` to `https://turtle-flow.com` (path and query kept); everything else is served from `dist/`.
 
 ## Notes
 
