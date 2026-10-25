@@ -41,7 +41,7 @@ turtle approvals
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
 | M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
 | M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. Strict delivery and PR delivery remain. |
-| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, and static dashboard serving are implemented. The live dashboard build is functional; its richer layouts remain in the mock preview. Browser verification is pending. |
+| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. The live dashboard build is functional; its richer layouts remain in the mock preview. No working Tailscale daemon was available for live verification; browser verification is pending in an environment that can launch Chromium. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 
@@ -65,7 +65,7 @@ cargo run -p turtle-flow -- up --agent demo
 cargo run -p turtle-flow -- dashboard   # interactive terminal; opens a one-use login URL
 ```
 
-The daemon chooses a random loopback port and records it in `<TURTLE_HOME>/run/api.port`. Use `turtle status` to see the address and `turtle down` to stop it. `--no-api` disables the web server; `--api-port` selects a fixed loopback port.
+The daemon chooses a random loopback port and records it in `<TURTLE_HOME>/run/api.port`. Use `turtle status` to see the address and `turtle down` to stop it. `--no-api` disables the web server; `--api-port` selects a fixed loopback port. To pair a phone on your tailnet, start with `turtle up --agent demo` (Tailscale auto-detection) or `turtle up --agent demo --tailnet-host <node>.<tailnet>.ts.net`, then run `turtle dashboard --phone` in a TTY and approve the Serve setup prompt if shown. It prints a QR code for a read-only session. The daemon remains bound to loopback; Tailscale Serve provides the private HTTPS path. Tailscale must be installed and connected on the machine and phone.
 
 The public website (a coming-soon page, [turtle-flow.com](https://turtle-flow.com)) lives in [`website/`](website/README.md) and is deployed with Cloudflare Workers Static Assets.
 

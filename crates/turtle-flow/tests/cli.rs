@@ -150,7 +150,7 @@ fn daemon_serves_authenticated_api_and_static_dashboard() {
         .collect();
     let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
     store
-        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z")
+        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z", "full")
         .expect("code");
     drop(store);
     let session = http(

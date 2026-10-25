@@ -336,7 +336,7 @@ User viewing acceptance; base branch moves; Turtle Flow refreshes and reruns gat
 ## 6. Accessibility and Responsiveness
 
 - WCAG 2.2 AA: contrast tokens verified; focus ring 2 px `--accent`; all actions keyboard-reachable; skip links; ARIA live regions throttled for streams; reduced-motion support (no pulsing).
-- Breakpoints: ≥ 1440 (three columns), 1280 (default), 1024 (right column collapses to tabs), 768 (sidebar overlay), ≥ 375 (approvals and job status only; Phase 2 remote approvals).
+- Breakpoints: ≥ 1440 (three columns), 1280 (default), 1024 (right column collapses to tabs), 768 (sidebar overlay), ≥ 375 (single-column job and approval evidence). The mobile preview remains read-only below 550 px. A `turtle dashboard --phone` session is read-only at every viewport, enforced by the API session scope; its live screen hides all decision and command controls. Approval hashes and bound documents must wrap within a 390 px viewport.
 
 ## 7. Dashboard Mockup Images
 

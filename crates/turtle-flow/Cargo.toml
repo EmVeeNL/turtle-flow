@@ -21,6 +21,7 @@ embedded-dashboard = ["turtle-api/embedded-dashboard"]
 [dependencies]
 turtle-agents = { workspace = true }
 turtle-api = { workspace = true }
+qrcode = { version = "0.14", default-features = false }
 turtle-artifacts = { workspace = true }
 turtle-domain = { workspace = true }
 turtle-git = { workspace = true }

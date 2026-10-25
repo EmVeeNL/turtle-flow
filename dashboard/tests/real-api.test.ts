@@ -4,6 +4,12 @@ import {ApiError, realAdapter} from '../src/lib/api/real';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('real dashboard adapter', () => {
+  it('reads the server-enforced session scope', async () => {
+    const fetch=vi.fn().mockResolvedValue(new Response(JSON.stringify({readonly:true}),{status:200,headers:{'Content-Type':'application/json'}}));
+    vi.stubGlobal('fetch',fetch);
+    expect(await realAdapter.me()).toEqual({readonly:true});
+    expect(fetch.mock.calls[0]?.[0]).toBe('/api/v1/me');
+  });
   it('uses same-origin credentials and sends the approval binding with CSRF header', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true}), {status:200,headers:{'Content-Type':'application/json'}}));
     vi.stubGlobal('fetch',fetch);
