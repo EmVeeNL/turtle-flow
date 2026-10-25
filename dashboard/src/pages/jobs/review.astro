@@ -1,0 +1,7 @@
+---
+import AppShell from '../../layouts/AppShell.astro';
+import DiffViewer from '../../components/DiffViewer.tsx';
+import StatusBadge from '../../components/StatusBadge.astro';
+import QueryIdentity from '../../components/QueryIdentity.tsx';
+---
+<AppShell title="Code review" section="Jobs" crumb="Code review"><QueryIdentity client:load kind="job"/><div data-default-detail><div class="page-title"><div><h1>Code review · API-42</h1><p>Compare the exact patch and resolve AI findings before acceptance.</p></div><a class="btn primary" href="/approvals/view?id=ap-42">Proceed to acceptance</a></div><div class="grid kpis"><div class="card kpi"><div class="kpi-label">Changed files</div><div class="kpi-value">7</div><div class="kpi-sub">+295 / −1 lines</div></div><div class="card kpi"><div class="kpi-label">Findings</div><div class="kpi-value warning">3</div><div class="kpi-sub">1 major fixed · 3 minor open</div></div><div class="card kpi"><div class="kpi-label">Gates</div><div class="kpi-value success">6 / 6</div><div class="kpi-sub">build · test · lint · scan passed</div></div><div class="card kpi"><div class="kpi-label">Reviewer</div><div class="kpi-value" class="text-20">Claude Code</div><div class="kpi-sub">sonnet-4.5 · cross-provider</div></div></div><div class="toolbar"><StatusBadge label="Protected path: Cargo.lock" tone="warning"/><StatusBadge label="Diff revision 1" tone="muted"/><span class="muted">Base 3f2a9c1 → head a81d77e</span></div><DiffViewer client:load/></div></AppShell>

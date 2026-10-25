@@ -1,0 +1,6 @@
+---
+import AppShell from '../../layouts/AppShell.astro';
+import JobTable from '../../components/JobTable.astro';
+import {mockData} from '../../lib/api/mock';
+---
+<AppShell title="Jobs" section="Jobs"><div class="page-title"><div><h1>Jobs</h1><p>Track work across every project</p></div><a href="/projects/view?slug=payments-api" class="btn primary">New job</a></div><div class="toolbar"><input class="input" data-table-filter="jobs-table" aria-label="Search jobs" placeholder="Search jobs…"/><select class="select" data-table-select="jobs-table" aria-label="Filter job state"><option>All states</option><option>Running</option><option>Awaiting approval</option><option>Blocked</option></select><button class="btn" data-csv="jobs-table">Export CSV</button></div><div class="card" id="jobs-table"><JobTable jobs={mockData.jobs} projects={mockData.projects}/></div><script is:inline src="/tables.js"></script></AppShell>

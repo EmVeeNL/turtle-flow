@@ -1,0 +1,5 @@
+---
+import {shortHash} from '../lib/format';
+const {hash}=Astro.props as {hash:string};
+---
+<span class="hash-chip" title={hash}><span>{shortHash(hash)}</span><button type="button" data-copy={hash} aria-label={`Copy full hash ${hash}`}>Copy</button></span>

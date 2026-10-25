@@ -1,0 +1,8 @@
+---
+import AppShell from '../../layouts/AppShell.astro';
+import QueryIdentity from '../../components/QueryIdentity.tsx';
+import HashChip from '../../components/HashChip.astro';
+import {mockData} from '../../lib/api/mock';
+const artifact=mockData.artifacts[0]!;
+---
+<AppShell title="Artifact" section="Jobs" crumb="Artifact"><QueryIdentity client:load kind="artifact"/><div data-default-detail><div class="page-title"><div><h1>{artifact.kind.replaceAll('_',' ')} · rev {artifact.rev}</h1><p>Immutable artifact revision · {artifact.author}</p></div><a class="btn" href="/jobs/view?id=API-42">Back to job</a></div><section class="card"><div class="card-head"><h2>Revision details</h2></div><table class="key-values"><tbody><tr><th>Kind</th><td>{artifact.kind}</td></tr><tr><th>Revision</th><td>{artifact.rev}</td></tr><tr><th>Content hash</th><td><HashChip hash={artifact.sha256}/></td></tr><tr><th>Created</th><td>{artifact.created_at}</td></tr><tr><th>Summary</th><td>{artifact.summary}</td></tr></tbody></table></section></div></AppShell>

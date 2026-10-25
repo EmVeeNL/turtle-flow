@@ -1,6 +1,6 @@
 # ADR-003: Embedded Webserver and Dashboard
 
-- **Status:** Accepted (revised 2026-10-24: framework comparison with Astro and TanStack Start; typography and icon set)
+- **Status:** Accepted (revised 2026-10-24: framework comparison with Astro and TanStack Start; typography and icon set). **Amended 2026-10-25: the dashboard uses Astro + Tailwind CSS v4 (product owner decision); see *Amendment* below. Where this ADR says Vite + React + TanStack, the amendment wins.**
 - **Date:** 2026-10-24
 
 ## Context
@@ -66,3 +66,20 @@ The dashboard is a rich, private, local client; an SPA over the Rust JSON API is
 ## Related ADRs
 
 [ADR-001](ADR-001-local-first-modular-monolith.md), [ADR-012](ADR-012-agent-execution-security.md), [ADR-016](ADR-016-observability-auditability.md)
+
+## Amendment (2026-10-25): Astro and Tailwind CSS v4 instead of Vite + React + TanStack
+
+**Decision.** The product owner chose **Astro** with **Tailwind CSS v4** for the dashboard. The earlier comparison rated Astro as a poor fit for an interactive app; that concern is addressed by how the dashboard is built, not ignored:
+
+- **Static output only** (`output: 'static'`), embedded with `rust-embed` as before. No Node runtime, no SSR, no Astro server.
+- **Islands for interactivity.** Most pages are static Astro components; the command palette, approval decision, diff viewer, virtualized log stream and detail lookup are **Preact** islands (small, React-like, enough for shared local state and keyboard handling). Islands hydrate only on pages that use them.
+- **Routing for IDs unknown at build time.** Detail views are static pages that read the ID from the query string (`/jobs/view?id=API-42`), so no `getStaticPaths` and no per-entity HTML. The Rust server serves plain files; it needs no SPA fallback for these routes.
+- **Tailwind CSS v4** via `@tailwindcss/vite`, with the tokens from DASHBOARD-UX §3 declared in `@theme`.
+- **Icons** via `astro-icon` + `@iconify-json/fluent`, resolved at build time (replaces `unplugin-icons`; same no-runtime-fetch property). Fonts unchanged: self-hosted Asap Sharp and JetBrains Mono.
+- **CSP:** Astro's built-in CSP support emits hashes for its own scripts and styles; no `unsafe-inline`. Interactive behavior that is not an island (theme, copy, sort, filter) ships as same-origin external scripts.
+
+**What this gives up.** TanStack Router's typed search params, TanStack Query's cache, and the React component ecosystem (diff viewers, charts) are not available off the shelf; the API client, SSE reconnect logic and the virtualized log are written in `dashboard/src/lib`. Client-side navigation between pages is full page loads, which is acceptable on loopback. If interactive state outgrows islands (for example many cross-linked live panels), revisit this decision before building more of the app inside islands: the data layer is framework-neutral TypeScript, so a move to an SPA would reuse it.
+
+**Unchanged:** Axum on loopback, `/api/v1`, SSE with `Last-Event-ID`, the CLI and dashboard sharing one API, and the typography and icon-set decisions. Astro with Starlight remains the recommendation for the future public docs site.
+
+The implementation and its deviations from DASHBOARD-UX.md are documented in [`dashboard/README.md`](../../dashboard/README.md).

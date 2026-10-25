@@ -1,0 +1,1 @@
+document.addEventListener('change',event=>{const select=event.target.closest('[data-project-switcher]');if(select&&select.value)location.href=`/projects/view?slug=${encodeURIComponent(select.value)}`})

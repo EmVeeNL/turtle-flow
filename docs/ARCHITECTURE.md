@@ -193,7 +193,7 @@ flowchart TB
 | `turtle-api` | Axum router, auth (token/cookie, Host/Origin checks), SSE, OpenAPI (`utoipa`), static dashboard assets via `rust-embed` | domain, workflow, policy, store | agents, git (only through commands) |
 | `turtle-flow` | Binary crate (executable `turtle`): Clap commands; `daemon` subcommand is the composition root wiring all crates; terminal rendering | all | — |
 
-Frontend: `dashboard/` — Vite + React + TypeScript SPA, built in CI and embedded into `turtle-api` ([ADR-003](adr/ADR-003-embedded-webserver-dashboard.md)).
+Frontend: `dashboard/` — Astro (static output) with Tailwind CSS v4 and Preact islands, built in CI and embedded into `turtle-api` ([ADR-003](adr/ADR-003-embedded-webserver-dashboard.md)).
 
 ### 4.2 Repository traits (persistence boundary)
 
@@ -380,7 +380,7 @@ turtle dashboard                    # opens browser with one-time login code
 | DB | SQLite via rusqlite (WAL, single writer; see ADR-002 amendment) | SQLx, Diesel, SeaORM, embedded KV (redb) | [ADR-004](adr/ADR-004-sqlite-persistence-event-logging.md) |
 | Git | Git CLI (writes) + `gix` for fast read-only queries (optional) | git2/libgit2 (worktree & merge-tree gaps, C dependency) | [ADR-009](adr/ADR-009-git-worktree-isolation.md) |
 | Live updates | SSE | WebSockets (bidirectional not needed) | ADR-003 |
-| Frontend | Vite + React + TS, TanStack Router/Query/Table/Virtual, Tailwind, Radix primitives; Asap Sharp + JetBrains Mono (self-hosted); Fluent icons via `unplugin-icons` | TanStack Start, Astro, SvelteKit (adapter-static), Leptos/Dioxus (Rust WASM) | ADR-003 |
+| Frontend | Astro (static) + Tailwind CSS v4 + Preact islands; Asap Sharp + JetBrains Mono (self-hosted); Fluent icons via `astro-icon` (build time) | Vite + React + TanStack (original choice), TanStack Start, SvelteKit (adapter-static), Leptos/Dioxus (Rust WASM) | ADR-003 (amended) |
 | Search | SQLite FTS5 | tantivy, Meilisearch | [ADR-010](adr/ADR-010-project-memory-context-retrieval.md) |
 | Serialization | serde, serde_json, toml | — | — |
 | JSON Schema | `jsonschema` crate; schemas generated from Rust types with `schemars` | hand-written schemas | [AGENT-PROTOCOL.md](AGENT-PROTOCOL.md) |

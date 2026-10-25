@@ -1,0 +1,1 @@
+window.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();event.stopImmediatePropagation();window.__paletteRequested=true;window.dispatchEvent(new Event('turtle-palette-open'))}},true)

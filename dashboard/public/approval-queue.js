@@ -1,0 +1,1 @@
+const selectedApproval=new URLSearchParams(location.search).get('id')??'ap-42';for(const link of document.querySelectorAll('[data-approval-id]'))link.classList.toggle('selected',link.dataset.approvalId===selectedApproval)

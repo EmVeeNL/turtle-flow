@@ -1,0 +1,6 @@
+---
+import AppShell from '../../layouts/AppShell.astro';
+import ApprovalDecision from '../../components/ApprovalDecision.tsx';
+import {mockData} from '../../lib/api/mock';
+---
+<AppShell title="Review approval" section="Approvals" crumb="Review"><div class="page-title"><div><h1>Approvals</h1><p>Approvals bind to exact artifact hashes. Any material change invalidates them.</p></div><a class="btn" href="/approvals">Queue (3)</a></div><div class="approval-layout"><aside class="card approval-queue" aria-label="Approval queue">{mockData.approvals.map((approval,index)=>{const job=mockData.jobs.find(j=>j.id===approval.job_id)!;return <a href={`/approvals/view?id=${approval.id}`} class={index===0?'selected':''} data-approval-id={approval.id}><div class="meta"><span class="pill warning">{approval.gate_kind.replaceAll('_',' ')}</span><span>{[42,12,6][index]} min</span></div><span class="mono accent">{job.key}</span> {job.title}<small>{approval.flags.length?`${approval.flags.length} flags`:'No flags'}</small></a>})}</aside><div class="approval-detail"><ApprovalDecision client:load/></div></div><script is:inline src="/approval-queue.js"></script></AppShell>

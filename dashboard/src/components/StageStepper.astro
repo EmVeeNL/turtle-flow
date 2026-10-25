@@ -1,0 +1,11 @@
+---
+const { index, small=false, blocked=false } = Astro.props as {index:number;small?:boolean;blocked?:boolean};
+const labels=['Queued','Specification','Scope approval','Planning','Implementation','Review','Verification','Delivery','Acceptance'];
+const steps=labels.map((label,i)=>({label,number:i+1,done:i<index,current:i===index,approval:i===2||i===8,miniClass:i<index?'done':i===index?blocked?'blocked':index===2||index===8?'waiting':'current':''}));
+---
+{small && <span class="mini-stepper" role="img" aria-label={`Stage ${labels[index] ?? 'Unknown'}`}>
+  {steps.map(step=><i class={step.miniClass}></i>)}
+</span>}
+{!small && <div class="stepper" aria-label="Workflow stages" tabindex="0">
+  {steps.map(step=><div class:list={['step',{done:step.done,current:step.current,approval:step.approval}]}><span class="step-mark"><span>{step.done?'✓':step.number}</span></span><span>{step.label}</span></div>)}
+</div>}
