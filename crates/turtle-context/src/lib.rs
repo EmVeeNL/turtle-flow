@@ -621,6 +621,51 @@ mod tests {
     }
 
     #[test]
+    fn affected_globs_select_files_and_key_documents_are_prioritized() {
+        let dir = repo();
+        fs::write(dir.path().join("AGENTS.md"), "Use the local conventions.\n")
+            .expect("write instructions");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\n",
+        )
+        .expect("write manifest");
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["add", "AGENTS.md", "Cargo.toml"])
+                .output()
+                .expect("git add")
+                .status
+                .success()
+        );
+
+        let package = build(dir.path(), &["*.rs".into()], &[], 500).expect("package");
+        let source = package
+            .manifest
+            .included
+            .iter()
+            .find(|item| item.path == "src.rs")
+            .expect("glob-selected source");
+        assert_eq!(source.reason, "specification affected area");
+        assert!(
+            package
+                .manifest
+                .included
+                .iter()
+                .any(|item| item.path == "AGENTS.md" && item.reason == "repository instructions")
+        );
+        assert!(
+            package
+                .manifest
+                .included
+                .iter()
+                .any(|item| item.path == "Cargo.toml" && item.reason == "build manifest")
+        );
+    }
+
+    #[test]
     fn secret_file_omitted_and_tracked_file_secret_redacted() {
         let dir = repo();
         fs::write(dir.path().join(".env.local"), "PASSWORD=secret-env\n")
