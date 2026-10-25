@@ -20,7 +20,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use turtle_agents::{AgentError, AgentOutput, AgentRequest, AgentRunner};
+use turtle_agents::{AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner};
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
@@ -219,9 +219,64 @@ where
     /// released and the run is recorded as `unavailable` rather than guessed at.
     async fn run_agent(
         &self,
-        req: AgentRequest,
+        mut req: AgentRequest,
         job: &JobRecord,
     ) -> Result<AgentOutput, ExecError> {
+        let context_revision = if let Some(workdir) = req.workdir.as_deref() {
+            let areas = req
+                .spec
+                .as_ref()
+                .map_or_else(Vec::new, |spec| spec.affected_areas.clone());
+            let discovered: Option<(Value, RevisionRecord)> =
+                self.read_doc(job, ArtifactKind::DiscoveryReport).await?;
+            let relevant: Vec<String> = discovered
+                .and_then(|(report, _)| {
+                    report
+                        .get("relevant_files")
+                        .and_then(Value::as_array)
+                        .cloned()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect();
+            let package = turtle_context::build(
+                workdir,
+                &areas,
+                &relevant,
+                turtle_context::DEFAULT_TOKEN_BUDGET,
+            )
+            .map_err(fatal)?;
+            req.context = Some(AgentContext {
+                text: package.text,
+                manifest_json: serde_json::to_string(&package.manifest).map_err(fatal)?,
+            });
+            let bytes = turtle_artifacts::canonical_json(&package.manifest).map_err(fatal)?;
+            let hash = self.blobs.put(bytes.as_bytes()).map_err(retryable)?;
+            let job_id = job.job.id;
+            let size_bytes = bytes.len() as u64;
+            Some(
+                self.store
+                    .with(move |s| {
+                        s.transaction(|tx| {
+                            tx.add_revision(&NewRevision {
+                                job_id,
+                                kind: ArtifactKind::ContextManifest,
+                                sha256: hash,
+                                size_bytes,
+                                media_type: "application/json".into(),
+                                schema_id: Some("context_manifest.v1".into()),
+                                author: Actor::Scheduler,
+                            })
+                        })
+                    })
+                    .await
+                    .map_err(retryable)?
+                    .id,
+            )
+        } else {
+            None
+        };
         let (run_id, role, provider) = (req.run_id, req.role, self.runner.name().to_owned());
         let job_id = job.job.id;
         let complexity = req
@@ -246,6 +301,7 @@ where
             provider: provider.clone(),
             model: self.runner.model().to_owned(),
             adapter_version: env!("CARGO_PKG_VERSION").to_owned(),
+            context_manifest_rev: context_revision,
         };
         let reserved = self
             .store
@@ -355,6 +411,7 @@ where
             task: None,
             feedback: None,
             diff_summary: None,
+            context: None,
         }
     }
 

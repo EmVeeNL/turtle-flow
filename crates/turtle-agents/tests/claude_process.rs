@@ -32,6 +32,7 @@ fn request(workdir: Option<&Path>) -> AgentRequest {
         task: None,
         feedback: None,
         diff_summary: None,
+        context: None,
     }
 }
 

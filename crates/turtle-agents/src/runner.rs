@@ -33,6 +33,14 @@ pub struct AgentRequest {
     /// Gate output, review findings or user feedback the run must address.
     pub feedback: Option<String>,
     pub diff_summary: Option<String>,
+    /// Redacted repository context and its auditable manifest, built by `turtle-context`.
+    pub context: Option<AgentContext>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentContext {
+    pub text: String,
+    pub manifest_json: String,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +410,7 @@ mod tests {
             }),
             feedback: None,
             diff_summary: None,
+            context: None,
         }
     }
 

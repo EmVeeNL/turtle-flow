@@ -111,6 +111,7 @@ pub struct NewRun {
     pub provider: String,
     pub model: String,
     pub adapter_version: String,
+    pub context_manifest_rev: Option<String>,
 }
 
 /// How a run ended, for the `agent_runs` row.
@@ -569,8 +570,8 @@ impl Tx<'_> {
         let now = self.now()?;
         self.tx.execute(
             "INSERT INTO agent_runs(id, job_id, role, stage, provider, model, adapter_version,
-                                    status, started_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, ?8)",
+                                    context_manifest_rev, status, started_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?9)",
             params![
                 run.id.to_string(),
                 run.job_id.to_string(),
@@ -579,6 +580,7 @@ impl Tx<'_> {
                 run.provider,
                 run.model,
                 run.adapter_version,
+                run.context_manifest_rev,
                 now
             ],
         )?;
@@ -678,6 +680,16 @@ impl Tx<'_> {
 }
 
 impl Store {
+    /// Context manifest revision links recorded for this job's agent runs.
+    pub fn run_context_manifest_revisions(&self, job: JobId) -> Result<Vec<Option<String>>> {
+        let mut stmt = self.raw_connection().prepare(
+            "SELECT context_manifest_rev FROM agent_runs WHERE job_id = ?1 ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([job.to_string()], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     /// Every budget, newest period first within a scope.
     pub fn list_budgets(&self) -> Result<Vec<BudgetRecord>> {
         let conn = self.raw_connection();
