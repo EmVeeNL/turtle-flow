@@ -140,7 +140,7 @@ Known M1 simplifications, all deliberate and listed so they are not forgotten: g
 | SQLite FTS5 (bundled via `libsqlite3-sys` `bundled` feature) | E07 | Low | Bundle SQLite |
 | OS keychain (`keyring`) | E10 (HMAC key), dashboard session key | Medium on headless Linux | File fallback with warning |
 | Rust crates: tokio, axum, rusqlite, clap, serde, jsonschema, schemars, utoipa, rust-embed, tracing, minijinja, nix, ulid, sha2, ed25519-dalek, fail, proptest, insta | All | Low | `cargo-deny`, pinned versions |
-| Frontend: Vite, React, TypeScript, TanStack Router/Query/Table/Virtual, Tailwind, Radix, `@fontsource-variable/asap-sharp`, `@fontsource-variable/jetbrains-mono`, `unplugin-icons` + `@iconify-json/fluent`, a diff viewer component, a chart library | E13 | Low | Lockfile, embed at build |
+| Frontend: Astro, TypeScript, Tailwind CSS v4, Preact, `@fontsource-variable/jetbrains-mono` plus the Asap Sharp files in `docs/assets`, `astro-icon` + `@iconify-json/fluent`, Vitest, Playwright + axe-core | E13 | Low | Lockfile, embed at build |
 
 ## 8. Acceptance Criteria
 
