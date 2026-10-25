@@ -7,6 +7,7 @@ export default defineConfig({
   output: 'static',
   devToolbar: { enabled: false },
   trailingSlash: 'never',
+  build: { inlineStylesheets: 'always' },
   integrations: [icon()],
   vite: { plugins: [tailwindcss()] }
 });

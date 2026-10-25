@@ -1,5 +1,28 @@
 @import 'tailwindcss';
-@import '@fontsource-variable/jetbrains-mono/index.css';
+
+/* Only the latin subsets that the page uses are shipped, so nothing waits on faces for
+   scripts it never renders. */
+@font-face {
+  font-family: 'Space Grotesk Variable';
+  src: url('../../node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2')
+    format('woff2-variations');
+  font-weight: 300 700;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2')
+    format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 @font-face {
   font-family: 'Asap Sharp';
@@ -19,10 +42,12 @@
   --color-blue: #12a4ff;
   --color-cyan: #62cbff;
   --color-text: #eaf3ff;
-  --color-muted: #93a9cc;
+  --color-soft: #cbd8ee;
+  --color-muted: #adbfdc;
   --color-ok: #3fb950;
   --font-sans: 'Asap Sharp', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --font-display: 'Space Grotesk Variable', 'Asap Sharp', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 @property --p {
@@ -81,6 +106,12 @@
   }
   ::-webkit-scrollbar-track {
     background: var(--color-ink);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
   }
 
   h1 {
@@ -143,9 +174,13 @@
     box-shadow 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The two human gates carry an outer ring, so they read as different from the machine stages. */
 .stage[data-gate] .node {
   border-color: var(--color-blue);
   color: var(--color-cyan);
+  box-shadow:
+    0 0 0 4px var(--color-ink),
+    0 0 0 5.5px var(--color-blue);
 }
 
 .stage.lit .node {
@@ -158,6 +193,10 @@
 .stage[data-gate].lit .node {
   background: var(--color-blue);
   border-color: var(--color-blue);
+  box-shadow:
+    0 0 0 4px var(--color-ink),
+    0 0 0 5.5px var(--color-cyan),
+    0 8px 22px -2px rgb(18 164 255 / 0.6);
 }
 
 .chip {
@@ -166,12 +205,12 @@
   gap: 0.4rem;
   margin-top: 0.55rem;
   padding: 0.3rem 0.6rem;
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--color-blue);
   border-radius: 6px;
   background: var(--color-deep);
   color: var(--color-cyan);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
@@ -208,8 +247,13 @@
    does the page start from the hidden state and build up. */
 
 @media (prefers-reduced-motion: no-preference) {
-  .js:not(.settled) [data-hide] {
-    opacity: 0;
+  /* The hero builds up from CSS alone: no script is on the path to first paint. */
+  [data-hide] {
+    animation: rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 90ms + 40ms);
+  }
+  [data-turtle] {
+    animation: glide 1.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .js:not(.settled) .track {
     --p: 0;
@@ -225,6 +269,33 @@
   }
   .stage {
     transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes glide {
+  0% {
+    opacity: 0;
+    transform: translateX(-38vw);
+    filter: blur(10px);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
   }
 }
 
