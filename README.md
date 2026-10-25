@@ -24,7 +24,7 @@ Rust owns the workflow state, policies, budgets, approvals and Git operations. T
 - **Local-first.** A single binary with SQLite. No account and no cloud dependency beyond the AI providers you already use.
 
 ```bash
-turtle up
+turtle up --agent claude
 turtle project add ~/dev/payments-api
 turtle job create -p payments-api "Add per-client rate limiting" --start
 turtle approvals
@@ -32,23 +32,24 @@ turtle approvals
 
 ## Status
 
-**Early development (milestones M0/M1).** Turtle Flow cannot drive a real AI agent yet (that is M2), but the whole workflow runs end to end with a scripted demo agent. What exists so far:
+**Early development.** Milestone M1 (the walking skeleton) is complete and M2 (the first real agent) is in progress. Today you can register a Git repository, create a job and watch Claude Code take it from a specification through approved scope, plan, implementation in an isolated worktree, build and tests, AI review and verification to a delivered commit, with every step in a hash-chained audit log. It has been run for real only on small jobs.
 
-- the Cargo workspace (13 crates)
-- core domain types
-- a process runner that scrubs the environment, enforces timeouts and kills whole process groups
-- a Git version check
-- provider CLI discovery
-- parsers for Claude Code and Codex output, tested against real recorded transcripts ([spike report](spikes/S-1-S-2-provider-cli-report.md))
-- the workflow state machine (`decide()`, profiles, approval binding)
-- the SQLite store: migrations, hash-chained event log, effect queue, job persistence
-- Git operations: worktrees per job, factory commits with trailers, post-run policy check, conflict probes, squash delivery, recovery snapshots
-- the effect executors: worktree, task commits, gates, review, verification, approvals and delivery, tested end to end with a scripted fake agent, including crashes at every step
-- artifacts and approvals: content-addressed blob store, artifact revisions, specification and plan documents with validation, hash-bound approvals checked against the current state at every guard
-- the effect dispatcher: leases and heartbeats, retry with backoff, startup crash recovery, and a crash-injection test harness
-- the `turtle` CLI and daemon: `turtle doctor`, `project`, `job`, `approvals`/`approve` (interactive terminal only), `audit verify`, `up`/`down`/`status`
+| Milestone | State |
+|---|---|
+| M0 spikes | Claude Code headless contract verified; Codex error path only (usage-limited). S-3 to S-7 not started. |
+| **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
+| M2 first real agent | In progress: Claude Code adapter works; token ledger, budgets and the context builder are next. |
+| M3 and later | Not started: Codex, review routing, rate-limit handling, dashboard API, strict profile, releases. |
 
-There is no real agent execution yet: the daemon only runs with the scripted `--demo-agent` until the Claude Code adapter lands (M2).
+Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard UI (`dashboard/`) is built against a mock API; no server serves it yet (M4).
+
+What works:
+
+- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals` and `approve` (interactive terminal only, you type the bound hash back), `audit verify`, `up|down|status`
+- `turtle up --agent claude` runs real jobs through Claude Code (headless, isolated, with structured output and a per-run spend cap); `--agent demo` runs a scripted placeholder agent so you can watch the workflow without spending tokens
+- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
+
+What does not exist yet: token ledger and budget enforcement, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing.
 
 ### Development
 

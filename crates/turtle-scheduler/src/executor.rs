@@ -257,6 +257,19 @@ where
         }
     }
 
+    /// A request for a role that runs before the job has a worktree (discovery, specification,
+    /// planning). Such roles are read-only, so they read the project checkout itself.
+    fn request_in_checkout(
+        &self,
+        job: &JobRecord,
+        project: &ProjectRecord,
+        role: Role,
+    ) -> AgentRequest {
+        let mut req = self.request(job, role);
+        req.workdir = Some(std::path::PathBuf::from(&project.repo_path));
+        req
+    }
+
     fn parse<T: DeserializeOwned>(out: &AgentOutput, what: &str) -> Result<T, ExecError> {
         let value = out
             .structured
@@ -305,7 +318,8 @@ where
         let (job, project) = self.load(effect).await?;
         match role {
             Role::Discovery => {
-                let out = self.run_agent(self.request(&job, role), &job).await?;
+                let req = self.request_in_checkout(&job, &project, role);
+                let out = self.run_agent(req, &job).await?;
                 let doc = out
                     .structured
                     .unwrap_or_else(|| json!({"summary": out.text}));
@@ -321,7 +335,7 @@ where
                 {
                     Some(spec) => spec,
                     None => {
-                        let mut req = self.request(&job, role);
+                        let mut req = self.request_in_checkout(&job, &project, role);
                         req.feedback = self.last_human_feedback(&job).await;
                         let out = self.run_agent(req, &job).await?;
                         let spec: Specification = Self::parse(&out, "specification")?;
@@ -348,7 +362,7 @@ where
                 let plan: Plan = match self.reuse(&job, ArtifactKind::Plan, effect).await? {
                     Some(plan) => plan,
                     None => {
-                        let mut req = self.request(&job, role);
+                        let mut req = self.request_in_checkout(&job, &project, role);
                         req.spec = Some(spec.clone());
                         req.feedback = self.last_human_feedback(&job).await;
                         let out = self.run_agent(req, &job).await?;

@@ -211,10 +211,10 @@ fn the_daemon_runs_a_job_to_its_first_approval_and_is_exclusive() {
     w.ok(&["job", "create", "Add a greeting", "--start"]);
 
     let refusal = w.fails(&["daemon"]);
-    assert!(refusal.contains("no real agent adapter"), "{refusal}");
+    assert!(refusal.contains("choose an agent"), "{refusal}");
 
     let _daemon = Daemon(
-        w.command(&["daemon", "--demo-agent"])
+        w.command(&["daemon", "--agent", "demo"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -224,7 +224,7 @@ fn the_daemon_runs_a_job_to_its_first_approval_and_is_exclusive() {
         w.ok(&["status"]).contains("running (pid")
     });
     assert!(
-        w.fails(&["daemon", "--demo-agent"])
+        w.fails(&["daemon", "--agent", "demo"])
             .contains("already running")
     );
 
