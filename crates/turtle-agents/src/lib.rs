@@ -14,6 +14,7 @@ pub mod schemas;
 
 pub use claude::PermissionDenial;
 pub use claude_runner::{ClaudeConfig, ClaudeRunner};
+pub use codex::local_offset;
 pub use codex_runner::{CodexConfig, CodexRunner};
 pub use discovery::{
     AuthStatus, CapabilityRegistry, CompatStatus, ProviderCapabilities, ProviderId, ProviderInfo,

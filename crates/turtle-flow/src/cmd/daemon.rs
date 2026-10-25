@@ -341,11 +341,32 @@ pub fn down(home: &Home) -> Result<()> {
     Ok(())
 }
 
-pub fn status(home: &Home) {
+pub async fn status(home: &Home) -> Result<()> {
     if running(home) {
         let pid = std::fs::read_to_string(home.daemon_pid()).unwrap_or_default();
         println!("Daemon running (pid {}).", pid.trim());
     } else {
         println!("Daemon not running. Start it with: turtle up --agent claude");
     }
+    if home.db().exists() {
+        let runtime = Runtime::open(home.clone())?;
+        let limited = runtime
+            .store
+            .with(|store| store.current_limited_providers())
+            .await?;
+        if limited.is_empty() {
+            println!("No providers are rate limited.");
+        } else {
+            for item in limited {
+                println!(
+                    "Provider {} is rate limited{}.",
+                    item.provider,
+                    item.reset_at
+                        .as_deref()
+                        .map_or_else(|| " (reset unknown)".into(), |v| format!(" until {}", v))
+                );
+            }
+        }
+    }
+    Ok(())
 }

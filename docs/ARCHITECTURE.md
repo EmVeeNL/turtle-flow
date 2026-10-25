@@ -335,7 +335,7 @@ Command envelope (all state-changing requests):
 
 ### 7.2 CLI surface (excerpt)
 
-Implemented commands include `up` (with `--agent claude|codex|demo` or an ordered `claude,codex` list, repeated `--role-agent role=provider`, `--codex-model` and `--codex-effort`), `down`, `status`, `daemon`, `providers list`, project and job commands, approvals, token budgets, audit verification, doctor, and `runs list --job <key>` / `runs transcript <run-id> [--raw]`. Transcript display is readable event summaries by default; `--raw` prints the stored NDJSON stream, which remains redacted. Differences so far: there is no separate `turtle reject`, `job pause --hard` waits for the current run, and `job cancel` has no `--delete-branch`.
+Implemented commands include `up` (with `--agent claude|codex|demo` or an ordered `claude,codex` list, repeated `--role-agent role=provider`, `--codex-model` and `--codex-effort`), `down`, `status` (including active provider limits), `daemon`, `providers list` (provider limit/reset state and latest quota-window percentages with age), project and job commands (`job show` explains rate-limit holds), approvals, token budgets, audit verification, doctor, and `runs list --job <key>` / `runs transcript <run-id> [--raw]`. Transcript display is readable event summaries by default; `--raw` prints the stored NDJSON stream, which remains redacted. Differences so far: there is no separate `turtle reject`, `job pause --hard` waits for the current run, and `job cancel` has no `--delete-branch`.
 
 ```text
 turtle init                         # onboarding wizard

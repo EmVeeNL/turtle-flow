@@ -14,6 +14,7 @@ pub mod engine;
 pub mod executor;
 pub mod git_facts;
 pub mod layout;
+pub mod rate_limit;
 pub mod shared;
 
 pub use approvals::{ApprovalError, ApprovalService};
@@ -32,4 +33,5 @@ pub use engine::{ContextProvider, Engine, EngineError, Finished, StaticContext};
 pub use executor::FactoryExecutor;
 pub use git_facts::RepoGitFacts;
 pub use layout::{ExecConfig, Layout};
+pub use rate_limit::lift_rate_limit_holds;
 pub use shared::SharedStore;

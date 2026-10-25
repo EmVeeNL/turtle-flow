@@ -228,13 +228,19 @@ impl Tx<'_> {
     /// Puts a claimed effect back to `pending` without counting the attempt: the work was not
     /// refused for being broken but held (for example, no budget). A hold on the job keeps it
     /// from being claimed until the hold is lifted.
-    pub fn defer_effect(&mut self, id: EffectId, instance_id: &str, reason: &str) -> Result<()> {
+    pub fn defer_effect(
+        &mut self,
+        id: EffectId,
+        instance_id: &str,
+        reason: &str,
+        not_before: Option<&str>,
+    ) -> Result<()> {
         let result = serde_json::json!({ "deferred": reason }).to_string();
         let n = self.tx.execute(
-            "UPDATE effects SET status = 'pending', attempts = MAX(attempts - 1, 0), not_before = NULL,
-                    result = ?1, lease_instance_id = NULL, lease_expires_at = NULL
-             WHERE id = ?2 AND status = 'claimed' AND lease_instance_id = ?3",
-            params![result, id.to_string(), instance_id],
+            "UPDATE effects SET status = 'pending', attempts = MAX(attempts - 1, 0), not_before = ?1,
+                    result = ?2, lease_instance_id = NULL, lease_expires_at = NULL
+             WHERE id = ?3 AND status = 'claimed' AND lease_instance_id = ?4",
+            params![not_before, result, id.to_string(), instance_id],
         )?;
         if n == 1 {
             Ok(())

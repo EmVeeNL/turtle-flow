@@ -77,6 +77,13 @@ pub enum ExecError {
     /// claimed again once the hold is lifted.
     #[error("held: {reason}")]
     Hold { command: JobCommand, reason: String },
+    /// Held until a provider reset or a conservative retry time, without using an attempt.
+    #[error("held until {not_before}: {reason}")]
+    HoldUntil {
+        command: JobCommand,
+        reason: String,
+        not_before: String,
+    },
 }
 
 /// Performs effects. Must be idempotent per `effect.idempotency_key`.
@@ -293,6 +300,15 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
                     .defer_effect(&effect, &instance, command, &reason)
                     .await?
             }
+            Err(ExecError::HoldUntil {
+                command,
+                reason,
+                not_before,
+            }) => {
+                self.engine
+                    .defer_effect_until(&effect, &instance, command, &reason, &not_before)
+                    .await?
+            }
         };
         Ok(finished)
     }
@@ -317,6 +333,7 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
     /// Runs ticks until `shutdown` turns true. Sleeps when idle, wakes on [`Dispatcher::wake`].
     pub async fn run(&self, mut shutdown: watch::Receiver<bool>) -> Result<(), DispatchError> {
         while !*shutdown.borrow() {
+            crate::lift_rate_limit_holds(&self.engine).await?;
             let report = self.tick().await?;
             if report.claimed == 0 {
                 tokio::select! {
@@ -327,6 +344,10 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
             }
         }
         self.shutdown().await
+    }
+
+    pub async fn lift_rate_limit_holds(&self) -> Result<usize, DispatchError> {
+        Ok(crate::lift_rate_limit_holds(&self.engine).await?)
     }
 }
 

@@ -109,6 +109,12 @@ impl<A: AgentRunner, B: AgentRunner> AgentRunner for RoutingRunner<A, B> {
             order.retain(|candidate| candidate != name);
             order.insert(0, name.clone());
         }
+        if let Some(name) = &context.avoid_provider
+            && order.contains(name)
+        {
+            order.retain(|candidate| candidate != name);
+            order.push(name.clone());
+        }
         let independent = matches!(context.role, Role::Reviewer | Role::Verifier)
             && context.independence != Independence::Off
             && context.implementer_provider.is_some();
@@ -122,8 +128,12 @@ impl<A: AgentRunner, B: AgentRunner> AgentRunner for RoutingRunner<A, B> {
             self.slot(name).map(|(provider, model, reason)| {
                 let independence_excluded = independent && (viable_alternative || context.independence == Independence::Required)
                     && context.implementer_provider.as_deref() == Some(provider);
-                json!({"provider": provider, "model": model, "eligible": reason.is_none() && !independence_excluded,
-                    "reason": reason.map(str::to_owned).or_else(|| independence_excluded.then(|| "same provider as implementer".into()))})
+                let limited = context.limited_providers.iter().any(|p| p == provider);
+                let exclusion = reason.map(str::to_owned)
+                    .or_else(|| limited.then(|| "provider currently rate limited".into()))
+                    .or_else(|| independence_excluded.then(|| "same provider as implementer".into()));
+                json!({"provider": provider, "model": model, "eligible": reason.is_none() && !limited && !independence_excluded,
+                    "reason": exclusion})
             })
         }).collect();
         let selected = candidates
@@ -146,7 +156,16 @@ impl<A: AgentRunner, B: AgentRunner> AgentRunner for RoutingRunner<A, B> {
             .expect("candidate model")
             .to_owned();
         let fallback = independent && !viable_alternative;
-        let reason = if fallback {
+        let reason = if context.avoid_provider.as_deref() == Some(provider.as_str()) {
+            format!(
+                "no alternative provider available for soft quota preference; selected {provider}"
+            )
+        } else if context.avoid_provider.is_some() {
+            format!(
+                "preferred another provider because {} is near quota",
+                context.avoid_provider.as_deref().unwrap_or("provider")
+            )
+        } else if fallback {
             "independent provider unavailable; preferred review fell back to the implementer provider".into()
         } else if independent {
             "independent provider selected".into()
@@ -169,6 +188,8 @@ impl<A: AgentRunner, B: AgentRunner> AgentRunner for RoutingRunner<A, B> {
             role: req.role,
             independence: Independence::Off,
             implementer_provider: None,
+            limited_providers: Vec::new(),
+            avoid_provider: None,
         })?;
         self.run_selected(req, &route.provider).await
     }
@@ -210,6 +231,8 @@ mod tests {
             role: Role::Reviewer,
             independence,
             implementer_provider: Some("claude-code".into()),
+            limited_providers: Vec::new(),
+            avoid_provider: None,
         }
     }
 
@@ -253,6 +276,8 @@ mod tests {
                 role: Role::Planner,
                 independence: Independence::Off,
                 implementer_provider: None,
+                limited_providers: Vec::new(),
+                avoid_provider: None,
             })
             .expect("route");
         assert_eq!(choice.provider, "codex");
@@ -269,9 +294,53 @@ mod tests {
             role: Role::Planner,
             independence: Independence::Off,
             implementer_provider: None,
+            limited_providers: Vec::new(),
+            avoid_provider: None,
         })
         .expect("fallback");
         assert_eq!(choice.provider, "codex");
         assert_eq!(choice.candidates[0]["reason"], "not installed");
+    }
+
+    #[test]
+    fn rate_limits_are_excluded_and_soft_quota_preferences_are_audited() {
+        let context = RouteContext {
+            role: Role::Implementer,
+            independence: Independence::Off,
+            implementer_provider: None,
+            limited_providers: vec!["claude-code".into()],
+            avoid_provider: None,
+        };
+        let route = router(None).select(&context).expect("codex fallback");
+        assert_eq!(route.provider, "codex");
+        assert_eq!(
+            route.candidates[0]["reason"],
+            "provider currently rate limited"
+        );
+
+        let preferred = router(None)
+            .select(&RouteContext {
+                limited_providers: Vec::new(),
+                avoid_provider: Some("claude-code".into()),
+                ..context
+            })
+            .expect("soft preference");
+        assert_eq!(preferred.provider, "codex");
+        assert!(preferred.reason.contains("near quota"));
+
+        let no_alternative = RoutingRunner::new(
+            ProviderSlot::new(FakeRunner::new(), "claude-code", None),
+            ProviderSlot::new(FakeRunner::new(), "codex", Some("not installed".into())),
+        )
+        .select(&RouteContext {
+            role: Role::Implementer,
+            independence: Independence::Off,
+            implementer_provider: None,
+            limited_providers: Vec::new(),
+            avoid_provider: Some("claude-code".into()),
+        })
+        .expect("soft guard does not block");
+        assert_eq!(no_alternative.provider, "claude-code");
+        assert!(no_alternative.reason.contains("no alternative"));
     }
 }

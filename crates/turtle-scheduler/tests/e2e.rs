@@ -21,8 +21,8 @@ use turtle_scheduler::{
     EngineError, ExecConfig, FactoryExecutor, RepoGitFacts, SharedStore, StoreContext,
 };
 use turtle_store::{
-    BudgetScope, ChainVerdict, Decision, JobRecord, LedgerVerdict, NewJob, NewProject, Store,
-    SystemClock,
+    BudgetScope, ChainVerdict, Clock, Decision, JobRecord, LedgerVerdict, ManualClock, NewJob,
+    NewProject, Store, SystemClock,
 };
 use turtle_workflow::Profile;
 
@@ -39,6 +39,7 @@ struct Env<R: AgentRunner> {
     cfg: Arc<ExecConfig>,
     runner: Arc<R>,
     job: JobId,
+    clock: Arc<dyn Clock>,
 }
 
 #[tokio::test]
@@ -128,6 +129,10 @@ fn git_env(repo: Repo) -> Repo {
 impl<R: AgentRunner> Env<R> {
     /// A project repository on `main` with one commit, a data directory, and one job.
     async fn new(runner: R, settings: ProjectSettings) -> Self {
+        Self::new_with_clock(runner, settings, Arc::new(SystemClock)).await
+    }
+
+    async fn new_with_clock(runner: R, settings: ProjectSettings, clock: Arc<dyn Clock>) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().canonicalize().expect("canonical");
         let repo_path = root.join("project");
@@ -152,7 +157,7 @@ impl<R: AgentRunner> Env<R> {
         let db = root.join("data/turtle.db");
         let blobs = Arc::new(BlobStore::open(root.join("data/blobs")).expect("blobs"));
 
-        let store = SharedStore::new(Store::open(&db, Arc::new(SystemClock)).expect("store"));
+        let store = SharedStore::new(Store::open(&db, Arc::clone(&clock)).expect("store"));
         let repo_str = repo_path.to_string_lossy().into_owned();
         let job = store
             .with(move |s| {
@@ -194,12 +199,14 @@ impl<R: AgentRunner> Env<R> {
             cfg: Arc::new(cfg),
             runner: Arc::new(runner),
             job,
+            clock,
         }
     }
 
     /// (Re)starts the whole system on the same files: a new process after a crash.
     async fn boot(&self, crash: CrashPlan) -> (Booted<R>, turtle_store::RecoveryReport) {
-        let store = SharedStore::new(Store::open(&self.db, Arc::new(SystemClock)).expect("store"));
+        let store =
+            SharedStore::new(Store::open(&self.db, Arc::clone(&self.clock)).expect("store"));
         let git = Arc::new(RepoGitFacts::new(store.clone(), Arc::clone(&self.cfg)));
         let ctx = Arc::new(StoreContext::new(
             store.clone(),
@@ -496,6 +503,186 @@ async fn standard_review_routes_to_an_independent_provider_and_records_the_decis
         commits.contains("Turtle-Provider: claude-code"),
         "{commits}; worktree={worktree:?}"
     );
+}
+
+#[tokio::test]
+async fn a_mid_job_rate_limit_charges_and_reroutes_to_the_other_provider() {
+    let usage = TokenUsage {
+        input: 120,
+        output: 30,
+        ..TokenUsage::default()
+    };
+    let claude = FakeRunner::new().with_script(
+        Role::Implementer,
+        vec![Step::Fail(AgentError::rate_limited(
+            "claude-code",
+            Some(time::OffsetDateTime::now_utc() + time::Duration::minutes(30)),
+            "usage limit reached",
+            Some(UsageValue::Reported { usage }),
+            Some("rate limit event".into()),
+            Vec::new(),
+            None,
+        ))],
+    );
+    let router = RoutingRunner::new(
+        ProviderSlot::new(claude, "claude-code", None),
+        ProviderSlot::new(FakeRunner::new(), "codex", None),
+    );
+    let env = Env::new(router, settings(Some(NEEDS_FEATURE_FILE), Some("release"))).await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("branch");
+    let (booted, _) = env.boot(CrashPlan::never()).await;
+    let result = drive(&env, &booted, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(
+        result.job.state,
+        JobState::Blocked,
+        "required independent review cannot use the implementer's provider while Claude is limited"
+    );
+    let connection = Store::open(&env.db, Arc::new(SystemClock)).expect("store");
+    let (failed, rerouted): (i64, i64) = connection.raw_connection().query_row(
+        "SELECT sum(status='failed' AND provider='claude-code'), sum(status='succeeded' AND provider='codex') FROM agent_runs WHERE role='implementer'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).expect("implementer runs");
+    assert_eq!((failed, rerouted), (1, 1));
+    assert!(matches!(
+        connection.verify_ledger().expect("ledger"),
+        LedgerVerdict::Consistent { .. }
+    ));
+    let open_reservations: i64 = connection.raw_connection().query_row(
+        "SELECT count(*) FROM reservations r JOIN agent_runs a ON a.id=r.run_id WHERE a.job_id=?1 AND r.status='open'",
+        [env.job.to_string()], |row| row.get(0),
+    ).expect("reservation status");
+    assert_eq!(open_reservations, 0);
+    assert_eq!(
+        connection
+            .current_limited_providers()
+            .expect("limit observation")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_job_waits_for_its_rate_limit_reset_then_resumes_without_sleeping() {
+    let clock = Arc::new(ManualClock::new());
+    let reset_at = clock.now() + time::Duration::minutes(2);
+    let runner = FakeRunner::new().with_script(
+        Role::Implementer,
+        vec![Step::Fail(AgentError::rate_limited(
+            "fake",
+            Some(reset_at),
+            "test limit",
+            Some(UsageValue::Reported {
+                usage: TokenUsage {
+                    input: 100,
+                    output: 20,
+                    ..TokenUsage::default()
+                },
+            }),
+            None,
+            Vec::new(),
+            None,
+        ))],
+    );
+    let env = Env::new_with_clock(
+        runner,
+        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+        clock.clone(),
+    )
+    .await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("branch");
+    let (booted, _) = env.boot(CrashPlan::never()).await;
+    for _ in 0..100 {
+        booted
+            .human_step(env.job, &ApprovalPolicy::approve_all())
+            .await
+            .expect("human step");
+        booted.dispatcher.tick().await.expect("tick");
+        if booted
+            .job(env.job)
+            .await
+            .job
+            .holds
+            .contains(&turtle_workflow::Hold::RateLimited {
+                provider: "fake".into(),
+            })
+        {
+            break;
+        }
+    }
+    let held = booted.job(env.job).await;
+    assert!(
+        held.job
+            .holds
+            .contains(&turtle_workflow::Hold::RateLimited {
+                provider: "fake".into()
+            }),
+        "state={:?}, holds={:?}, blocked={:?}",
+        held.job.state,
+        held.job.holds,
+        held.job.blocked
+    );
+    let connection = Store::open(&env.db, clock.clone()).expect("store");
+    let not_before: String = connection.raw_connection().query_row(
+        "SELECT not_before FROM effects WHERE job_id=?1 AND status='pending' AND not_before IS NOT NULL LIMIT 1",
+        [env.job.to_string()], |row| row.get(0),
+    ).expect("deferred effect due time");
+    assert!(not_before > turtle_store::clock::format_ts(clock.now()).expect("now"));
+    assert!(matches!(
+        connection.verify_ledger().expect("ledger"),
+        LedgerVerdict::Consistent { .. }
+    ));
+    assert_eq!(
+        booted
+            .dispatcher
+            .lift_rate_limit_holds()
+            .await
+            .expect("early lift check"),
+        0
+    );
+    assert!(
+        booted
+            .job(env.job)
+            .await
+            .job
+            .holds
+            .contains(&turtle_workflow::Hold::RateLimited {
+                provider: "fake".into()
+            })
+    );
+
+    clock.advance(Duration::from_secs(180));
+    assert_eq!(
+        booted
+            .dispatcher
+            .lift_rate_limit_holds()
+            .await
+            .expect("lift"),
+        1
+    );
+    let resumed = drive(&env, &booted, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(resumed.job.state, JobState::Done);
+    let after = Store::open(&env.db, clock).expect("store");
+    assert!(
+        after
+            .current_limited_providers()
+            .expect("resolved limits")
+            .is_empty()
+    );
+    assert!(matches!(
+        after.verify_ledger().expect("ledger"),
+        LedgerVerdict::Consistent { .. }
+    ));
+    let open_reservations: i64 = after.raw_connection().query_row(
+        "SELECT count(*) FROM reservations r JOIN agent_runs a ON a.id=r.run_id WHERE a.job_id=?1 AND r.status='open'",
+        [env.job.to_string()], |row| row.get(0),
+    ).expect("reservation status");
+    assert_eq!(open_reservations, 0);
 }
 
 #[tokio::test]

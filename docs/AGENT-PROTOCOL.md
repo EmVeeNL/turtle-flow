@@ -275,7 +275,7 @@ sequenceDiagram
 | `ErrorClass` | Code examples | Retryable | Typical source | Engine handling |
 |---|---|---|---|---|
 | `Transient` | `E_PROVIDER_NETWORK`, `E_PROVIDER_OVERLOADED`, `E_CLI_CRASH_KNOWN` | yes | stderr patterns, exit codes | Retry with backoff (WORKFLOW §9.1) |
-| `RateLimited` | `E_RATE_LIMIT`, `E_USAGE_LIMIT_WINDOW` | yes (after wait) | provider messages | `rate_limited` hold, failover if allowed |
+| `RateLimited` | `E_RATE_LIMIT`, `E_USAGE_LIMIT_WINDOW` | yes (after reset) | Codex usage-limit messages; Claude rejected quota windows or explicit limit result | Record provider/run/message/reset; route to another eligible provider in the same effect, else `rate_limited` hold and defer until reset. Unknown reset waits one hour. 529 overload remains transient. |
 | `Auth` | `E_NOT_AUTHENTICATED`, `E_AUTH_EXPIRED` | no | discovery / stderr | `blocked` with remediation (`claude login` / `codex login`) |
 | `Config` | `E_MODEL_UNKNOWN`, `E_FLAG_UNSUPPORTED` | no | CLI usage errors | Mark capability, re-route once, else `blocked` |
 | `SchemaViolation` | `E_OUTPUT_SCHEMA` | once (repair) | validation | Repair attempt, then fail run |

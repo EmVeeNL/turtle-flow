@@ -196,12 +196,14 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
                 "the run was stopped after {}s",
                 out.duration.as_secs()
             ))
-            .with_details(usage, transcript, denials));
+            .with_details(usage, transcript, denials)
+            .with_quota(summary.quota.clone()));
         }
         ExitOutcome::Signaled => {
             return Err(
                 AgentError::Retryable("Claude Code was killed by a signal".into())
-                    .with_details(usage, transcript, denials),
+                    .with_details(usage, transcript, denials)
+                    .with_quota(summary.quota.clone()),
             );
         }
         ExitOutcome::Exited(_) => {}
@@ -210,7 +212,8 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
         return Err(AgentError::Fatal(
             "Claude Code produced more output than the limit allows".into(),
         )
-        .with_details(usage, transcript, denials));
+        .with_details(usage, transcript, denials)
+        .with_quota(summary.quota.clone()));
     }
 
     let leaks = summary.isolation_leaks();
@@ -219,10 +222,22 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
             "isolation failed: unexpected tools or servers were loaded ({})",
             leaks.join(", ")
         ))
-        .with_details(usage, transcript, denials));
+        .with_details(usage, transcript, denials)
+        .with_quota(summary.quota.clone()));
     }
 
-    let failed = summary.is_error == Some(true) || !out.success();
+    let quota_rejected = matches!(
+        &summary.quota,
+        Some(turtle_domain::QuotaStatus::Partial { windows })
+            if windows.iter().any(|window| window.status == turtle_domain::WindowStatus::Rejected)
+    );
+    let limit_text = summary.result_text.as_deref().is_some_and(|text| {
+        let lower = text.to_ascii_lowercase();
+        lower.contains("usage limit")
+            || lower.contains("rate limit reached")
+            || lower.contains("rate limit has been reached")
+    });
+    let failed = summary.is_error == Some(true) || !out.success() || quota_rejected || limit_text;
     if failed {
         let detail = summary
             .result_text
@@ -236,22 +251,48 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
         } else {
             format!("Claude Code failed: {detail}")
         };
+        let rejected = quota_rejected;
+        let explicit_limit = lower.contains("usage limit")
+            || lower.contains("rate limit reached")
+            || lower.contains("rate limit has been reached");
+        if rejected || explicit_limit {
+            let reset_at = match &summary.quota {
+                Some(turtle_domain::QuotaStatus::Partial { windows }) => windows
+                    .iter()
+                    .filter(|window| window.status == turtle_domain::WindowStatus::Rejected)
+                    .filter_map(|window| window.resets_at)
+                    .min()
+                    .and_then(|seconds| time::OffsetDateTime::from_unix_timestamp(seconds).ok()),
+                _ => None,
+            };
+            return Err(AgentError::rate_limited(
+                "claude-code",
+                reset_at,
+                message,
+                usage,
+                transcript,
+                denials,
+                summary.quota,
+            ));
+        }
         return Err(if TRANSIENT.iter().any(|t| lower.contains(t)) {
             AgentError::Retryable(message)
         } else {
             AgentError::Fatal(message)
         }
-        .with_details(usage, transcript, denials));
+        .with_details(usage, transcript, denials)
+        .with_quota(summary.quota.clone()));
     }
     if summary.result_text.is_none() && summary.structured_output.is_none() {
         return Err(
             AgentError::Retryable("Claude Code ended without a result".into())
-                .with_details(usage, transcript, denials),
+                .with_details(usage, transcript, denials)
+                .with_quota(summary.quota.clone()),
         );
     }
 
     let structured = if schemas::for_role(role).is_some() {
-        Some(structured_output(&summary)?)
+        Some(structured_output(&summary).map_err(|e| e.with_quota(summary.quota.clone()))?)
     } else {
         None
     };
@@ -261,6 +302,7 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
         usage: usage.unwrap_or(UsageValue::Unavailable),
         transcript,
         permission_denials: denials,
+        quota: summary.quota,
     })
 }
 
@@ -301,6 +343,36 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         ))
         .expect("fixture")
+    }
+
+    #[test]
+    fn rejected_quota_event_and_limit_result_are_rate_limited_but_529_is_retryable() {
+        let stream = concat!(
+            r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":1792950000,"status":"rejected"}}}}"#,
+            "\n",
+            r#"{"type":"result","is_error":true,"result":"Usage limit reached","usage":{"input_tokens":12,"output_tokens":3}}"#,
+        );
+        let limited = interpret(&output(stream, ExitOutcome::Exited(1)), Role::Discovery)
+            .expect_err("limit outcome");
+        assert_eq!(
+            limited.rate_limit().map(|(provider, _)| provider),
+            Some("claude-code")
+        );
+        assert!(
+            matches!(limited.usage(), Some(UsageValue::Reported { usage }) if usage.total() == 15)
+        );
+        assert!(limited.quota().is_some());
+
+        let overloaded = interpret(
+            &output(
+                r#"{"type":"result","is_error":true,"result":"Overloaded (529)"}"#,
+                ExitOutcome::Exited(1),
+            ),
+            Role::Discovery,
+        )
+        .expect_err("overload");
+        assert!(overloaded.retryable());
+        assert!(overloaded.rate_limit().is_none());
     }
 
     #[test]

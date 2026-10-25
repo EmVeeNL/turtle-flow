@@ -219,15 +219,17 @@ fn parse_rate_limit(info: &Value) -> Option<QuotaStatus> {
     let mut out: Vec<QuotaWindow> = windows
         .iter()
         .filter_map(|(name, w)| {
+            let status = match w["status"].as_str()? {
+                "allowed" => WindowStatus::Allowed,
+                "allowed_warning" => WindowStatus::Warning,
+                "rejected" => WindowStatus::Rejected,
+                _ => return None,
+            };
             Some(QuotaWindow {
                 name: name.clone(),
                 utilization: w["utilization"].as_f64()?,
                 resets_at: w["resetsAt"].as_i64(),
-                status: match w["status"].as_str() {
-                    Some("allowed") => WindowStatus::Allowed,
-                    Some("allowed_warning") => WindowStatus::Warning,
-                    _ => WindowStatus::Rejected,
-                },
+                status,
             })
         })
         .collect();

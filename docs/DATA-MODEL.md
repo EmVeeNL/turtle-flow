@@ -482,8 +482,15 @@ CREATE TABLE provider_capabilities (
 );
 CREATE TABLE provider_limits_observed (
   id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT, run_id TEXT REFERENCES agent_runs(id),
-  observed_at TEXT NOT NULL, retry_after_s INTEGER, raw_message TEXT, resolved_at TEXT
+  observed_at TEXT NOT NULL, retry_after_s INTEGER, raw_message TEXT, resolved_at TEXT,
+  resets_at TEXT
 );
+CREATE TABLE provider_quota_snapshots (
+  id TEXT PRIMARY KEY, provider TEXT NOT NULL, observed_at TEXT NOT NULL,
+  window_name TEXT NOT NULL, utilization REAL NOT NULL,
+  resets_at TEXT, status TEXT NOT NULL, run_id TEXT REFERENCES agent_runs(id)
+);
+-- Latest 100 snapshots are kept per provider/window. These are utilization fractions, never token counts.
 CREATE TABLE releases (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), version_label TEXT NOT NULL,
   target_commit TEXT, state TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,

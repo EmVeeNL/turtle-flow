@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Document | TOKEN-INTELLIGENCE.md |
-| Status | Proposed baseline; decisions in [ADR-008](adr/ADR-008-token-intelligence-budgets.md) and [ADR-018](adr/ADR-018-model-routing-and-evaluation.md) |
+| Status | Baseline with usage accounting and M3 part 2 quota/rate-limit handling implemented; decisions in [ADR-008](adr/ADR-008-token-intelligence-budgets.md) and [ADR-018](adr/ADR-018-model-routing-and-evaluation.md) |
 | Related | [AGENT-PROTOCOL.md](AGENT-PROTOCOL.md), [DATA-MODEL.md](DATA-MODEL.md), [examples/example-preflight-report.json](examples/example-preflight-report.json) |
 
 ---
@@ -358,7 +358,9 @@ Generated weekly or on demand, each with evidence and estimated saving:
 ## 14. Quota and Rate-Limit Handling
 
 - `quota_visibility` is discovered per provider ([spike S-1/S-2](../spikes/S-1-S-2-provider-cli-report.md)). **Claude Code** (subscription auth) emits `rate_limit_event` with utilization fractions and reset times for the 5-hour and 7-day windows, so visibility is `Partial`. Show it as "% of provider window" and never as tokens. The scheduler avoids starting long runs when a window is ≥ 90% used (configurable). **Codex** only reports a usage-limit error with a local-time retry hint, so visibility is `Unknown` until a limit is hit. Absolute remaining tokens are unavailable for both.
-- Rate-limit observations are recorded (`provider_limits_observed`: time, provider, model, message, retry hint, resolved_at). From these, Turtle Flow learns *empirical* safe concurrency per provider (e.g. reduce per-provider `max_concurrent_runs` by 1 after 3 rate-limit events in 30 min; restore after 2 h without events).
+- **Implemented for M3 part 2:** rate-limit observations are recorded in `provider_limits_observed` with run link, raw message, parsed reset and resolution time. Rate-limited providers are excluded from routing; a current run can fail over when an eligible route exists. Otherwise the job receives a provider-specific hold and its effect is deferred until reset. Unknown resets use a conservative one-hour retry. The dispatcher lifts holds after known resets or that conservative wait, including on startup. Required independent review never falls back to the implementer's provider.
+- Claude `rate_limit_event` windows are stored in `provider_quota_snapshots` (bounded to 100 samples per provider/window). `providers list` displays utilization as a percentage of the provider window with observation age. A soft guard prefers another provider at or above 90%; set `TURTLE_CLAUDE_QUOTA_THRESHOLD` to a fraction in `[0,1]` to tune it. If no alternative is eligible, routing proceeds and records that reason.
+- Absolute remaining tokens remain unavailable. There is not yet a real Claude limit transcript; Claude limit classification is covered by synthetic streams. Empirical concurrency learning (reduce `max_concurrent_runs` after repeated limits) remains out of scope.
 - The dashboard shows "Rate limited — reset unknown" or "until 14:05 (provider hint)" and never a fabricated remaining count.
 
 ## 15. Data Contracts (excerpt)

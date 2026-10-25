@@ -154,6 +154,29 @@ fn provider_commands_report_capabilities_and_validate_routing_flags() {
             && providers.contains("quota="),
         "{providers}"
     );
+    let conn = rusqlite::Connection::open(w.home.join("turtle.db")).expect("db");
+    conn.execute(
+        "INSERT INTO provider_limits_observed(id,provider,observed_at,raw_message) VALUES ('limit-1','codex','2026-10-25T00:00:00.000Z','fixture hint')",
+        [],
+    ).expect("limit observation");
+    conn.execute(
+        "INSERT INTO provider_quota_snapshots(id,provider,observed_at,window_name,utilization,status) VALUES ('quota-1','claude-code','2026-10-25T00:00:00.000Z','five_hour',0.93,'warning')",
+        [],
+    ).expect("quota snapshot");
+    let refreshed = w
+        .command(&["providers", "list"])
+        .env("PATH", &bin)
+        .output()
+        .expect("providers list");
+    let output = String::from_utf8_lossy(&refreshed.stdout);
+    assert!(
+        output.contains("codex: ") && output.contains("rate limited (reset unknown)"),
+        "{output}"
+    );
+    assert!(
+        output.contains("93% of provider window") && output.contains("five_hour"),
+        "{output}"
+    );
     assert!(
         w.fails(&["daemon", "--agent", "claude,bogus"])
             .contains("--agent must")
