@@ -243,6 +243,8 @@ CREATE INDEX ix_usage_provider_model_time ON usage_records(provider, model, reco
 CREATE INDEX ix_usage_job ON usage_records(job_id);
 ```
 
+**Implementation status (M2, 2026-10-25):** `context_manifest_rev` is populated before each agent process starts when repository context is available. Its referenced `context_manifest` artifact revision contains the redacted package item list, exclusions, size estimates, and package hash.
+
 ### 3.4 Budgets, reservations, ledger, estimation
 
 ```sql
