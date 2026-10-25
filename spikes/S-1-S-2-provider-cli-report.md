@@ -7,7 +7,7 @@
 | Claude Code | 2.1.310 |
 | Codex CLI | 0.163.0 |
 | Raw material | [`raw/`](raw/) (`--help` captures), [`fixtures/`](fixtures/) (recorded headless transcripts) |
-| Status | S-1 partially complete (3 runs). S-2 blocked by account usage limit; only the error path is recorded. |
+| Status | S-1 partially complete (3 runs). S-2 error, read-only structured output and workspace-write success paths recorded; cancellation and network checks remain. |
 
 Fixtures were recorded in a throwaway Git repository containing `main.rs` and `README.md`. Session IDs and local paths are left in on purpose because the parsers must handle them. No secrets are present.
 
@@ -81,7 +81,7 @@ Assumption **A-03 is false for Claude Code with subscription auth.** Window util
 |---|---|---|
 | Headless | `codex exec`, prompt via stdin with `-` ✔ | as designed |
 | Streaming | `--json` → JSONL ✔ (`thread.started`, `turn.started`, `error`, `turn.failed` observed) | as designed |
-| Structured output | `--output-schema <FILE>` (flag present; success path not yet observed) | as designed |
+| Structured output | `--output-schema <FILE>` (success path recorded in §2.3) | final `agent_message.text` contains the JSON |
 | Sandbox | `-s read-only \| workspace-write \| danger-full-access` | as designed |
 | Approvals | **No `-a/--ask-for-approval` on `exec`.** `--approve-for-me` routes approvals to automatic review | Remove `-a never` from the docs |
 | Config isolation | `--ignore-user-config` (auth still read from `CODEX_HOME`), `--ignore-rules`, `--strict-config` | Use `--ignore-user-config` by default, the Codex equivalent of §1.3 |
@@ -115,10 +115,9 @@ Fixtures: `fixtures/codex/02-readonly-structured.ndjson` (read-only, `--output-s
 
 Applied in this commit: AGENT-PROTOCOL §9 (verified facts), PRD A-03 (falsified for Claude Code), TOKEN-INTELLIGENCE §14 (quota visibility).
 
-## 4. Next spike runs (when Codex quota resets)
+## 4. Next spike runs
 
-1. Codex read-only + `--output-schema` success path (usage fields on `turn.completed`).
-2. Codex `workspace-write` implementer: file edits, attempted `git commit`, network attempt.
-3. Claude: cancellation (SIGTERM mid-run). Does the stream end with a `result`? Is partial usage reported?
-4. Claude: auth-missing error shape (run with an empty `CLAUDE_CONFIG_DIR`).
+1. Codex `workspace-write` network attempt and cancellation behavior.
+2. Claude: cancellation (SIGTERM mid-run). Does the stream end with a `result`? Is partial usage reported?
+3. Claude: auth-missing error shape (run with an empty `CLAUDE_CONFIG_DIR`).
 5. S-4 sandbox: can an implementer read `~/.turtle`, write outside the worktree, or reach `127.0.0.1`?
