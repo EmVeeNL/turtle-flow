@@ -84,6 +84,8 @@
 ### 6.1 Implementation status
 
 - The in-process harness is implemented (`turtle-scheduler/tests/crash.rs`) with an explicit `CrashPlan` instead of the `fail` crate: every boundary is a named `point()` call, the harness crashes at the Nth, restarts on the same database file and compares the result with a baseline run, including double crashes.
+- Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a real daemon process reaching the first approval. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
+- The pseudo-terminal approval flow and the real Claude Code run were exercised by hand and are not in CI.
 - Planned and not yet written: the `kill -9` subprocess harness (random times), and power-loss simulation.
 
 ## 7. Security Tests (TST-13)

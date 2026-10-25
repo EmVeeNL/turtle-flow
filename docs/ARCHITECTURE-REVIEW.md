@@ -63,15 +63,15 @@ Other risks tracked but not top-10: SQLite single-writer throughput (low likelih
 
 ## 4. Recommended Next Steps (prioritized)
 
-1. **Run spikes S-1 and S-2** (Claude Code & Codex headless contracts) and record fixture transcripts; amend [AGENT-PROTOCOL.md §9](AGENT-PROTOCOL.md#9-provider-specifics-and-verification-spikes) with verified facts.
+1. ✅ (S-1 mostly, S-2 error path only) **Run spikes S-1 and S-2** (Claude Code & Codex headless contracts) and record fixture transcripts; amend [AGENT-PROTOCOL.md §9](AGENT-PROTOCOL.md#9-provider-specifics-and-verification-spikes) with verified facts.
 2. **Run spike S-4** (sandbox efficacy on macOS and Linux) — results decide whether approval-bypass layer L3 holds and whether container isolation must move into the MVP.
 3. **Obtain legal guidance on OQ-01** (provider ToS for orchestrated use) before public beta; it may change defaults (API keys vs. subscriptions).
-4. **Create the Cargo workspace skeleton** with the 13 crates, dependency-direction check, CI (fmt, clippy, deny, tests on Linux/macOS).
-5. **Implement `turtle-domain` + `turtle-store` schema + hash-chained events + outbox** (migration `0001_init.sql` from [DATA-MODEL.md](DATA-MODEL.md)).
-6. **Implement `turtle-workflow::decide` with the full transition table and property tests** before any IO-heavy work; review the snapshot as a team.
-7. **Build the effect dispatcher, leases, recovery framework and failpoint harness** with the first effect (`CreateWorktree`) to establish the pattern.
-8. **Walking skeleton (M1)** with FakeAdapter: worktree → task → commit → gates → local squash delivery, end-to-end from CLI.
-9. **Claude Code adapter + ledger/reservations (M2)**, then **approvals, review, verification, Codex (M3)**.
+4. ✅ **Create the Cargo workspace skeleton** with the 13 crates, dependency-direction check, CI (fmt, clippy, deny, tests on Linux/macOS).
+5. ✅ **Implement `turtle-domain` + `turtle-store` schema + hash-chained events + outbox** (migration `0001_init.sql` from [DATA-MODEL.md](DATA-MODEL.md)).
+6. ✅ **Implement `turtle-workflow::decide` with the full transition table and property tests** before any IO-heavy work; review the snapshot as a team.
+7. ✅ **Build the effect dispatcher, leases, recovery framework and failpoint harness** with the first effect (`CreateWorktree`) to establish the pattern.
+8. ✅ **Walking skeleton (M1)** with FakeAdapter: worktree → task → commit → gates → local squash delivery, end-to-end from CLI.
+9. 🚧 (adapter done, ledger next) **Claude Code adapter + ledger/reservations (M2)**, then **approvals, review, verification, Codex (M3)**.
 10. **Recruit 5–10 design-partner developers** for dogfooding from M2; instrument (locally) time-to-first-job, approval latency and estimate coverage.
 11. Resolve OQ-02 (open-core vs. source-available) before the first public release; it affects repository structure and contributor policy.
 12. ~~Decide the final product and binary name (OQ-07).~~ Resolved: **Turtle Flow**, binary `turtle`. Remaining: logo and trademark check before public launch.

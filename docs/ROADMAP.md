@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Document | ROADMAP.md |
-| Status | Proposal; dates are not committed — durations are ranges under stated assumptions |
+| Status | Proposal; dates are not committed — durations are ranges under stated assumptions. Progress: M1 complete, M2 in progress ([MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-25)) |
 | Related | [MVP.md](MVP.md), [PRD.md §28](PRD.md#28-release-roadmap-product-view), [ADR-015](adr/ADR-015-future-server-deployment.md), [LICENSING.md](LICENSING.md) |
 
 ---
