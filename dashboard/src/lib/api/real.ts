@@ -1,14 +1,45 @@
 import type { DashboardAdapter, DashboardData, Job, Project, Approval, AgentRun } from './types';
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, { credentials: 'same-origin', headers: { 'Accept': 'application/json', ...(init?.headers ?? {}) }, ...init });
-  if (!response.ok) throw new Error(`API ${response.status}: ${path}`);
+
+export class ApiError extends Error {
+  constructor(public status: number, public code: string, message: string) { super(message); this.name = 'ApiError'; }
+}
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Accept', 'application/json');
+  if (init.method && init.method !== 'GET') {
+    headers.set('X-Turtle-Request', '1');
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(`/api/v1${path}`, { ...init, credentials: 'same-origin', headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as {error?: {code?: string; message?: string}} | null;
+    throw new ApiError(response.status, body?.error?.code ?? 'http_error', body?.error?.message ?? `API ${response.status}`);
+  }
   return response.json() as Promise<T>;
+}
+async function optional<T>(path: string): Promise<T | null> {
+  try { return await request<T>(path); }
+  catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
 }
 export const realAdapter: DashboardAdapter = {
   overview: () => request<DashboardData>('/overview'),
-  project: slug => request<Project | null>(`/projects/${encodeURIComponent(slug)}`),
-  job: key => request<Job | null>(`/jobs/${encodeURIComponent(key)}`),
-  approval: id => request<Approval | null>(`/approvals/${encodeURIComponent(id)}`),
-  run: id => request<AgentRun | null>(`/runs/${encodeURIComponent(id)}`),
-  decideApproval: (id, decision, subject_hash, comment) => request<{ok:boolean;error?:string}>(`/approvals/${encodeURIComponent(id)}/decisions`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({decision,subject_hash,comment}) })
+  project: slug => optional<Project>(`/projects/${encodeURIComponent(slug)}`),
+  job: key => optional<Job>(`/jobs/${encodeURIComponent(key)}?include=tasks,artifacts,approvals,usage,events`),
+  approval: id => optional<Approval>(`/approvals/${encodeURIComponent(id)}`),
+  run: id => optional<AgentRun>(`/runs/${encodeURIComponent(id)}`),
+  async decideApproval(id, decision, subject_hash, comment, acknowledged_flags = []) {
+    try {
+      return await request<{ok:boolean;error?:string}>(`/approvals/${encodeURIComponent(id)}/decisions`, { method:'POST', body:JSON.stringify({decision,subject_hash,comment,acknowledged_flags}) });
+    } catch (error) {
+      if (error instanceof ApiError && [401, 409, 503].includes(error.status)) return {ok:false,error:error.message};
+      throw error;
+    }
+  }
+};
+export const realCommands = {
+  job: (key: string, command: 'start' | 'pause' | 'resume' | 'cancel', expected_version: number, idempotency_key: string) =>
+    request<{ok:boolean;version:number;replayed:boolean}>(`/jobs/${encodeURIComponent(key)}/commands`, {method:'POST',body:JSON.stringify({command,expected_version,idempotency_key})}),
+  transcript: (id: string, offset = 0, limit = 100) =>
+    request<{lines:string[];next_offset:number|null;provenance:string}>(`/runs/${encodeURIComponent(id)}/transcript?offset=${offset}&limit=${limit}`),
+  usage: () => request<{jobs:unknown[]}>(`/analytics/usage`)
 };
