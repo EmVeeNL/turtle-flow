@@ -239,3 +239,61 @@ fn the_daemon_runs_a_job_to_its_first_approval_and_is_exclusive() {
     );
     assert!(w.ok(&["audit", "verify"]).starts_with("OK:"));
 }
+
+#[test]
+fn a_job_that_runs_out_of_budget_waits_and_resumes_when_the_budget_is_raised() {
+    let w = World::new();
+    w.add_project();
+    assert!(w.ok(&["budget", "show"]).contains("No budgets set"));
+    assert!(
+        w.fails(&["budget", "set", "lots", "--global"])
+            .contains("not a token amount")
+    );
+    assert!(
+        w.fails(&["budget", "set", "5k"])
+            .contains("say which budget")
+    );
+
+    let out = w.ok(&[
+        "job",
+        "create",
+        "Add a greeting",
+        "--budget",
+        "5k",
+        "--start",
+    ]);
+    assert!(out.contains("Budget: 5000 tokens"), "{out}");
+
+    let _daemon = Daemon(
+        w.command(&["daemon", "--agent", "demo"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
+    wait_for("the job to wait for budget", || {
+        w.ok(&["job", "show", "PAY-1"]).contains("out of budget")
+    });
+    let show = w.ok(&["budget", "show"]);
+    assert!(
+        show.contains("job PAY-1") && show.contains("Waiting for budget: PAY-1"),
+        "{show}"
+    );
+
+    let raised = w.ok(&["budget", "set", "5M", "--job", "PAY-1"]);
+    assert!(
+        raised.contains("PAY-1 was waiting for budget and will continue"),
+        "{raised}"
+    );
+    wait_for("the scope approval", || {
+        w.ok(&["job", "show", "PAY-1"])
+            .contains("state        scope_approval")
+    });
+    let show = w.ok(&["job", "show", "PAY-1"]);
+    assert!(
+        show.contains("tokens       0 measured, 1200 estimated over 1 runs"),
+        "{show}"
+    );
+    let audit = w.ok(&["audit", "verify"]);
+    assert!(audit.contains("ledger consistent"), "{audit}");
+}

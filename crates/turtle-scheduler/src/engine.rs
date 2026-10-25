@@ -195,6 +195,54 @@ impl<C: ContextProvider> Engine<C> {
         }
     }
 
+    /// Applies a hold command (such as `BudgetExhausted`) and returns the effect to the queue,
+    /// in one transaction. A command the workflow rejects (the hold is already there) is not
+    /// an error: the effect is simply deferred.
+    pub async fn defer_effect(
+        &self,
+        effect: &EffectRow,
+        instance: &str,
+        command: JobCommand,
+        reason: &str,
+    ) -> Result<Finished, EngineError> {
+        for _ in 0..MAX_CONFLICT_RETRIES {
+            let applied = match effect.job_id {
+                Some(job_id) => {
+                    let record = self.store.with(move |s| s.load_job(job_id)).await?;
+                    let cx = self.ctx.context(&record).await;
+                    decide(&record.job, &command, &Actor::Scheduler, &cx)
+                        .ok()
+                        .map(|d| (record.job.version, d))
+                }
+                None => None,
+            };
+            let (id, inst, why, cmd) = (
+                effect.id,
+                instance.to_owned(),
+                reason.to_owned(),
+                command.clone(),
+            );
+            let outcome = self
+                .store
+                .with(move |s| {
+                    s.transaction(|tx| {
+                        if let Some((version, decision)) = &applied {
+                            tx.apply_decision(*version, decision, &cmd, &Actor::Scheduler)?;
+                        }
+                        tx.defer_effect(id, &inst, &why)
+                    })
+                })
+                .await;
+            match outcome {
+                Ok(()) => return Ok(Finished::Requeued),
+                Err(StoreError::LeaseLost { .. }) => return Ok(Finished::LeaseLost),
+                Err(StoreError::VersionConflict { .. }) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(EngineError::TooManyConflicts)
+    }
+
     /// Records a failed attempt. A permanent failure (non-retryable, or attempts exhausted)
     /// also tells the workflow, in the same transaction, so the job blocks instead of waiting
     /// forever for an effect that will never finish.

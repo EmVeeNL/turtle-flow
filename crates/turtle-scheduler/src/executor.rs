@@ -25,7 +25,7 @@ use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
     Actor, ApprovalStatus, ArtifactKind, GateKind, Plan, ReviewOutcome, ReviewReport, Role, RunId,
-    Specification, VerificationDecision, VerificationReport,
+    Specification, UsageValue, VerificationDecision, VerificationReport,
 };
 use turtle_exec::{CommandSpec, ExitOutcome};
 use turtle_git::commit::Trailers;
@@ -33,7 +33,8 @@ use turtle_git::delivery::{DeliveryOutcome, SquashRequest};
 use turtle_git::worktree::WorktreeOutcome;
 use turtle_git::{GitError, Repo};
 use turtle_store::{
-    DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, ProjectRecord, RevisionRecord,
+    DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, NewRun, ProjectRecord,
+    ReservationOutcome, RevisionRecord, RunEnd,
 };
 use turtle_workflow::{Effect, JobCommand, ReviewVerdict, VerificationOutcome};
 
@@ -75,6 +76,31 @@ fn git_error(e: GitError) -> ExecError {
         GitError::CommitRefused(_) | GitError::Invalid(_) => fatal(e),
         other => retryable(other),
     }
+}
+
+/// What a run is expected to cost in tokens processed (cache reads and writes included), used
+/// to reserve budget before the run. A fixed cold-start guess per role, taken from the first
+/// real runs; the historical estimator (`docs/TOKEN-INTELLIGENCE.md` §7) replaces it.
+const fn cold_start_estimate(role: Role) -> u64 {
+    match role {
+        Role::Discovery | Role::Planner | Role::Verifier => 25_000,
+        Role::SpecWriter => 20_000,
+        Role::Implementer | Role::Fixer => 40_000,
+        Role::Reviewer => 30_000,
+        Role::Summarizer | Role::ReleaseNotes => 10_000,
+    }
+}
+
+const fn result_ok(end: RunEnd) -> bool {
+    matches!(end, RunEnd::Succeeded)
+}
+
+/// The snake_case name a domain enum serializes to.
+fn label<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 fn agent_error(e: AgentError) -> ExecError {
@@ -195,34 +221,103 @@ where
     }
 
     /// Runs one agent and records the run as an event. Structured output is parsed by callers.
+    /// Runs one agent role with its tokens accounted for: a run row, a reservation against
+    /// every budget that applies, the run itself, then settlement with what it really used.
+    ///
+    /// A hard budget that cannot cover the run holds the job (`BudgetExhausted`) and defers the
+    /// effect instead of failing it. A run that fails reports no usage, so its reservation is
+    /// released and the run is recorded as `unavailable` rather than guessed at.
     async fn run_agent(
         &self,
         req: AgentRequest,
         job: &JobRecord,
     ) -> Result<AgentOutput, ExecError> {
         let (run_id, role, provider) = (req.run_id, req.role, self.runner.name().to_owned());
-        let out = self.runner.run(&req).await.map_err(agent_error)?;
-        let (job_id, project_id, usage) = (job.job.id, job.project_id, out.usage);
-        self.store
+        let job_id = job.job.id;
+        let estimate = cold_start_estimate(role);
+        let new_run = NewRun {
+            id: run_id,
+            job_id,
+            role,
+            stage: label(&job.job.state),
+            provider: provider.clone(),
+            model: self.runner.model().to_owned(),
+            adapter_version: env!("CARGO_PKG_VERSION").to_owned(),
+        };
+        let reserved = self
+            .store
             .with(move |s| {
                 s.transaction(|tx| {
-                    tx.append_event(&NewEvent {
-                        project_id: Some(project_id),
-                        job_id: Some(job_id),
-                        kind: "run.completed".into(),
-                        payload: json!({
-                            "run": run_id.to_string(),
-                            "role": role,
-                            "provider": provider,
-                            "usage": usage,
-                        }),
-                        actor: Actor::AgentRun { id: run_id },
-                    })
+                    tx.begin_run(&new_run)?;
+                    let outcome = tx.reserve(run_id, job_id, estimate)?;
+                    if matches!(outcome, ReservationOutcome::Denied { .. }) {
+                        tx.cancel_run(run_id, "refused: no budget")?;
+                    }
+                    Ok(outcome)
                 })
             })
             .await
             .map_err(retryable)?;
-        Ok(out)
+        if let ReservationOutcome::Denied { budget, requested } = &reserved {
+            return Err(ExecError::Hold {
+                command: JobCommand::BudgetExhausted,
+                reason: format!(
+                    "the {} budget has {} tokens left; this run needs about {requested}",
+                    budget.scope.name(),
+                    budget.headroom()
+                ),
+            });
+        }
+
+        let result = self.runner.run(&req).await;
+        let (project_id, event_usage) = (
+            job.project_id,
+            result.as_ref().map_or(UsageValue::Unavailable, |o| o.usage),
+        );
+        let (end, error_text, usage) = match &result {
+            Ok(out) => (RunEnd::Succeeded, None, out.usage),
+            Err(e) => (
+                RunEnd::Failed {
+                    retryable: matches!(e, AgentError::Retryable(_)),
+                },
+                Some(e.to_string()),
+                UsageValue::Unavailable,
+            ),
+        };
+        let charge = match usage {
+            UsageValue::Reported { usage } | UsageValue::Estimated { usage } => Some(usage.total()),
+            // A successful run that reported nothing still used something; assume the estimate.
+            UsageValue::Unavailable if result.is_ok() => Some(estimate),
+            UsageValue::Unavailable => None,
+        };
+        self.store
+            .with(move |s| {
+                s.transaction(|tx| {
+                    tx.finish_run(run_id, end, error_text.as_deref(), usage)?;
+                    match charge {
+                        Some(tokens) => tx.settle(run_id, tokens)?,
+                        None => tx.release(run_id, "run failed; usage unknown")?,
+                    };
+                    if result_ok(end) {
+                        tx.append_event(&NewEvent {
+                            project_id: Some(project_id),
+                            job_id: Some(job_id),
+                            kind: "run.completed".into(),
+                            payload: json!({
+                                "run": run_id.to_string(),
+                                "role": role,
+                                "provider": provider,
+                                "usage": event_usage,
+                            }),
+                            actor: Actor::AgentRun { id: run_id },
+                        })?;
+                    }
+                    Ok(())
+                })
+            })
+            .await
+            .map_err(retryable)?;
+        result.map_err(agent_error)
     }
 
     /// Probe for agent-produced documents: a revision this very effect already stored (created
@@ -764,6 +859,13 @@ where
         gate: GateKind,
     ) -> Result<ExecOutcome, ExecError> {
         let id = effect.job_id.ok_or_else(|| fatal("effect without a job"))?;
+        if gate == GateKind::BudgetIncrease {
+            // A held job is resumed by raising its budget (`turtle budget set`), not by an
+            // approval row that nothing could decide yet.
+            return Ok(ExecOutcome::done(
+                json!({"note": "raise the budget to continue"}),
+            ));
+        }
         let (approval, created) = self.approvals.request(id, gate).await.map_err(retryable)?;
         Ok(ExecOutcome::done(json!({
             "approval": approval.id.to_string(),

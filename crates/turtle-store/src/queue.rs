@@ -225,6 +225,24 @@ impl Tx<'_> {
         }
     }
 
+    /// Puts a claimed effect back to `pending` without counting the attempt: the work was not
+    /// refused for being broken but held (for example, no budget). A hold on the job keeps it
+    /// from being claimed until the hold is lifted.
+    pub fn defer_effect(&mut self, id: EffectId, instance_id: &str, reason: &str) -> Result<()> {
+        let result = serde_json::json!({ "deferred": reason }).to_string();
+        let n = self.tx.execute(
+            "UPDATE effects SET status = 'pending', attempts = MAX(attempts - 1, 0), not_before = NULL,
+                    result = ?1, lease_instance_id = NULL, lease_expires_at = NULL
+             WHERE id = ?2 AND status = 'claimed' AND lease_instance_id = ?3",
+            params![result, id.to_string(), instance_id],
+        )?;
+        if n == 1 {
+            Ok(())
+        } else {
+            Err(StoreError::LeaseLost { effect: id })
+        }
+    }
+
     /// Records a failed attempt. With `retry_in` and attempts left the effect goes back to
     /// `pending` after the backoff; otherwise it is `failed` for good.
     pub fn fail_effect(
@@ -356,12 +374,16 @@ impl Tx<'_> {
                 report.effects_requeued += 1;
             }
         }
+        // Only one daemon runs per data directory, so any run still marked running died with
+        // the previous process. Its usage is unknown; its reservation goes back.
+        let runs_abandoned = self.abandon_open_runs()?;
         self.append_event(&NewEvent {
             project_id: None,
             job_id: None,
             kind: "daemon.recovered".into(),
             payload: serde_json::json!({
                 "instance": current_instance,
+                "runs_abandoned": runs_abandoned,
                 "instances_stopped": report.instances_stopped,
                 "effects_requeued": report.effects_requeued,
                 "effects_failed": report.effects_failed.len(),

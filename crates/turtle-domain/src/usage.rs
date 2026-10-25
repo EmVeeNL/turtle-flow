@@ -19,18 +19,20 @@ pub struct TokenUsage {
     pub cached_input_read: Option<u64>,
     pub cached_input_write: Option<u64>,
     pub output: u64,
+    /// Thinking tokens. A breakdown of `output`, not an addition to it: both providers count
+    /// them inside their output total (observed in Claude Code's `output_tokens_details`).
     pub reasoning: Option<u64>,
 }
 
 impl TokenUsage {
-    /// All tokens processed, including cache reads and writes.
+    /// All tokens processed, including cache reads and writes. Reasoning tokens are already
+    /// part of `output`, so they are not added again.
     #[must_use]
     pub fn total(&self) -> u64 {
         self.input
             + self.cached_input_read.unwrap_or(0)
             + self.cached_input_write.unwrap_or(0)
             + self.output
-            + self.reasoning.unwrap_or(0)
     }
 }
 
@@ -79,7 +81,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn total_counts_cache_and_reasoning() {
+    fn reasoning_is_part_of_output_and_never_counted_twice() {
+        let u = TokenUsage {
+            input: 4,
+            cached_input_read: Some(100),
+            cached_input_write: None,
+            output: 700,
+            reasoning: Some(240),
+        };
+        assert_eq!(u.total(), 804);
+    }
+
+    #[test]
+    fn total_counts_cache_reads_and_writes() {
         let u = TokenUsage {
             input: 10,
             cached_input_read: Some(10_362),

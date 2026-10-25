@@ -57,6 +57,11 @@ pub trait AgentRunner: Send + Sync + 'static {
         "agent"
     }
 
+    /// Model recorded with each run; `"default"` when the CLI picks its own.
+    fn model(&self) -> &str {
+        "default"
+    }
+
     fn run(
         &self,
         req: &AgentRequest,
