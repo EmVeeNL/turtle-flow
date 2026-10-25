@@ -45,13 +45,14 @@ Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#6
 
 What works:
 
-- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `approvals` and `approve` (interactive terminal only, you type the bound hash back), `budget show|set|estimate`, `audit verify`, `up|down|status`
+- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
 - `turtle up --agent claude` runs real jobs through Claude Code (headless, isolated, with structured output and a per-run spend cap); `--agent demo` runs a scripted placeholder agent so you can watch the workflow without spending tokens
-- a token ledger and estimator: every run is recorded with its usage as measured, estimated or unknown; reported usage trains role/complexity buckets; budgets per job, project (monthly) and globally are reserved before each run and settled after it, a job that runs out of budget waits for you (`turtle budget set`), and `turtle audit verify` checks the ledger as well as the event chain
+- a token ledger and estimator: reported failed-run usage is charged and closes its reservation, while estimator learning uses reported successful runs only; budgets per job, project (monthly) and globally are reserved before each run and settled after it
 - a deterministic, redacted repository context package for runs with a checkout or worktree, with a token-capped manifest stored as an artifact and linked from the run record
+- redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
 - the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
 
-What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning outside context packages, currency budgets, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported history, reservations retain the fixed per-role cold-start size.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, Codex integration, rate-limit handling, the HTTP API (the CLI reads the database directly), `turtle init`, the dashboard server, licensing. Without reported successful history, reservations retain the fixed per-role cold-start size.
 
 ### Development
 

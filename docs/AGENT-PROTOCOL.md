@@ -157,14 +157,14 @@ pub struct Invocation {
 ### 3.1 Run supervisor responsibilities (outside the adapter)
 
 1. Persist run `starting`, write PID file to scratch dir, spawn via `turtle-exec` (own process group, env allowlist, rlimits).
-2. Stream stdout/stderr into the transcript blob (append, fsync every 1 s) and into the parser.
+2. Capture stdout/stderr for the transcript and feed stdout into the parser. Persist the redacted stream as one content-addressed blob capped at 2 MiB; this initial implementation stores after process completion rather than fsyncing a streaming blob every second.
 3. Forward normalized events to the event broadcaster (throttled: text deltas coalesced to ≤ 10 msgs/s).
 4. Enforce limits: wall clock, output size, token hard limit (if cumulative usage known), cancellation requests.
 5. On exit: compute `changed_files` (`git status --porcelain=v2 -z`, `git diff --stat`), run git policy check, extract & validate structured output, submit `RunCompleted` command.
 
 ### 3.2 Cancellation semantics
 
-`cancel(run)` → SIGTERM to process group → wait 5 s → SIGKILL to process group → mark `cancelled` → transcript finalized → usage settled with best available data (reported partial usage if streamed, else estimated from transcript size; provenance recorded).
+`cancel(run)` → SIGTERM to process group → wait 5 s → SIGKILL to process group → mark `cancelled` → transcript finalized → usage settled with best available data. A final reported usage payload is charged even when the provider marks the result as an error; failed runs are not used for estimator observations. Usage not reported for a failed run remains unavailable and its reservation is released.
 
 ## 4. Capability Registry
 

@@ -97,7 +97,7 @@ Implemented in `turtle-store::ledger` and used by the executor: the budget scope
 
 - The unit is **tokens processed** (input, cache reads and writes, output). Currency budgets and the price table are not built.
 - The task scope is not used. Reservations use historical P90 × (1 + confidence buffer) when reported runs exist for the role/complexity bucket, and retain the original fixed per-role size for a cold start. The `ledger.reserved` event records the estimate range, confidence and bucket level.
-- A run that fails reports no usage, so its reservation is **released** and its usage record is `unavailable`: the ledger under-counts rather than invents a number. A successful run that reports nothing is charged the reservation.
+- A failed run with reported final usage is recorded as *reported* and charged at settlement; it does not train the estimator because an aborted run is not representative of a normal run. A failed run with no usage remains `unavailable` and releases its reservation. A successful run that reports nothing is charged the reservation.
 - The budget-increase approval of §6.3 is not wired in. A held job (`awaiting_budget`, no attempt used) is resumed by raising the budget (`turtle budget set`), which is recorded as a `limit_change` entry; the scheduler then lifts the hold, because `BudgetRestored` is a machine-only command.
 - `turtle budget estimate <job-key>` and `turtle job show` expose planned-job ranges and confidence after the plan exists. The report is advisory and is not yet attached to an approval or stored as a preflight artifact; a job has a budget only if the user sets one.
 

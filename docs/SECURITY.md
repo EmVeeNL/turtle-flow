@@ -139,7 +139,8 @@ Agent processes receive only: `PATH` (sanitized), `HOME`, `USER`, `LANG`/`LC_*`,
 
 - **Never-include names:** `.env*`, `*.pem`, `*.key`, `id_*`, common keystore extensions, `.npmrc`, `.pypirc`, credential-named files, and files inside a `secrets/` directory. Broader project-specific exclusions are planned.
 - **Scanner:** context v1 redacts private-key blocks, AWS access-key IDs, GitHub/Slack/Stripe/Google token prefixes, JWTs, and common API-key/secret/password/token assignments. This is a deliberate SEC-003 subset; entropy scanning and additional provider formats are not implemented.
-- **Where applied:** repository context packages before send. Gate output, transcripts, job exports, and diffs do not yet use this redactor.
+- **Where applied:** repository context packages before send; runner transcripts before blob storage (2 MiB maximum after redaction, with a truncation marker); gate output before it is included in stored gate artifacts; permission-denial tool input and persisted run error messages. `turtle runs transcript` reads only the stored redacted stream. `--raw` prints the stored stream, which remains redacted.
+- **Not yet covered:** diffs, job exports, arbitrary provider diagnostics outside persisted run errors, and secrets in formats outside the listed scanner patterns. This is pattern redaction, not a guarantee that all sensitive data is removed.
 - **Redaction format:** stable non-reversible `[REDACTED:kind]` markers.
 - Limitation: agents can still read secrets from disk themselves when sandbox permits reads; the never-include list prevents *Turtle Flow* from sending them, and the sandbox/tool policy is the control for agent reads (spike S-4).
 

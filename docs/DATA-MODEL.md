@@ -245,6 +245,8 @@ CREATE INDEX ix_usage_job ON usage_records(job_id);
 
 **Implementation status (M2, 2026-10-25):** `context_manifest_rev` is populated before each agent process starts when repository context is available. Its referenced `context_manifest` artifact revision contains the redacted package item list, exclusions, size estimates, and package hash.
 
+Run transcripts are stored as redacted content-addressed blobs and linked through `agent_runs.transcript_blob`. The current runner captures at process completion and caps the redacted stream at 2 MiB; denied actions are separate `run.policy_denied` audit events.
+
 ### 3.4 Budgets, reservations, ledger, estimation
 
 ```sql
