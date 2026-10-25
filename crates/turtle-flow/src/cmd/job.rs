@@ -343,6 +343,15 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             }
         );
     }
+    if let Some(report) = crate::cmd::budget::preflight_for_job(rt, &job).await? {
+        println!(
+            "  estimate     {}–{} tokens (most likely {}, {} confidence)",
+            report.estimate.p10,
+            report.estimate.p90,
+            report.estimate.p50,
+            report.estimate.confidence.label()
+        );
+    }
     if job
         .job
         .holds

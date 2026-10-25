@@ -1,10 +1,14 @@
-//! `turtle budget show | set`: token budgets for jobs, projects and Turtle Flow as a whole.
+//! `turtle budget show | set | estimate`: budgets and planned-job estimates.
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
-use turtle_domain::Actor;
+use turtle_domain::{Actor, ArtifactKind, Plan, Role, Specification};
 use turtle_scheduler::lift_budget_hold;
 use turtle_store::{BudgetRecord, BudgetScope};
+use turtle_tokens::{
+    BucketPath, BudgetInput, Decision, Preflight, cold_start_estimate, estimate, preflight,
+    score_complexity,
+};
 use turtle_workflow::Hold;
 
 use crate::cmd::job;
@@ -14,6 +18,8 @@ use crate::runtime::Runtime;
 pub enum BudgetCommand {
     /// Show budgets and what has been spent against them.
     Show,
+    /// Estimate a planned job's token range and budget decision.
+    Estimate { job_key: String },
     /// Set or change a token limit. Raising the limit of a held job resumes it.
     Set {
         /// Limit in tokens processed, e.g. `400k` or `20M`.
@@ -63,6 +69,35 @@ fn tokens(n: u64) -> String {
 pub async fn run(rt: &Runtime, command: BudgetCommand) -> Result<()> {
     match command {
         BudgetCommand::Show => show(rt).await,
+        BudgetCommand::Estimate { job_key } => {
+            let job = job::find(rt, &job_key).await?;
+            if let Some(report) = preflight_for_job(rt, &job).await? {
+                let decision = match report.decision {
+                    Decision::Allow => "allow",
+                    Decision::Warn => "warn",
+                    Decision::RequireApproval => "needs approval",
+                    Decision::Deny => "deny",
+                };
+                println!(
+                    "{}: {} (complexity {:?}, score {})",
+                    job.key, decision, report.complexity.class, report.complexity.score
+                );
+                println!(
+                    "  estimate     {}–{} tokens (most likely {})",
+                    report.estimate.p10, report.estimate.p90, report.estimate.p50
+                );
+                println!("  confidence   {}", report.estimate.confidence.label());
+                println!("  envelope     {} tokens", report.envelope_tokens);
+                println!("  reason       {}", report.reasons.join("; "));
+                println!("  scope        planned runs only; route and retry costs unverified");
+            } else {
+                println!(
+                    "{}: estimate unknown until a specification and plan exist.",
+                    job.key
+                );
+            }
+            Ok(())
+        }
         BudgetCommand::Set {
             tokens: amount,
             job: job_key,
@@ -126,6 +161,76 @@ pub async fn run(rt: &Runtime, command: BudgetCommand) -> Result<()> {
             Ok(())
         }
     }
+}
+
+pub async fn preflight_for_job(
+    rt: &Runtime,
+    job: &turtle_store::JobRecord,
+) -> Result<Option<Preflight>> {
+    let id = job.job.id;
+    let (spec_rev, plan_rev) = rt
+        .store
+        .with(move |s| {
+            Ok::<_, turtle_store::StoreError>((
+                s.latest_revision(id, ArtifactKind::Specification)?,
+                s.latest_revision(id, ArtifactKind::Plan)?,
+            ))
+        })
+        .await?;
+    let (Some(spec_rev), Some(plan_rev)) = (spec_rev, plan_rev) else {
+        return Ok(None);
+    };
+    let spec: Specification = serde_json::from_slice(&rt.blobs.get(&spec_rev.sha256)?)?;
+    let plan: Plan = serde_json::from_slice(&rt.blobs.get(&plan_rev.sha256)?)?;
+    let mut roles = vec![Role::SpecWriter, Role::Planner];
+    if job.job.profile.discovery_enabled(job.job.complexity) {
+        roles.insert(0, Role::Discovery);
+    }
+    roles.extend(std::iter::repeat_n(Role::Implementer, plan.tasks.len()));
+    roles.extend([Role::Reviewer, Role::Verifier]);
+    let mut runs = Vec::with_capacity(roles.len());
+    for role in roles {
+        let complexity = match role {
+            Role::SpecWriter => turtle_domain::Complexity::XS,
+            Role::Implementer | Role::Fixer => score_complexity(&spec, Some(&plan)).class,
+            _ => score_complexity(&spec, None).class,
+        };
+        let path = BucketPath::new(&job.project_id.to_string(), role, complexity, "", "");
+        let buckets = rt.store.with(move |s| s.estimation_buckets(&path)).await?;
+        // The CLI has no provisional route. Only the route-independent role/class level is safe.
+        let broad = [None, None, None, buckets[3].clone()];
+        runs.push((role, estimate(&broad, cold_start_estimate(role))));
+    }
+    let budgets = rt
+        .store
+        .with(move |s| s.transaction(|tx| tx.budgets_for_job(id)))
+        .await?;
+    let hard_headroom = budgets
+        .iter()
+        .filter(|b| b.hard)
+        .map(turtle_store::BudgetRecord::headroom)
+        .min();
+    let soft_headroom = budgets
+        .iter()
+        .filter(|b| !b.hard)
+        .map(turtle_store::BudgetRecord::headroom)
+        .min();
+    let project_remaining = budgets
+        .iter()
+        .find(|b| matches!(b.scope, turtle_store::BudgetScope::Project(_)))
+        .map(turtle_store::BudgetRecord::headroom);
+    Ok(Some(preflight(
+        &spec,
+        &plan,
+        &runs,
+        &BudgetInput {
+            hard_headroom,
+            soft_headroom,
+            project_remaining,
+            max_without_approval: None,
+            provider_available: true,
+        },
+    )))
 }
 
 async fn show(rt: &Runtime) -> Result<()> {
