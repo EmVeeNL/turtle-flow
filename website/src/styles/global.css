@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/jetbrains-mono/index.css';
+@import '@fontsource-variable/space-grotesk/index.css';
 
 @font-face {
   font-family: 'Asap Sharp';
@@ -22,6 +23,7 @@
   --color-muted: #adbfdc;
   --color-ok: #3fb950;
   --font-sans: 'Asap Sharp', system-ui, sans-serif;
+  --font-display: 'Space Grotesk Variable', 'Asap Sharp', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
 }
 
@@ -81,6 +83,12 @@
   }
   ::-webkit-scrollbar-track {
     background: var(--color-ink);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
   }
 
   h1 {

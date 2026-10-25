@@ -1,6 +1,6 @@
 # turtle-flow.com
 
-Coming-soon page for Turtle Flow. Astro (static), Tailwind CSS v4, GSAP, pnpm. Same typeface (Asap Sharp, JetBrains Mono for hashes) and icon set (Fluent via `astro-icon`, resolved at build time) as the dashboard; colors come from the logo.
+Coming-soon page for Turtle Flow. Astro (static), Tailwind CSS v4, GSAP, pnpm. Typefaces: Space Grotesk for headings (product owner's choice for the site), Asap Sharp for body text (as in the dashboard), JetBrains Mono for hashes; same icon set (Fluent via `astro-icon`, resolved at build time) as the dashboard; colors come from the logo.
 
 ```sh
 cd website
