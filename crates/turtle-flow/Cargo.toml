@@ -17,9 +17,19 @@ workspace = true
 
 [dependencies]
 turtle-agents = { workspace = true }
+turtle-artifacts = { workspace = true }
+turtle-domain = { workspace = true }
 turtle-git = { workspace = true }
+turtle-policy = { workspace = true }
+turtle-scheduler = { workspace = true }
+turtle-store = { workspace = true }
+turtle-workflow = { workspace = true }
+rusqlite = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

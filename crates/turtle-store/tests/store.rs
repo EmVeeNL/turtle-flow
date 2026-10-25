@@ -364,3 +364,66 @@ fn database_file_is_private_and_reopens_with_same_identity() {
     let s = Store::open(&path, Arc::new(StepClock::default())).expect("reopen");
     assert_eq!(s.installation_id().expect("id"), id);
 }
+
+#[test]
+fn projects_and_jobs_can_be_looked_up_by_slug_and_key() {
+    let mut store = store();
+    let first = seed(&mut store);
+    let second = store
+        .transaction(|tx| {
+            tx.create_job(
+                &NewJob {
+                    project_id: first.project_id,
+                    title: "Second".into(),
+                    description: String::new(),
+                    job_type: JobType::Bugfix,
+                    priority: Priority::Normal,
+                    profile: Profile::fast(),
+                },
+                &Actor::local_user(),
+            )
+        })
+        .expect("second job");
+
+    let projects = store.list_projects().expect("list");
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].default_profile, "standard");
+    assert_eq!(
+        store.project_by_slug("payments-api").expect("slug").id,
+        first.project_id
+    );
+    assert!(matches!(
+        store.project_by_slug("nope"),
+        Err(StoreError::NotFound(_))
+    ));
+
+    assert_eq!(
+        store
+            .find_job(&"API-1".parse().expect("key"))
+            .expect("find")
+            .job
+            .id,
+        first.job.id
+    );
+    assert_eq!(
+        store
+            .find_job(&"API-2".parse().expect("key"))
+            .expect("find")
+            .job
+            .id,
+        second.job.id
+    );
+    assert!(matches!(
+        store.find_job(&"API-3".parse().expect("key")),
+        Err(StoreError::NotFound(_))
+    ));
+
+    let newest_first: Vec<_> = store
+        .list_jobs(Some(first.project_id))
+        .expect("jobs")
+        .into_iter()
+        .map(|j| j.job.id)
+        .collect();
+    assert_eq!(newest_first, vec![second.job.id, first.job.id]);
+    assert_eq!(store.list_jobs(None).expect("all").len(), 2);
+}

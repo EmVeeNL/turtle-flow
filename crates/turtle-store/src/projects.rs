@@ -15,6 +15,7 @@ pub struct ProjectRecord {
     pub name: String,
     pub repo_path: String,
     pub default_branch: String,
+    pub default_profile: String,
     pub settings: ProjectSettings,
 }
 
@@ -46,7 +47,7 @@ pub struct DeliveryRecord {
 pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result<ProjectRecord> {
     let row = conn
         .query_row(
-            "SELECT slug, key_prefix, name, repo_path, default_branch, settings_json
+            "SELECT slug, key_prefix, name, repo_path, default_branch, settings_json, default_profile
              FROM projects WHERE id = ?1",
             [id.to_string()],
             |r| {
@@ -57,6 +58,7 @@ pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
                     r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
                 ))
             },
         )
@@ -69,6 +71,7 @@ pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
         name: row.2,
         repo_path: row.3,
         default_branch: row.4,
+        default_profile: row.6,
         settings: serde_json::from_str(&row.5)?,
     })
 }

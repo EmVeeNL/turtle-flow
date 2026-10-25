@@ -124,10 +124,10 @@ Milestones are dependency-ordered. Durations are ranges under the staffing assum
 | Milestone | State |
 |---|---|
 | M0 spikes | S-1 partly and S-2 error path done; S-3 to S-7 not started |
-| M1 walking skeleton | **Library-complete.** A whole job runs from backlog to delivered with real Git worktrees, gates, hash-bound approvals, fix loops, policy enforcement and crash recovery, driven by a scripted fake agent (`turtle-scheduler/tests/e2e.rs`). **Missing for M1: the `turtle` CLI and daemon** (next PR). |
+| M1 walking skeleton | **Complete.** A whole job runs from backlog to delivered with real Git worktrees, gates, hash-bound approvals, fix loops, policy enforcement and crash recovery, driven by a scripted fake agent (`turtle-scheduler/tests/e2e.rs`). The `turtle` CLI drives it: `project add/list/show`, `job create/list/show/events/watch/start/pause/resume/cancel`, `approvals`, `approve` (interactive terminal only, hash typed back), `audit verify`, and `up/down/status/daemon` (`--demo-agent` uses the scripted agent; no real adapter until M2). The CLI opens the database directly until the HTTP API exists (M4). |
 | M2 first real agent | not started (Claude Code adapter, token ledger) |
 
-Known M1 simplifications, all deliberate and listed so they are not forgotten: gates run per job, not per task; tasks are tracked by commit trailers rather than the `tasks` table; agent runs are recorded as events rather than in `agent_runs`; no token ledger yet; delivery is local squash only (no pull requests); a delivery parked for a checked-out branch still completes the job; hard pause cannot yet stop a running agent; automatic scope approval is off.
+Known M1 simplifications, all deliberate and listed so they are not forgotten: no `turtle init`, job-file front matter or interactive approval queue yet (`turtle approvals` lists, `turtle approve <id>` decides); `job cancel` has no `--delete-branch`; the daemon is started per data directory with an OS file lock rather than a socket; gates run per job, not per task; tasks are tracked by commit trailers rather than the `tasks` table; agent runs are recorded as events rather than in `agent_runs`; no token ledger yet; delivery is local squash only (no pull requests); a delivery parked for a checked-out branch still completes the job; hard pause cannot yet stop a running agent; automatic scope approval is off.
 
 ## 7. Technical Dependencies
 
