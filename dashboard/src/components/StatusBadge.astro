@@ -1,0 +1,4 @@
+---
+const { label, tone='muted' } = Astro.props as {label:string;tone?:'success'|'warning'|'danger'|'ai'|'accent'|'muted'|'unknown'};
+---
+<span class={`pill ${tone}`}>{label}</span>

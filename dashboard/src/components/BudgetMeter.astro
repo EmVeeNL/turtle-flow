@@ -1,0 +1,11 @@
+---
+import type { Budget } from '../lib/api/types';
+import { budgetPercent, formatTokens } from '../lib/format';
+const { budget, compact=false }=Astro.props as {budget:Budget;compact?:boolean};
+const p=budgetPercent(budget);
+---
+<div class="budget-meter" aria-label={`${formatTokens(budget.settled)} settled, ${formatTokens(budget.reserved)} reserved of ${formatTokens(budget.limit)} ${budget.kind} budget`}>
+  <div class="meter-label"><span><slot /></span><span>{formatTokens(budget.settled)} + {formatTokens(budget.reserved)} reserved / {formatTokens(budget.limit)} · {budget.kind}</span></div>
+  <svg class="meter" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="meter-track" x="0" y="0" width="100" height="8" rx="4"/><rect class={p.exceeded?'meter-over':'meter-settled'} x="0" y="0" width={p.settled} height="8" rx="4"/><rect class="meter-reserved" x={p.settled} y="0" width={p.reserved} height="8"/></svg>
+  {!compact && <small class="muted">{Math.round(p.remaining)}% headroom</small>}
+</div>

@@ -1,0 +1,10 @@
+---
+import type { TokenEstimate } from '../lib/api/types';
+import { estimatePositions, formatTokens } from '../lib/format';
+const {estimate}=Astro.props as {estimate:TokenEstimate};
+const p=estimatePositions(estimate);
+---
+<div aria-label={`Estimated ${formatTokens(estimate.p10)} to ${formatTokens(estimate.p90)}, median ${formatTokens(estimate.p50)}, ${estimate.confidence} confidence${estimate.actual==null?'':`, measured ${formatTokens(estimate.actual)}`}`}>
+ <svg class="estimate" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true"><line class="estimate-track" x1="0" y1="16" x2="100" y2="16"/><rect class="estimate-range" x={p.start} y="9" width={p.width} height="14" rx="3"/><line class="estimate-mid" x1={p.midpoint} y1="5" x2={p.midpoint} y2="27"/>{p.actual!=null && <rect class="estimate-actual" x={Math.max(0,p.actual-1)} y="7" width="2" height="18" rx="1"/>}</svg>
+ <div class="meter-label"><span>≈{formatTokens(estimate.p10)}–{formatTokens(estimate.p90)} · {estimate.confidence} confidence</span><span>{estimate.actual==null?'Actual unknown':`${formatTokens(estimate.actual)} measured`}</span></div>
+</div>

@@ -5,6 +5,7 @@ import icon from 'astro-icon';
 
 export default defineConfig({
   output: 'static',
+  devToolbar: { enabled: false },
   markdown: { syntaxHighlight: 'prism' },
   trailingSlash: 'never',
   integrations: [preact(), icon()],

@@ -1,5 +1,5 @@
 import type { DashboardAdapter, DashboardData, Approval } from './types';
-const sha = (middle: string) => `sha256:${middle.padEnd(64, '0')}`;
+const sha = (middle: string) => `sha256:${middle}${'c4e119b3a5d7f0e2'.repeat(4).slice(0, 60-middle.length)}${middle.slice(-4)}`;
 export const mockData: DashboardData = {
   projects: [
     {id:'p1',slug:'payments-api',key_prefix:'API',name:'Payments API',description:'Payment and billing services',repo_path:'~/code/payments-api',default_branch:'main',default_profile:'standard',status:'active',active_jobs:3,pending_approvals:1,gate_pass_rate:98,last_delivery:'2h ago',health:'healthy',budget:{id:'b1',settled:6400000,reserved:400000,limit:25000000,kind:'hard'}},

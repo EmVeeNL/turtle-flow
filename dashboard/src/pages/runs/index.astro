@@ -1,0 +1,7 @@
+---
+import AppShell from '../../layouts/AppShell.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+import {mockData} from '../../lib/api/mock';
+import {formatUsage,formatMoney} from '../../lib/format';
+---
+<AppShell title="Runs" section="Runs"><div class="page-title"><div><h1>Agent runs</h1><p>Every agent execution, its context, output, and cost</p></div><button class="btn" data-csv="runs-table">Export CSV</button></div><div class="toolbar"><input class="input" data-table-filter="runs-table" aria-label="Search runs" placeholder="Search runs…"/><select class="select" data-table-select="runs-table" aria-label="Filter run status"><option>All statuses</option><option>Running</option><option>Succeeded</option><option>Failed</option></select></div><div class="card table-scroll"><table class="data-table" id="runs-table"><thead><tr><th>Run</th><th>Job</th><th>Role</th><th>Provider / model</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>{mockData.runs.map(run=><tr><td><a class="mono" href={`/runs/view?id=${run.id}`}>{run.id}</a></td><td>{mockData.jobs.find(j=>j.id===run.job_id)?.key}</td><td>{run.role}</td><td>{run.provider} / {run.model}</td><td><StatusBadge label={run.status} tone={run.status==='running'?'ai':'success'}/></td><td>{run.duration}</td><td class="mono">{formatUsage(run.usage)}</td><td>{formatMoney(run.cost_usd)}</td></tr>)}</tbody></table></div><script is:inline src="/tables.js"></script></AppShell>
