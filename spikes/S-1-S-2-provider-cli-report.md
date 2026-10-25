@@ -101,6 +101,16 @@ Assumption **A-03 is false for Claude Code with subscription auth.** Window util
 - There is no structured retry field. The retry time is a **local wall-clock string** ("3:36 PM") with no date or timezone. Parse it as the next occurrence in local time and fall back to the backoff policy if parsing fails.
 - Exit code was 1. Classify as `RateLimited` from the message pattern `hit your usage limit`.
 
+### 2.3 Success path (recorded 2026-10-25, Codex 0.163.0, model `gpt-6-luna`, effort low)
+
+Fixtures: `fixtures/codex/02-readonly-structured.ndjson` (read-only, `--output-schema`, schema in `02-discovery-schema.json`) and `03-implementer-commit-attempt.ndjson` (workspace-write; the prompt asks the agent to commit). Invocation used: `codex exec --json --ephemeral --ignore-user-config -m <model> -c model_reasoning_effort=low -s <read-only|workspace-write> [--output-schema FILE] -C <dir> -` with the prompt on stdin.
+
+- **Event stream:** `thread.started`, `turn.started`, `item.started`/`item.completed` (types `agent_message` and `command_execution` with `command`, `aggregated_output`, `exit_code`, `status`), `turn.completed`. File edits made through Codex's patch tool did **not** appear as items in run 03: the Git post-run snapshot, not the stream, is the source of truth for what changed.
+- **Structured output** has no separate field: the final `agent_message` `text` is the JSON document (valid against the schema). Take the last `agent_message` of the turn.
+- **Usage** is in `turn.completed.usage`: `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`. In run 02, `input_tokens` 52,515 with `cached_input_tokens` 34,432: **`input_tokens` includes the cached reads** (OpenAI convention), unlike Claude Code, whose `input_tokens` excludes them. Adding the two would double count. Reasoning tokens are part of `output_tokens`.
+- **Sandbox:** in `workspace-write` the agent could create `HELLO.md` but `git add` failed (`Git could not create .git/index.lock`, exit 128): the Codex sandbox protects `.git`. The agent reported this honestly. Defense in depth for "agents never commit", though the factory-side policy check still decides.
+- Auth came from `CODEX_HOME` even with `--ignore-user-config`; no `--approve-for-me` was needed for these runs.
+
 ## 3. Required documentation updates
 
 Applied in this commit: AGENT-PROTOCOL §9 (verified facts), PRD A-03 (falsified for Claude Code), TOKEN-INTELLIGENCE §14 (quota visibility).
