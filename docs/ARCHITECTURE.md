@@ -189,7 +189,7 @@ flowchart TB
 | `turtle-git` | Typed wrapper around Git CLI (sanitized config, hooks disabled), worktree lifecycle, commit with trailers, `merge-tree` conflict probe, recovery probes | domain, exec | store |
 | `turtle-exec` | Spawning processes: env allowlist, process groups, timeouts, output caps, rlimits, optional container wrapper | domain, `tokio::process`, `nix` | everything above |
 | `turtle-artifacts` | Content-addressed blob store, artifact revision service, JSON Schema validation, Markdown rendering of structured artifacts | domain | store (gets a repository trait) |
-| `turtle-store` | rusqlite repositories, migrations, event log hash chain, effect outbox, ledger tables. Persists `turtle-workflow` decisions | domain, policy, workflow (data types only: aggregate, decision, effects, events) | workflow *logic* (`decide` is never called from the store) |
+| `turtle-store` | rusqlite repositories, migrations, event log hash chain, effect outbox, ledger tables. Persists `turtle-workflow` decisions | domain, policy, workflow (data types only: aggregate, decision, effects, events), tokens (pure estimator types persisted in `estimation_buckets` and the reservation event) | workflow *logic* (`decide` is never called from the store) |
 | `turtle-api` | Axum router, auth (token/cookie, Host/Origin checks), SSE, OpenAPI (`utoipa`), static dashboard assets via `rust-embed` | domain, workflow, policy, store | agents, git (only through commands) |
 | `turtle-flow` | Binary crate (executable `turtle`): Clap commands; `daemon` subcommand is the composition root wiring all crates; terminal rendering | all | — |
 
