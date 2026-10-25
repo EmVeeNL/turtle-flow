@@ -19,8 +19,8 @@ pub use artifacts::{NewRevision, RevisionRecord};
 pub use clock::{Clock, ManualClock, StepClock, SystemClock};
 pub use error::{Result, StoreError};
 pub use ledger::{
-    BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRun, ReservationOutcome, RunEnd,
-    RunRecord,
+    BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRoutingDecision, NewRun,
+    ReservationOutcome, RunEnd, RunRecord,
 };
 pub use projects::{DeliveryRecord, DeliveryStatus, ProjectRecord};
 pub use queue::{ClaimParams, EffectFate, RecoveryReport};

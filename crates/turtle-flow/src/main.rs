@@ -13,7 +13,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::cmd::budget::BudgetCommand;
-use crate::cmd::daemon::{AgentChoice, ClaudeOptions};
+use crate::cmd::daemon::DaemonOptions;
 use crate::cmd::job::JobCommandLine;
 use crate::cmd::project::ProjectCommand;
 use crate::paths::Home;
@@ -38,6 +38,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect available provider CLIs and verified capabilities.
+    #[command(subcommand)]
+    Providers(ProvidersCommand),
     /// Start the background daemon that runs jobs.
     Up {
         #[command(flatten)]
@@ -86,9 +89,12 @@ enum Command {
 
 #[derive(Debug, clap::Args)]
 struct AgentArgs {
-    /// Which agent runs the jobs.
-    #[arg(long, value_enum)]
-    agent: Option<AgentChoice>,
+    /// Ordered provider list: claude, codex, or both (demo runs alone).
+    #[arg(long)]
+    agent: Option<String>,
+    /// Per-role priority, e.g. reviewer=codex. Repeat for more roles.
+    #[arg(long = "role-agent")]
+    role_agent: Vec<String>,
     /// Claude model (default: the CLI's own default).
     #[arg(long)]
     claude_model: Option<String>,
@@ -98,16 +104,32 @@ struct AgentArgs {
     /// Spend cap per Claude run in API-equivalent USD (default 3.00).
     #[arg(long)]
     max_run_usd: Option<f64>,
+    /// Codex model (default: the CLI's own default).
+    #[arg(long)]
+    codex_model: Option<String>,
+    /// Codex reasoning effort: low, medium, high, xhigh or max.
+    #[arg(long)]
+    codex_effort: Option<String>,
 }
 
 impl AgentArgs {
-    fn options(&self) -> ClaudeOptions {
-        ClaudeOptions {
-            model: self.claude_model.clone(),
-            effort: self.claude_effort.clone(),
+    fn options(&self) -> DaemonOptions {
+        DaemonOptions {
+            agent: self.agent.clone(),
+            role_agent: self.role_agent.clone(),
+            claude_model: self.claude_model.clone(),
+            claude_effort: self.claude_effort.clone(),
             max_run_usd: self.max_run_usd,
+            codex_model: self.codex_model.clone(),
+            codex_effort: self.codex_effort.clone(),
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum ProvidersCommand {
+    /// Show installation, login, compatibility and verified capabilities.
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -132,16 +154,41 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     if let Command::Doctor { json } = command {
         return Ok(doctor::run(json).await);
     }
+    if let Command::Providers(ProvidersCommand::List) = command {
+        let registry = turtle_agents::CapabilityRegistry::discover().await;
+        for provider in turtle_agents::ProviderId::ALL {
+            let caps = registry.get(provider);
+            let version = caps
+                .info
+                .version
+                .as_ref()
+                .map_or_else(|| "unknown".into(), ToString::to_string);
+            println!(
+                "{}: version={}, compatibility={:?}, login={:?}, schema={}, quota={}, sandbox={}, effort={}; {}",
+                provider.as_str(),
+                version,
+                caps.info.compat,
+                caps.auth,
+                caps.native_json_schema,
+                caps.quota_visibility,
+                caps.sandbox_modes.join(","),
+                caps.effort_levels.join(","),
+                caps.info.detail
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let home = Home::locate()?;
     let ok = ExitCode::SUCCESS;
     match command {
         Command::Doctor { .. } => unreachable!("handled above"),
-        Command::Up { agent } => cmd::daemon::up(&home, agent.agent, &agent.options()).await?,
+        Command::Providers(_) => unreachable!("handled above"),
+        Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home),
         Command::Daemon { agent } => {
             let options = agent.options();
-            cmd::daemon::run(home, agent.agent, options).await?;
+            cmd::daemon::run(home, options).await?;
         }
         Command::Project(c) => cmd::project::run(&Runtime::open(home)?, c).await?,
         Command::Job(c) => cmd::job::run(&Runtime::open(home)?, c).await?,
