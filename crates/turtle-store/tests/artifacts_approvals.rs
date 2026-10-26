@@ -73,6 +73,16 @@ fn binding(job: &JobRecord, gate: GateKind, spec_hash: Sha256, rev: u32) -> Appr
 fn direct_database_edits_cannot_forge_or_retarget_approvals() {
     let dir = tempfile::tempdir().expect("temporary database directory");
     let path = dir.path().join("turtle.db");
+    // Keep this persistence test independent of a developer or CI machine's OS keychain.
+    // A fresh database has a fresh installation ID, so Store will load this protected fallback.
+    let key_path = path.with_extension("approval-key");
+    std::fs::write(&key_path, "11".repeat(32)).expect("seed approval key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect approval key");
+    }
     let mut s = Store::open(&path, Arc::new(StepClock::default())).expect("open");
     let job = s
         .transaction(|tx| {

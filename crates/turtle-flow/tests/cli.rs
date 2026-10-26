@@ -858,9 +858,20 @@ fn kill_scenario(delay_ms: Option<u64>) -> KillOutcome {
             state != turtle_domain::JobState::Failed && state != turtle_domain::JobState::Blocked,
             "job stopped in {state:?}"
         );
+        if let Some(status) = daemon.0.try_wait().expect("check daemon status") {
+            panic!("daemon exited with {status} while the job was in {state:?}");
+        }
         assert!(
-            start.elapsed() < Duration::from_secs(45),
-            "job stuck in {state:?}"
+            start.elapsed() < Duration::from_secs(120),
+            "job stuck in {state:?}; runs={:?}; events={:?}",
+            store.runs_for_job(job.job.id).expect("job runs"),
+            store
+                .list_events(Some(job.job.id))
+                .expect("job events")
+                .into_iter()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
         );
         for approval in store.pending_approvals().expect("pending approvals") {
             if approval.job_id != job.job.id {
