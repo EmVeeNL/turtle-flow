@@ -6,7 +6,7 @@
 //!
 //! | effect | probe |
 //! |---|---|
-//! | `create_worktree` | worktree exists on the expected branch at the recorded base |
+//! | `create_worktree` | worktree exists at the recorded base; a revert job also probes its factory revert commit |
 //! | `dispatch_ready_tasks` | a commit with the task's `Turtle-Task` trailer exists |
 //! | `run_gates`, `run_verification` | none needed: re-running is harmless |
 //! | `request_approval` | an identical pending approval exists |
@@ -82,6 +82,14 @@ fn redacted_transcript(raw: &str) -> String {
 
 fn redact_gate_output(raw: &str) -> String {
     turtle_context::redact(raw).0
+}
+
+fn revert_commit(description: &str) -> Option<String> {
+    let commit = description
+        .lines()
+        .find_map(|line| line.strip_prefix("Turtle-Revert-Commit: "))?;
+    (matches!(commit.len(), 40 | 64) && commit.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| commit.to_ascii_lowercase())
 }
 
 pub struct FactoryExecutor<R, C, G> {
@@ -1070,6 +1078,35 @@ where
             }
         }
         std::fs::write(&marker, b"").map_err(retryable)?;
+        if job
+            .description
+            .lines()
+            .any(|line| line.starts_with("Turtle-Revert-Commit:"))
+        {
+            let commit = revert_commit(&job.description)
+                .ok_or_else(|| fatal("revert job is missing a valid Turtle-Revert-Commit hash"))?;
+            if !repo.is_ancestor(&commit, &base).await.map_err(git_error)? {
+                return Err(fatal(format!(
+                    "revert commit {commit} is not part of the recorded base {base}"
+                )));
+            }
+            let revert_marker = format!("This reverts commit {commit}.");
+            let existing = wt
+                .run(&[
+                    "log",
+                    "--format=%B",
+                    "--fixed-strings",
+                    "--grep",
+                    &revert_marker,
+                ])
+                .await
+                .map_err(git_error)?;
+            if existing.trim().is_empty() {
+                wt.run(&["revert", "--no-edit", &commit])
+                    .await
+                    .map_err(git_error)?;
+            }
+        }
         Ok(ExecOutcome::done(json!({
             "path": layout.path,
             "branch": layout.spec.branch,
@@ -1591,6 +1628,41 @@ where
             .map_err(git_error)?;
         Ok(ExecOutcome::done(json!({"removed": layout.path})))
     }
+
+    async fn delete_job_branch(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
+        let (job, project) = self.load(effect).await?;
+        let branch = {
+            let prefix = project
+                .settings
+                .branch_prefix
+                .as_deref()
+                .unwrap_or(&self.cfg.default_branch_prefix);
+            turtle_git::names::job_branch_name(prefix, &job.key.to_string(), &job.title)
+                .map_err(git_error)?
+        };
+        let repo = self.cfg.repo(&project);
+        if repo.branch_tip(&branch).await.map_err(git_error)?.is_none() {
+            return Ok(ExecOutcome::done(
+                json!({"deleted": false, "branch": branch}),
+            ));
+        }
+        if repo
+            .checked_out_branches()
+            .await
+            .map_err(git_error)?
+            .contains(&branch)
+        {
+            return Err(fatal(format!(
+                "refusing to delete checked-out job branch `{branch}`"
+            )));
+        }
+        repo.run(&["branch", "-D", &branch])
+            .await
+            .map_err(git_error)?;
+        Ok(ExecOutcome::done(
+            json!({"deleted": true, "branch": branch}),
+        ))
+    }
 }
 
 struct GateRun {
@@ -1618,6 +1690,7 @@ where
             Effect::RunVerification => self.run_verification(effect).await,
             Effect::Deliver => self.deliver(effect).await,
             Effect::CleanupWorktree => self.cleanup_worktree(effect).await,
+            Effect::DeleteJobBranch => self.delete_job_branch(effect).await,
             Effect::SupersedePendingApprovals => {
                 let id = effect.job_id.ok_or_else(|| fatal("effect without a job"))?;
                 let n = self
@@ -1647,5 +1720,15 @@ mod transcript_tests {
         assert!(stored.contains("[REDACTED:"));
         let gate = redact_gate_output(&format!("test output: {secret}"));
         assert!(!gate.contains("ghp_123456789012345678901234567890123456"));
+    }
+
+    #[test]
+    fn revert_metadata_accepts_only_a_full_git_object_id() {
+        assert_eq!(
+            revert_commit(&format!("Turtle-Revert-Commit: {}", "A".repeat(40))),
+            Some("a".repeat(40))
+        );
+        assert_eq!(revert_commit("Turtle-Revert-Commit: abc123"), None);
+        assert_eq!(revert_commit("Turtle-Revert-Commit: --help"), None);
     }
 }

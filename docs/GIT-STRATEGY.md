@@ -6,6 +6,10 @@
 | Status | Proposed baseline; decision in [ADR-009](adr/ADR-009-git-worktree-isolation.md) |
 | Related | [WORKFLOW.md §10](WORKFLOW.md#10-recovery-behavior), [SECURITY.md §6.6](SECURITY.md#66-git-hardening-sec-014) |
 
+### Implementation status (2026-10-26)
+
+Job worktree paths are derived from the same `Layout` used by the scheduler and can be printed with `turtle job worktree <key>`. `turtle job cancel --delete-branch` opts into removing the isolated worktree and its generated branch. `turtle job revert <key>` creates a chore job bound to its recorded delivery commit. After normal scope and plan approvals, the scheduler's idempotent worktree effect applies `git revert --no-edit` in the new job worktree; the generated revert message is the completion probe if the effect is retried after a crash. Review, verification, acceptance and delivery continue through the ordinary workflow.
+
 ---
 
 ## 1. Principles

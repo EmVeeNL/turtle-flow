@@ -9,8 +9,11 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use tempfile::TempDir;
 use turtle_artifacts::BlobStore;
-use turtle_domain::{Actor, ArtifactKind, JobKey, Role, RunId, TokenUsage, UsageValue};
-use turtle_store::{NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
+use turtle_domain::{
+    Actor, ArtifactKind, GateKind, JobKey, JobType, Role, RunId, Sha256, TokenUsage, UsageValue,
+};
+use turtle_policy::ApprovalBinding;
+use turtle_store::{DeliveryStatus, NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
 
 struct World {
     _dir: TempDir,
@@ -83,6 +86,171 @@ fn dashboard_refuses_without_tty() {
     let world = World::new();
     let error = world.fails(&["dashboard"]);
     assert!(error.contains("interactive terminal"), "{error}");
+}
+
+#[test]
+fn init_refuses_non_interactive_without_creating_turtle_home() {
+    let w = World::new();
+    let error = w.fails(&["init"]);
+    assert!(
+        error.contains("interactive") && error.contains("will not guess"),
+        "{error}"
+    );
+    assert!(
+        !w.home.exists(),
+        "init must not create its data directory before confirmation"
+    );
+}
+
+#[test]
+fn job_export_is_repeatable_and_worktree_path_is_printed_without_creation() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Export this job"]);
+    let mut store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("open store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job record");
+    let bytes = br#"{"summary":"approved scope","note":"password=hunter2"}"#;
+    let blobs = BlobStore::open(w.home.join("blobs")).expect("blob store");
+    let artifact_hash = blobs.put(bytes).expect("store artifact");
+    let binding = ApprovalBinding::new(GateKind::Scope, job.job.id, Sha256::from_bytes([7; 32]), 1);
+    let subject_hash = binding.subject_hash();
+    store
+        .transaction(|tx| {
+            tx.add_revision(&NewRevision {
+                job_id: job.job.id,
+                kind: ArtifactKind::Specification,
+                sha256: artifact_hash,
+                size_bytes: bytes.len() as u64,
+                media_type: "application/json".into(),
+                schema_id: None,
+                author: Actor::local_user(),
+            })?;
+            tx.request_approval(&binding)?;
+            Ok(())
+        })
+        .expect("store export fixtures");
+    drop(store);
+    let first = w.ok(&["export", "job", "PAY-1", "--format", "json"]);
+    let second = w.ok(&["export", "job", "PAY-1", "--format", "json"]);
+    assert_eq!(first, second);
+    let exported: serde_json::Value = serde_json::from_str(&first).expect("valid export JSON");
+    assert_eq!(exported["job"]["key"], "PAY-1");
+    assert_eq!(exported["job"]["title"], "Export this job");
+    assert_eq!(
+        exported["artifacts"][0]["content"]["summary"],
+        "approved scope"
+    );
+    assert_eq!(
+        exported["artifacts"][0]["content"]["note"],
+        "password=[REDACTED:password]"
+    );
+    assert_eq!(exported["artifacts"][0]["content_redacted"], true);
+    assert_eq!(
+        exported["artifacts"][0]["sha256"],
+        artifact_hash.to_string()
+    );
+    assert_eq!(
+        exported["approvals"][0]["subject_hash"],
+        subject_hash.to_string()
+    );
+    let path = w.ok(&["job", "worktree", "PAY-1"]);
+    assert!(path.trim().ends_with("PAY-1"), "{path}");
+    assert!(
+        !Path::new(path.trim()).exists(),
+        "printing the path must not create the worktree"
+    );
+}
+
+#[test]
+fn cancel_can_delete_a_job_branch() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Cancel this job"]);
+    git(&w.repo, &["branch", "turtle/PAY-1-cancel-this-job"]);
+    let output = w.ok(&["job", "cancel", "PAY-1", "--delete-branch"]);
+    assert!(
+        output.contains("Cancelled PAY-1") && output.contains("deletion are queued"),
+        "{output}"
+    );
+    let _daemon = Daemon(
+        w.command(&["daemon", "--agent", "demo"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
+    wait_for("job branch deletion", || {
+        !Command::new("git")
+            .arg("-C")
+            .arg(&w.repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/turtle/PAY-1-cancel-this-job",
+            ])
+            .status()
+            .expect("check branch ref")
+            .success()
+    });
+    assert!(w.ok(&["audit", "verify"]).starts_with("OK:"));
+}
+
+#[test]
+fn revert_creates_a_chore_job_bound_to_the_recorded_delivery_commit() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Original delivered job"]);
+    let mut store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("open store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job record");
+    let binding = ApprovalBinding::new(
+        GateKind::Acceptance,
+        job.job.id,
+        Sha256::from_bytes([9; 32]),
+        1,
+    );
+    let commit = "a".repeat(40);
+    store
+        .transaction(|tx| {
+            let (approval, _) = tx.request_approval(&binding)?;
+            tx.record_delivery(
+                job.job.id,
+                "local_squash",
+                "main",
+                &commit,
+                DeliveryStatus::Delivered,
+                approval.id,
+            )
+        })
+        .expect("record fixture delivery");
+    store
+        .raw_connection()
+        .execute(
+            "UPDATE jobs SET state='done' WHERE id=?1",
+            [job.job.id.to_string()],
+        )
+        .expect("mark fixture job delivered");
+    drop(store);
+
+    let output = w.ok(&["job", "revert", "PAY-1"]);
+    assert!(
+        output.contains("PAY-2") && output.contains(&commit),
+        "{output}"
+    );
+    let store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("reopen store");
+    let revert_key: JobKey = "PAY-2".parse().expect("revert key");
+    let revert = store.find_job(&revert_key).expect("revert job");
+    assert_eq!(revert.job_type, JobType::Chore);
+    assert!(
+        revert
+            .description
+            .starts_with(&format!("Turtle-Revert-Commit: {commit}"))
+    );
 }
 
 fn http(port: u16, method: &str, path: &str, headers: &str, body: &str) -> String {
