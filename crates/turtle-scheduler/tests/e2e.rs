@@ -426,6 +426,33 @@ async fn advance_target<R: AgentRunner>(env: &Env<R>, path: &str, contents: &str
     tip
 }
 
+async fn configure_revert_job(env: &Env<FakeRunner>) -> String {
+    let repo = env.main_repo();
+    std::fs::write(env.repo_path.join("revert-me.txt"), "delivered content\n")
+        .expect("write delivered file");
+    repo.run(&["add", "-A"])
+        .await
+        .expect("stage delivered file");
+    repo.run(&["commit", "-q", "-m", "delivered change"])
+        .await
+        .expect("commit delivered file");
+    let commit = repo.head().await.expect("delivered commit");
+    repo.run(&["branch", "release", "main"])
+        .await
+        .expect("release branch");
+    let db = Store::open(&env.db, Arc::new(SystemClock)).expect("open store");
+    db.raw_connection()
+        .execute(
+            "UPDATE jobs SET type='chore', description=?1 WHERE id=?2",
+            [
+                format!("Turtle-Revert-Commit: {commit}"),
+                env.job.to_string(),
+            ],
+        )
+        .expect("configure revert job");
+    commit
+}
+
 #[tokio::test]
 async fn clean_target_move_refreshes_and_invalidates_acceptance() {
     let env = Env::new(
@@ -1752,10 +1779,7 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
             settings(Some(NEEDS_FEATURE_FILE), Some("release")),
         )
         .await;
-        env.main_repo()
-            .run(&["branch", "release", "main"])
-            .await
-            .expect("release branch");
+        let revert_commit = configure_revert_job(&env).await;
         let mut plans = crashes.iter().map(|&n| CrashPlan::at(n));
         let first = plans.next().unwrap_or_else(CrashPlan::never);
         let (mut b, _) = env.boot(first.clone()).await;
@@ -1826,6 +1850,22 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
         );
 
         let repo = env.main_repo();
+        let reverts = repo
+            .run(&[
+                "log",
+                "--format=%H",
+                "--fixed-strings",
+                "--grep",
+                &format!("This reverts commit {revert_commit}."),
+                "--all",
+            ])
+            .await
+            .expect("find factory revert commit");
+        assert_eq!(
+            reverts.lines().count(),
+            1,
+            "revert commit applied exactly once"
+        );
         // Exactly one delivery commit and one commit per task: no duplicated side effects.
         let deliveries = repo
             .run(&[
@@ -1900,10 +1940,7 @@ async fn the_end_to_end_run_survives_a_crash_at_any_step_boundary() {
             settings(Some(NEEDS_FEATURE_FILE), Some("release")),
         )
         .await;
-        env.main_repo()
-            .run(&["branch", "release", "main"])
-            .await
-            .expect("release branch");
+        configure_revert_job(&env).await;
         let plan = CrashPlan::never();
         let (b, _) = env.boot(plan.clone()).await;
         drive(&env, &b, &ApprovalPolicy::approve_all()).await;

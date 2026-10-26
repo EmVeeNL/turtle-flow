@@ -10,6 +10,8 @@
 
 The live adapter now uses these screen structures for the data available from the daemon: overview, projects/detail, jobs/detail, runs/detail, approvals/review, token analytics, and providers. Project creation, job creation/start, and budget updates are available in full sessions; the server rejects writes from read-only sessions. Resources display the designed empty state; settings and license are read-only. Currency analytics, time-series charts, provider configuration/discovery, resource ingestion, policy provenance, and license entitlements remain unavailable and are shown as unknown or unavailable rather than inferred. The mock adapter remains the visual reference and retains its illustrative data.
 
+Journey 1's terminal onboarding path is implemented by `turtle init`: environment checks reuse `doctor`, commands are proposed for common stacks, and project registration happens only after confirmation. See [QUICKSTART.md](QUICKSTART.md).
+
 ---
 
 ## 1. UX Principles

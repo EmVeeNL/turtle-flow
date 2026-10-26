@@ -305,12 +305,18 @@ async fn revert(rt: &Runtime, key: &str) -> Result<()> {
     if original.job.state != JobState::Done {
         bail!("job {key} is not delivered; only completed delivery commits can be reverted");
     }
+    if delivery.status != "delivered" {
+        bail!(
+            "job {key} has not completed delivery yet; current delivery status is `{}`",
+            delivery.status
+        );
+    }
     let project = rt.store.with(move |s| s.project_of_job(id)).await?;
     let new = NewJob {
         project_id: project.id,
         title: format!("Revert {}", original.title),
         description: format!(
-            "Prepare a follow-up change to revert delivery commit {commit}. Review, verify, approve, and deliver it through the normal workflow."
+            "Turtle-Revert-Commit: {commit}\n\nPrepare a follow-up change to revert this delivery commit. Review, verify, approve, and deliver it through the normal workflow."
         ),
         job_type: JobType::Chore,
         priority: Priority::Normal,

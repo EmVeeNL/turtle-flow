@@ -10,10 +10,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use turtle_artifacts::BlobStore;
 use turtle_domain::{
-    Actor, ArtifactKind, GateKind, JobKey, Role, RunId, Sha256, TokenUsage, UsageValue,
+    Actor, ArtifactKind, GateKind, JobKey, JobType, Role, RunId, Sha256, TokenUsage, UsageValue,
 };
 use turtle_policy::ApprovalBinding;
-use turtle_store::{NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
+use turtle_store::{DeliveryStatus, NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
 
 struct World {
     _dir: TempDir,
@@ -196,6 +196,61 @@ fn cancel_can_delete_a_job_branch() {
             .success()
     });
     assert!(w.ok(&["audit", "verify"]).starts_with("OK:"));
+}
+
+#[test]
+fn revert_creates_a_chore_job_bound_to_the_recorded_delivery_commit() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Original delivered job"]);
+    let mut store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("open store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job record");
+    let binding = ApprovalBinding::new(
+        GateKind::Acceptance,
+        job.job.id,
+        Sha256::from_bytes([9; 32]),
+        1,
+    );
+    let commit = "a".repeat(40);
+    store
+        .transaction(|tx| {
+            let (approval, _) = tx.request_approval(&binding)?;
+            tx.record_delivery(
+                job.job.id,
+                "local_squash",
+                "main",
+                &commit,
+                DeliveryStatus::Delivered,
+                approval.id,
+            )
+        })
+        .expect("record fixture delivery");
+    store
+        .raw_connection()
+        .execute(
+            "UPDATE jobs SET state='done' WHERE id=?1",
+            [job.job.id.to_string()],
+        )
+        .expect("mark fixture job delivered");
+    drop(store);
+
+    let output = w.ok(&["job", "revert", "PAY-1"]);
+    assert!(
+        output.contains("PAY-2") && output.contains(&commit),
+        "{output}"
+    );
+    let store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("reopen store");
+    let revert_key: JobKey = "PAY-2".parse().expect("revert key");
+    let revert = store.find_job(&revert_key).expect("revert job");
+    assert_eq!(revert.job_type, JobType::Chore);
+    assert!(
+        revert
+            .description
+            .starts_with(&format!("Turtle-Revert-Commit: {commit}"))
+    );
 }
 
 fn http(port: u16, method: &str, path: &str, headers: &str, body: &str) -> String {

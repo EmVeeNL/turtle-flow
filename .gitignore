@@ -11,6 +11,8 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+__pycache__/
+*.py[cod]
 
 # Archives / OS / editors
 *.zip

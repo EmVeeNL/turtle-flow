@@ -345,7 +345,7 @@ turtle dashboard                    # opens browser with one-time login code
 | Concern | Approach | Reference |
 |---|---|---|
 | Error handling | `thiserror` typed errors per crate; `anyhow` only in the binary; errors carry a stable `code` (e.g. `E_GIT_CONFLICT`) used in API responses and UI | [AGENT-PROTOCOL.md §7](AGENT-PROTOCOL.md#7-error-taxonomy-and-handling) |
-| Configuration | TOML; layered: built-in defaults → `~/.turtle/config.toml` → repo `.turtle/project.toml` (tighten-only for security) → DB overrides → CLI flags | [examples/Turtle Flow-config.toml](examples/Turtle Flow-config.toml), [examples/project-config.toml](examples/project-config.toml) |
+| Configuration | TOML; layered: built-in defaults → `~/.turtle/config.toml` → repo `.turtle/project.toml` (tighten-only for security) → DB overrides → CLI flags | [turtle-config.toml](examples/turtle-config.toml), [project-config.toml](examples/project-config.toml) |
 | Observability | `tracing` with JSON subscriber; spans per job/task/run; events table as audit; metrics derived from DB | [ADR-016](adr/ADR-016-observability-auditability.md) |
 | Time & IDs | ULIDs (sortable), UTC timestamps, monotonic clock for timeouts | [DOMAIN-MODEL.md](DOMAIN-MODEL.md) |
 | Security | Loopback-only, token auth, sandboxed runs, env scrubbing, hooks disabled, redaction, hash-chained audit | [SECURITY.md](SECURITY.md) |
