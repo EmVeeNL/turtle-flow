@@ -40,22 +40,23 @@ turtle approvals
 | M0 spikes | Claude Code headless contract and Codex structured/read-only and workspace-write success paths recorded. S-3 to S-7 not started. |
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
 | M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
-| M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. Strict delivery and PR delivery remain. |
+| M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. |
+| M5 core | Strict discovery, plan approval and review limits; conflict probe/refresh/resolution; optional GitHub PR delivery with merge sync. Static gates and other M5 work remain. |
 | M4 | In progress: loopback API, dashboard login, live events, approval and job commands, project/job creation, budget updates, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. Live routes now use the mock screen structures for available project, job, run, approval, analytics and provider data; settings and license remain read-only, while resources show the unavailable empty state. Costs, time-series, provider discovery and other unexposed values remain unknown. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 
 What works:
 
-- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
+- `turtle doctor`, `project add|list|show|delivery`, `job create|list|show|events|watch|start|pause|resume|resolve|sync|cancel`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
 - `turtle up --agent claude|codex` runs real jobs through an isolated CLI; `--agent claude,codex` uses ordered fallbacks and independent review where the profile asks for it. `--role-agent reviewer=codex` changes a role's priority. `--agent demo` runs a scripted placeholder without spending tokens
 - a token ledger and estimator: reported failed-run usage is charged and closes its reservation, while estimator learning uses reported successful runs only; budgets per job, project (monthly) and globally are reserved before each run and settled after it
 - provider rate-limit holds with reset-aware deferral and failover, plus Claude quota-window utilization snapshots shown as percentages of provider windows
 - a deterministic, redacted repository context package for runs with a checkout or worktree, with a token-capped manifest stored as an artifact and linked from the run record
 - redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
-- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
+- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits, local squash and optional GitHub PR delivery, content-addressed artifacts and hash-bound approvals
 
-What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, strict-profile delivery semantics, PR delivery, the Unix-socket CLI API transport (the CLI reads the database directly), `turtle init`, licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, per-task strict gates, automatic remote-base fetching or PR merge polling, the Unix-socket CLI API transport (the CLI reads the database directly), `turtle init`, licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
 
 Local dashboard quick start:
 
