@@ -45,7 +45,7 @@ turtle approvals
 | M4 | In progress: loopback API, dashboard login, live events, approval and job commands, project/job creation, budget updates, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. Live routes now use the mock screen structures for available project, job, run, approval, analytics and provider data; settings and license remain read-only, while resources show the unavailable empty state. Costs, time-series, provider discovery and other unexposed values remain unknown. |
 | M6 onboarding/package | `turtle init`, deterministic job exports, job worktree path, scheduler-owned cancellation cleanup and branch deletion, factory-owned approval-gated `git revert`, Clap shell completions, install/docs, and checksum-verified release archives for macOS and Linux are implemented. Release workflow creates a draft release; code signing and notarization remain manual. |
 
-Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
+Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-26). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 
 What works:
 

@@ -4,8 +4,8 @@
 **CLI binary:** `turtle` (Cargo package `turtle-flow`; see OQ-07 in [PRD.md §26](PRD.md#26-open-questions))
 **Repository:** `github.com/EmVeeNL/turtle-flow` (this package lives in `docs/`)
 **Package version:** 0.1.0 (design baseline; implementation under way)
-**Design date:** 2026-10-24 · **Last progress update:** 2026-10-25
-**Status:** Design baseline, now being implemented: milestone M1 is complete and M2 is in progress (see [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-25)). Where code and these documents disagree, the amendment notes in the ADRs and §6.1 record why.
+**Design date:** 2026-10-24 · **Last progress update:** 2026-10-26
+**Status:** The feature stack through PR #26 is integrated into `main` by [PR #27](https://github.com/EmVeeNL/turtle-flow/pull/27), merged with CI passing on 2026-10-26. Beta acceptance gaps are in [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26) and [BETA-READINESS.md](BETA-READINESS.md). PR merge polling is implemented by commit `5140996` and awaits integration. Where code and these documents disagree, the amendment notes in the ADRs and §6.1 record why.
 
 Turtle Flow is a local-first, CLI-first, Rust-based orchestrator that drives locally installed AI coding agents (initially Claude Code CLI and OpenAI Codex CLI) through a supervised, auditable software-delivery workflow: specification, human scope approval, planning, isolated implementation in Git worktrees, deterministic build/test gates, AI review, verification, human acceptance, and controlled delivery. A Rust core owns all state, policy, budgets, approvals and scheduling; AI agents are workers that produce artifacts.
 
