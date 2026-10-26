@@ -1,0 +1,11 @@
+[package]
+name = "ref-rust-cli"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[[bin]]
+name = "word-count"
+path = "src/main.rs"
+
