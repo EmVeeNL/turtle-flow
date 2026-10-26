@@ -12,14 +12,14 @@ This checklist records the remaining release evidence for Turtle Flow 0.3. Featu
 - [ ] Implement per-task strict gates and the estimate-envelope plan approval threshold.
 - [ ] Add PDF resource extraction with content limits, redaction, and negative/security tests.
 - [ ] Add remote-base fetching with retry/recovery coverage.
-- [ ] Complete the security fixture matrix in [TESTING-STRATEGY.md §7](TESTING-STRATEGY.md#7-security-tests-tst-13), especially prompt-injection and resource-limit cases.
+- [ ] Complete the remaining security fixture matrix in [TESTING-STRATEGY.md §7](TESTING-STRATEGY.md#7-security-tests-tst-13). PR #29 added prompt-injection, unauthorized-commit/push, and context-budget regressions; broader injection and resource-limit coverage remains.
 - [ ] Close the remaining recovery gaps: a sleeping/streaming provider subprocess fixture and power-loss simulation, or document explicitly approved exclusions.
 
-PR merge polling is implemented by commit `5140996` (`turtle job sync --wait` with a bounded polling interval). That commit still needs to be integrated into `main` before beta release.
+PR merge polling (`turtle job sync --wait` with a bounded polling interval) and the focused PR #29 security regressions are integrated into `main`.
 
 ## Live end-to-end acceptance (AC-01)
 
-The reference projects listed in [TESTING-STRATEGY.md §9.2](TESTING-STRATEGY.md#92-live-e2e-reference-repositories) must be present and reproducible. Run at least one `standard` job with Claude Code and one with Codex on **each** repository (six jobs total), with a capped budget and only the two expected human approvals. Preserve for each run the commit, CLI/provider version, configuration, budget, job export, test result, and delivery outcome. Do not treat FakeAdapter CI or synthetic provider tests as evidence for this criterion.
+The templates, benchmark prompts, hidden acceptance checks, preparation script, and provider preflight in [the live E2E checklist](LIVE-E2E-CHECKLIST.md) are integrated into `main` by PR #30. Run at least one `standard` job with Claude Code and one with Codex on **each** repository (six jobs total), with a per-job token ceiling and only the two expected human approvals. Preserve for each run the commit, CLI/provider version, configuration, budget, job export, test result, and delivery outcome. Do not treat FakeAdapter CI or synthetic provider tests as evidence for this criterion.
 
 - [ ] `fixtures/ref-rust-cli`: live standard job and hidden acceptance tests.
 - [ ] `fixtures/ref-ts-api`: live standard job and hidden acceptance tests.
