@@ -3,6 +3,8 @@
 
 mod cmd;
 mod doctor;
+mod export;
+mod init;
 mod paths;
 mod runs;
 mod runtime;
@@ -38,6 +40,18 @@ enum Command {
         /// Print machine-readable JSON instead of a table.
         #[arg(long)]
         json: bool,
+    },
+    /// Set up Turtle Flow for the current repository (interactive terminal required).
+    Init,
+    /// Export a job's audit package.
+    Export {
+        #[command(subcommand)]
+        command: ExportCommand,
+    },
+    /// Generate shell completion scripts.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
     },
     /// Inspect available provider CLIs and verified capabilities.
     #[command(subcommand)]
@@ -166,6 +180,16 @@ enum AuditCommand {
     Verify,
 }
 
+#[derive(Debug, Subcommand)]
+enum ExportCommand {
+    /// Export specification, plan, approvals, runs, reports and delivery.
+    Job {
+        key: String,
+        #[arg(long, value_enum, default_value = "md")]
+        format: export::Format,
+    },
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -182,10 +206,26 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     if let Command::Doctor { json } = command {
         return Ok(doctor::run(json).await);
     }
+    if matches!(&command, Command::Init) {
+        init::run().await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Command::Completions { shell } = &command {
+        use clap::CommandFactory;
+        let mut cli = Cli::command();
+        clap_complete::generate(*shell, &mut cli, "turtle", &mut std::io::stdout());
+        return Ok(ExitCode::SUCCESS);
+    }
     let home = Home::locate()?;
     let ok = ExitCode::SUCCESS;
     match command {
         Command::Doctor { .. } => unreachable!("handled above"),
+        Command::Init | Command::Completions { .. } => unreachable!("handled above"),
+        Command::Export {
+            command: ExportCommand::Job { key, format },
+        } => {
+            export::run(&Runtime::open(home)?, &key, format).await?;
+        }
         Command::Providers(ProvidersCommand::List) => {
             providers_list(&home).await?;
         }

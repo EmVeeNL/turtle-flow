@@ -1,4 +1,4 @@
-//! `turtle job create | list | show | events | watch | start | pause | resume | cancel`.
+//! `turtle job create | list | show | events | watch | start | pause | resume | worktree | revert | cancel`.
 
 use std::time::Duration;
 
@@ -88,8 +88,19 @@ pub enum JobCommandLine {
     Sync {
         key: String,
     },
+    /// Print the deterministic worktree path for a job.
+    Worktree {
+        key: String,
+    },
+    /// Create an approval-gated follow-up job for a delivered change's revert.
+    Revert {
+        key: String,
+    },
     Cancel {
         key: String,
+        /// Also remove the isolated worktree and delete the Turtle Flow job branch.
+        #[arg(long)]
+        delete_branch: bool,
     },
 }
 
@@ -225,8 +236,96 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
         JobCommandLine::Resolve { key, target } => resolve(rt, &key, target.as_deref()).await,
         JobCommandLine::Sync { key } => sync(rt, &key).await,
-        JobCommandLine::Cancel { key } => act(rt, &key, JobCommand::Cancel, "Cancelled").await,
+        JobCommandLine::Worktree { key } => worktree_path(rt, &key).await,
+        JobCommandLine::Revert { key } => revert(rt, &key).await,
+        JobCommandLine::Cancel { key, delete_branch } => cancel(rt, &key, delete_branch).await,
     }
+}
+
+async fn worktree_path(rt: &Runtime, key: &str) -> Result<()> {
+    let job = find(rt, key).await?;
+    let id = job.job.id;
+    let project = rt.store.with(move |s| s.project_of_job(id)).await?;
+    let base = match job.base_commit.as_ref() {
+        Some(base) => base.clone(),
+        None => {
+            let repo = rt.cfg.repo(&project);
+            let branch = project
+                .settings
+                .target_branch
+                .as_deref()
+                .unwrap_or(&project.default_branch);
+            repo.branch_tip(branch)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("target branch `{branch}` does not exist"))?
+        }
+    };
+    let layout = Layout::new(&rt.cfg, &project, &job, &base)?;
+    println!("{}", layout.path.display());
+    Ok(())
+}
+
+async fn cancel(rt: &Runtime, key: &str, delete_branch: bool) -> Result<()> {
+    let job = find(rt, key).await?;
+    if job.job.state.is_terminal() {
+        bail!(
+            "cannot cancel {}; job is already {}",
+            job.key,
+            label(&job.job.state)
+        );
+    }
+    let command = if delete_branch {
+        JobCommand::CancelAndDeleteBranch
+    } else {
+        JobCommand::Cancel
+    };
+    let after = submit(rt, &job, command).await?;
+    if delete_branch {
+        println!(
+            "Cancelled {}: worktree cleanup and job-branch deletion are queued for the daemon.",
+            after.key
+        );
+    } else {
+        println!("Cancelled {}: now {}.", after.key, label(&after.job.state));
+    }
+    Ok(())
+}
+
+async fn revert(rt: &Runtime, key: &str) -> Result<()> {
+    let original = find(rt, key).await?;
+    let id = original.job.id;
+    let delivery = rt
+        .store
+        .with(move |s| s.delivery(id))
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("job {key} has no delivered commit to revert"))?;
+    let commit = delivery
+        .result_commit
+        .ok_or_else(|| anyhow::anyhow!("job {key} has no recorded delivery commit"))?;
+    if original.job.state != JobState::Done {
+        bail!("job {key} is not delivered; only completed delivery commits can be reverted");
+    }
+    let project = rt.store.with(move |s| s.project_of_job(id)).await?;
+    let new = NewJob {
+        project_id: project.id,
+        title: format!("Revert {}", original.title),
+        description: format!(
+            "Prepare a follow-up change to revert delivery commit {commit}. Review, verify, approve, and deliver it through the normal workflow."
+        ),
+        job_type: JobType::Chore,
+        priority: Priority::Normal,
+        profile: builtin_profile(&project.default_profile)?,
+    };
+    let created = rt
+        .store
+        .with(move |s| s.transaction(|tx| tx.create_job(&new, &Actor::local_user())))
+        .await?;
+    println!(
+        "Created {} as an approval-gated revert job for {commit}.",
+        created.key
+    );
+    println!("Start it with: turtle job start {}", created.key);
+    Ok(())
 }
 
 async fn resolve(rt: &Runtime, key: &str, target: Option<&str>) -> Result<()> {

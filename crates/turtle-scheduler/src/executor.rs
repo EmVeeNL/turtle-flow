@@ -1591,6 +1591,41 @@ where
             .map_err(git_error)?;
         Ok(ExecOutcome::done(json!({"removed": layout.path})))
     }
+
+    async fn delete_job_branch(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
+        let (job, project) = self.load(effect).await?;
+        let branch = {
+            let prefix = project
+                .settings
+                .branch_prefix
+                .as_deref()
+                .unwrap_or(&self.cfg.default_branch_prefix);
+            turtle_git::names::job_branch_name(prefix, &job.key.to_string(), &job.title)
+                .map_err(git_error)?
+        };
+        let repo = self.cfg.repo(&project);
+        if repo.branch_tip(&branch).await.map_err(git_error)?.is_none() {
+            return Ok(ExecOutcome::done(
+                json!({"deleted": false, "branch": branch}),
+            ));
+        }
+        if repo
+            .checked_out_branches()
+            .await
+            .map_err(git_error)?
+            .contains(&branch)
+        {
+            return Err(fatal(format!(
+                "refusing to delete checked-out job branch `{branch}`"
+            )));
+        }
+        repo.run(&["branch", "-D", &branch])
+            .await
+            .map_err(git_error)?;
+        Ok(ExecOutcome::done(
+            json!({"deleted": true, "branch": branch}),
+        ))
+    }
 }
 
 struct GateRun {
@@ -1618,6 +1653,7 @@ where
             Effect::RunVerification => self.run_verification(effect).await,
             Effect::Deliver => self.deliver(effect).await,
             Effect::CleanupWorktree => self.cleanup_worktree(effect).await,
+            Effect::DeleteJobBranch => self.delete_job_branch(effect).await,
             Effect::SupersedePendingApprovals => {
                 let id = effect.job_id.ok_or_else(|| fatal("effect without a job"))?;
                 let n = self
