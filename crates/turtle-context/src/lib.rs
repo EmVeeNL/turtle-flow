@@ -718,6 +718,45 @@ mod tests {
     }
 
     #[test]
+    fn repository_context_enforces_file_and_token_budgets() {
+        let dir = repo();
+        fs::write(dir.path().join("README.md"), "x".repeat(65 * 1024))
+            .expect("write oversized README");
+        fs::write(dir.path().join("src.rs"), "y".repeat(4 * 1024))
+            .expect("write context-budget fixture");
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["add", "README.md", "src.rs"])
+                .output()
+                .expect("git add")
+                .status
+                .success()
+        );
+
+        let package = build(dir.path(), &[], &["src.rs".into()], 128).expect("package");
+        assert!(
+            package.text.len() < 256,
+            "context escaped its budget: {}",
+            package.text.len()
+        );
+        assert!(package.manifest.estimated_tokens <= 128);
+        assert!(package.text.contains("# Repository map"));
+        assert!(!package.text.contains(&"x".repeat(256)));
+        assert!(package.manifest.excluded.iter().any(|item| {
+            item.path == "README.md" && item.reason == "file exceeds 64 KiB limit"
+        }));
+        assert!(
+            package
+                .manifest
+                .excluded
+                .iter()
+                .any(|item| { item.path == "src.rs" && item.reason == "token budget" })
+        );
+    }
+
+    #[test]
     fn sixty_synthetic_credentials_do_not_survive() {
         let mut records = Vec::new();
         let mut secrets = Vec::new();
