@@ -23,6 +23,7 @@ use ulid::Ulid;
 use crate::chain::{HashedEvent, event_hash, genesis_hash};
 use crate::clock::{Clock, SystemClock, format_ts};
 use crate::error::{Result, StoreError};
+use crate::integrity::{self, Key, KeyStorage};
 use crate::migrate;
 
 /// Attempts before an effect is considered failed (retry policy lives in the dispatcher).
@@ -133,6 +134,8 @@ pub struct RebuiltJob {
 pub struct Store {
     pub(crate) conn: Connection,
     pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) approval_key: Key,
+    key_storage: KeyStorage,
 }
 
 impl std::fmt::Debug for Store {
@@ -152,14 +155,50 @@ impl Store {
         let mut conn = Connection::open(path)?;
         set_mode(path, 0o600)?;
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
+        let old_version = migrate::current_version(&conn)?;
+        let legacy_key = if old_version > 0 && old_version < 7 {
+            let signed: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM approvals WHERE hmac IS NOT NULL)",
+                [],
+                |r| r.get(0),
+            )?;
+            let (key, storage, _) = integrity::load(Some(path), &installation_id(&conn)?, signed)?;
+            crate::approvals::migrate_legacy_rows(&mut conn, &*clock, &key)?;
+            Some((key, storage))
+        } else {
+            None
+        };
         Self::finish_open(&mut conn, path.parent().map(|p| p.join("backups")), &*clock)?;
-        Ok(Self { conn, clock })
+        let (approval_key, key_storage) = if let Some(pair) = legacy_key {
+            pair
+        } else {
+            let signed: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM approvals WHERE hmac IS NOT NULL)",
+                [],
+                |r| r.get(0),
+            )?;
+            let (key, storage, _) = integrity::load(Some(path), &installation_id(&conn)?, signed)?;
+            (key, storage)
+        };
+        Ok(Self {
+            conn,
+            clock,
+            approval_key,
+            key_storage,
+        })
     }
 
     pub fn open_in_memory(clock: Arc<dyn Clock>) -> Result<Self> {
         let mut conn = Connection::open_in_memory()?;
         Self::finish_open(&mut conn, None, &*clock)?;
-        Ok(Self { conn, clock })
+        let (approval_key, key_storage, _) =
+            integrity::load(None, &installation_id(&conn)?, false)?;
+        Ok(Self {
+            conn,
+            clock,
+            approval_key,
+            key_storage,
+        })
     }
 
     /// Opens with the system clock.
@@ -192,7 +231,11 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut t = Tx { tx, clock };
+        let mut t = Tx {
+            tx,
+            clock,
+            approval_key: &self.approval_key,
+        };
         let out = f(&mut t)?;
         t.tx.commit()?;
         Ok(out)
@@ -200,6 +243,11 @@ impl Store {
 
     pub fn installation_id(&self) -> Result<String> {
         installation_id(&self.conn)
+    }
+
+    #[must_use]
+    pub fn approval_key_storage(&self) -> KeyStorage {
+        self.key_storage
     }
 
     #[must_use]
@@ -352,6 +400,7 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
 pub struct Tx<'a> {
     pub(crate) tx: Transaction<'a>,
     pub(crate) clock: &'a dyn Clock,
+    pub(crate) approval_key: &'a Key,
 }
 
 impl std::fmt::Debug for Tx<'_> {

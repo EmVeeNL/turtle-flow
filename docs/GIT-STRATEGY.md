@@ -6,6 +6,10 @@
 | Status | Proposed baseline; decision in [ADR-009](adr/ADR-009-git-worktree-isolation.md) |
 | Related | [WORKFLOW.md §10](WORKFLOW.md#10-recovery-behavior), [SECURITY.md §6.6](SECURITY.md#66-git-hardening-sec-014) |
 
+### Implementation status (2026-10-26)
+
+Job worktree paths are derived from the same `Layout` used by the scheduler and can be printed with `turtle job worktree <key>`. `turtle job cancel --delete-branch` opts into removing the isolated worktree and its generated branch. `turtle job revert <key>` creates a chore job bound to its recorded delivery commit. After normal scope and plan approvals, the scheduler's idempotent worktree effect applies `git revert --no-edit` in the new job worktree; the generated revert message is the completion probe if the effect is retried after a crash. Review, verification, acceptance and delivery continue through the ordinary workflow.
+
 ---
 
 ## 1. Principles
@@ -105,7 +109,7 @@ Commit-to-run lineage is stored in `commit_records` (FR-100) and recoverable fro
 
 | Mode | How | When to use | Requirements |
 |---|---|---|---|
-| `pr` | `git push <remote> <job-branch>`; `gh pr create --base <target> --head <branch> --title … --body-file …` | Repos with a forge; teams; `strict` default | Remote + `gh` authenticated (GitHub). Other forges: push only + printed URL (Future: GitLab/Bitbucket adapters) |
+| `pr` | `git push origin <job-branch>`; `gh pr create --base <target> --head <branch> --title … --body-file …` | Opt-in GitHub delivery for any profile | `origin` + authenticated `gh`; other forges are not implemented |
 | `local_squash` | Build squash commit with plumbing (`merge-tree --write-tree`, `commit-tree`), then compare-and-swap update of target ref (`git update-ref refs/heads/<target> <new> <old>`) | Solo developers without PR flow | Target branch **not checked out** in any worktree (see below) |
 | `local_ff` | Rebase job branch onto target in the job worktree (gates rerun), then CAS fast-forward target ref | Linear history preference | Same |
 | `local_merge_commit` | `merge-tree` + `commit-tree` with two parents, CAS update | Preserve task commits with merge bubble | Same |
@@ -203,6 +207,8 @@ Decisions made while building the crate; the code and its tests are authoritativ
 
 - **Every command is hardened.** All Git calls go through one builder that sets `core.hooksPath=/dev/null`, `core.fsmonitor=false`, restricted protocols, `gc.auto=0` and `GIT_TERMINAL_PROMPT=0`, inside a scrubbed environment. A test plants hooks and an fsmonitor script in a repository and checks that neither runs. Removing either setting makes it fail.
 - **Delivery takes the approved target tip.** `deliver_squash_from(req, target_tip)` builds the squash commit on the tip that was probed and approved and moves the branch only if it is still exactly there. If the target moved, the result is `TargetMoved` and the other party's commit is untouched. `deliver_squash` reads the current tip and calls it.
+- **Moved local targets are refreshed before delivery.** The executor compares the target with the recorded base and runs `merge-tree`. A clean result becomes one factory refresh commit on the new base; the recorded base advances and acceptance is invalidated before gates, review and verification repeat. A conflict blocks the job. The user incorporates the target into the job worktree, commits the resolution, then runs `turtle job resolve <key>`. This refresh deliberately folds earlier task commits into one commit; their original hashes remain in the event/run history but not the refreshed branch history. A retry after a crash between Git reset and database update recognizes the refreshed head.
+- **GitHub PR delivery is opt-in.** `turtle project add --delivery pr` or `turtle project delivery <slug> pr` selects it. After a current acceptance check, the factory pushes the branch to `origin` without force, then uses `gh pr create` with a title and body built from the approved specification and approval hashes. The PR URL and approved head are recorded as pending. `turtle job sync <key>` queries `gh` and marks delivery complete only when the PR is merged at that head. There is no automatic polling or remote target fetch; the local target branch is the base checked for movement. Other forges are not implemented.
 - **Checked-out targets are parked.** If the target branch is checked out in any worktree (main checkout included), the squash commit is stored at `refs/turtle/delivery/<job>` and the outcome is `PendingIntegration`. The documented `git merge --ff-only <ref>` works afterwards.
 - **Policy snapshot.** Before a run the factory snapshots HEAD, branch, a hash of all refs, and a hash of `config`, `config.worktree` and every non-sample hook. After the run any difference is a violation. Editing files is allowed.
 - **Recovery snapshots include untracked files.** `git stash create` ignores untracked files, which agents create constantly. The recovery ref is built from a temporary index (`read-tree`, `add -A`, `write-tree`, `commit-tree`), so the real index is never disturbed, and ignored files are left alone.

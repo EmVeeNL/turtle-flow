@@ -77,16 +77,16 @@
   - job reaches the same final state as an uninterrupted run;
   - no duplicate commits (commit count and trailers), no duplicate ledger settlements, no open reservations, no orphan processes, no orphan worktrees;
   - event chain verifies (`audit verify`).
-- **Real kill tests:** a separate harness runs the daemon as a subprocess and sends `SIGKILL` at random times (seeded) during scripted jobs with a FakeAdapter that sleeps/streams; 200 iterations nightly.
+- **Real kill tests:** a separate harness runs the daemon as a subprocess and sends `SIGKILL` at seeded random times during scripted demo-agent jobs; 20 iterations in CI, adjustable with `TURTLE_KILL_ITERATIONS`.
 - **Power-loss simulation (Linux nightly):** run on a filesystem with `fsync` interception (e.g. LazyFS or `dm-flakey`) to validate WAL + `synchronous=FULL` assumptions for ledger/approval writes.
 - **Git interruption:** kill during `git worktree add`, `git commit`, rebase; assert recovery probes act correctly (stale lock removal only when safe).
 
 ### 6.1 Implementation status
 
 - The in-process harness is implemented (`turtle-scheduler/tests/crash.rs`) with an explicit `CrashPlan` instead of the `fail` crate: every boundary is a named `point()` call, the harness crashes at the Nth, restarts on the same database file and compares the result with a baseline run, including double crashes.
-- Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a real daemon process reaching the first approval. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
+- Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a seeded SIGKILL/restart loop through demo-agent delivery. The loop compares final state and delivered tree with an uninterrupted run, checks one delivery commit and record, no open reservations, and audit-chain integrity. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
 - The pseudo-terminal approval flow and the real Claude Code run were exercised by hand and are not in CI.
-- Planned and not yet written: the `kill -9` subprocess harness (random times), and power-loss simulation.
+- Planned and not yet written: power-loss simulation and a subprocess fixture that sleeps/streams during agent execution. The current SIGKILL loop uses the immediate demo agent, so kill timing is concentrated around scheduler and Git effects.
 
 ## 7. Security Tests (TST-13)
 
@@ -104,7 +104,9 @@
 | SEC-014 Git hooks | Malicious repo fixture with `post-checkout`, `pre-commit` hooks, `core.fsmonitor` script, filter driver → none execute (marker files absent) |
 | SEC-015 Tighten-only | Repo config disabling secret scan → ignored + warning event |
 | SEC-013 Permissions | Data dir/file modes verified |
-| SEC-020 Supply chain | `cargo deny check` and `cargo audit` CI gates |
+| SEC-020 Supply chain | `cargo deny check` CI gate includes RustSec advisories (the `cargo audit` equivalent); full-SHA GitHub Actions pins |
+
+**Implementation status:** the environment-printing agent fixture, 200-plus synthetic-secret redaction unit corpus, 60-secret checks through each transcript, gate-output, export and final-prompt surface, hooks/fsmonitor and escaping-symlink fixtures, protected workflow-path flag, hash-bound approval tests, direct SQLite HMAC-tamper tests, delivery audit-chain test, and concurrent API decision test run in the Rust workspace. An authenticated request to a would-be agent approval endpoint is tested as `404`; decisions still require a user session. The agent-process-tree request test depends on the unimplemented Unix socket. Full prompt-injection and resource-limit fixture matrices remain open.
 
 ## 8. Integration Tests (TST-06, TST-07, TST-08, TST-14)
 

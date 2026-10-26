@@ -352,6 +352,7 @@ async fn serve<R: AgentRunner>(
             store: rt.store.clone(),
             engine: rt.engine.clone(),
             approvals: rt.approvals.clone(),
+            projects: turtle_scheduler::ProjectService::new(rt.store.clone()),
             blobs: Arc::clone(&rt.blobs),
         };
         let tailnet_host = resolve_tailnet_host(options.tailnet_host.as_deref())?;

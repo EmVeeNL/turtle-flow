@@ -10,7 +10,10 @@ Every request needs a configured Host: loopback hosts above, or the daemon's exa
 | GET | `/api/v1/me` | Current session scope `{readonly:boolean}` |
 | POST | `/api/v1/session` | `{code}` → session cookie; expired and replayed codes return 401 |
 | GET | `/api/v1/overview` | `DashboardData`: projects, jobs, pending approvals, recent runs and events, artifacts, tasks, providers, budgets. Resources are empty until resource ingestion exists. |
+| POST | `/api/v1/projects` | `{path,slug?,name?,key?,profile?,branch?}` → `{ok,id,slug}`. Canonicalizes the path and checks the same Git repository, non-bare, initial commit, merge-state and checked-out-branch conditions as `turtle project add`; slug and key defaults follow the CLI. |
 | GET | `/api/v1/projects/{slug}` | Project with its jobs, or 404 |
+| POST | `/api/v1/projects/{slug}/jobs` | `{title,description?,type?,priority?,profile?,budget?,start?}` → `{ok,id,key,version,started}`. Uses the project default profile when omitted, creates the job, optionally sets a hard job budget, then optionally submits Start through the engine. |
+| POST | `/api/v1/budgets` | `{scope:"job"|"project"|"global",target?,limit,soft?}` → current budget. `limit` is a positive whole-token count; changing it uses the ledger transaction and lifts eligible budget holds. |
 | GET | `/api/v1/jobs/{key}?include=tasks,artifacts,approvals,usage,events` | Job with the requested related arrays or 404. The base job always includes `version`. |
 | GET | `/api/v1/approvals/{id}` | Full binding, echoed `subject_hash`, required flags, and the bound redacted documents' stored content |
 | POST | `/api/v1/approvals/{id}/decisions` | `{decision:"approve"|"changes"|"reject",subject_hash,comment,acknowledged_flags}`. Goes through `ApprovalService::decide` as a user on channel `dashboard`. Hash mismatch or stale binding returns 409 and decides nothing. Comments are required for changes and reject. |
@@ -23,4 +26,6 @@ Every request needs a configured Host: loopback hosts above, or the daemon's exa
 
 `null` means unavailable or not yet recorded: no invented estimate, provider version, price, delivery timestamp, gate pass rate, cost, or token count. Run and job usage carry `reported`, `estimated`, or `unavailable` provenance. An unmetered run makes the job total unavailable even if other runs have measured usage. The read API does not yet include resource ingestion, capability discovery, or currency analytics.
 
-The default dashboard build uses the mock adapter. Build with `PUBLIC_API_ADAPTER=real npm run build` to serve live data. The real build uses a client view over these endpoints while the more detailed mock layout remains the design preview. Astro's generated CSP hashes are carried into the HTTP response header so the island loader can run under a strict policy.
+The live UI refreshes its open view when SSE events arrive. It uses only data exposed by these routes: provider discovery and prices, usage time-series, resource records, settings provenance, and licensing status remain unknown or unavailable. A stored `patch` artifact is opened as a line-oriented unified diff when the artifact content is available.
+
+The default dashboard build uses the mock adapter. Build with `PUBLIC_API_ADAPTER=real npm run build` to serve live data. The real build renders the mock screen structures using these endpoints, with unsupported values labeled unknown and unsupported capabilities read-only or empty. Astro's generated CSP hashes are carried into the HTTP response header so the island loader can run under a strict policy.

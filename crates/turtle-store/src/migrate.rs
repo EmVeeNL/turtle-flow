@@ -34,6 +34,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("../migrations/0005_dashboard_scope.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("../migrations/0006_resources_fts.sql"),
+    },
+    Migration {
+        version: 7,
+        sql: include_str!("../migrations/0007_approval_integrity.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.

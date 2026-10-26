@@ -2,6 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryMode {
+    #[default]
+    LocalSquash,
+    Pr,
+}
+
 /// Commands run in the job worktree (FR-004). Each is a shell command line; all are optional.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -34,6 +42,7 @@ impl ProjectCommands {
 #[serde(deny_unknown_fields, default)]
 pub struct ProjectSettings {
     pub commands: ProjectCommands,
+    pub delivery: DeliveryMode,
     /// Branch that deliveries go to; defaults to the project's default branch.
     pub target_branch: Option<String>,
     pub branch_prefix: Option<String>,
@@ -42,6 +51,30 @@ pub struct ProjectSettings {
     pub protected_paths: Option<Vec<String>>,
     /// Extra environment variables passed to gate commands (names only).
     pub env_allowlist: Vec<String>,
+    pub static_gates: StaticGateSettings,
+}
+
+/// Deterministic checks over the implementation diff. Limits and checks are project-local.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct StaticGateSettings {
+    pub secret_scan: bool,
+    pub protected_paths: bool,
+    pub max_diff_lines: Option<u64>,
+    pub scope_conformance: bool,
+    pub dependency_changes: bool,
+}
+
+impl Default for StaticGateSettings {
+    fn default() -> Self {
+        Self {
+            secret_scan: true,
+            protected_paths: true,
+            max_diff_lines: Some(2_000),
+            scope_conformance: true,
+            dependency_changes: true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -53,6 +86,16 @@ mod tests {
         let s: ProjectSettings = serde_json::from_str("{}").expect("defaults");
         assert_eq!(s, ProjectSettings::default());
         assert!(s.commands.gates().is_empty());
+        assert_eq!(s.delivery, DeliveryMode::LocalSquash);
+    }
+
+    #[test]
+    fn pr_delivery_round_trips_as_project_setting() {
+        let settings: ProjectSettings =
+            serde_json::from_str(r#"{"delivery":"pr"}"#).expect("PR setting");
+        assert_eq!(settings.delivery, DeliveryMode::Pr);
+        let encoded = serde_json::to_string(&settings).expect("serialize");
+        assert!(encoded.contains("\"delivery\":\"pr\""));
     }
 
     #[test]

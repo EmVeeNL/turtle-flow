@@ -18,7 +18,7 @@ specification → scope approval → planning → implementation (isolated Git w
 
 Rust owns the workflow state, policies, budgets, approvals and Git operations. The AI agents act as workers: they produce artifacts, and they never decide what happens next.
 
-- **Hash-bound approvals.** You approve an exact spec or diff revision, and the approval becomes invalid when that revision changes.
+- **Hash-bound approvals.** You approve an exact spec or diff revision; changes invalidate it, and a per-row HMAC detects direct database edits.
 - **Token intelligence.** Every agent run is estimated, reserved against a budget, measured and fed back into estimation and routing. Unknown provider quota is shown as unknown.
 - **Crash-safe.** Every side effect is a recorded, idempotent step, so Turtle Flow resumes correctly after crashes, rate limits or reboots.
 - **Local-first.** A single binary with SQLite. No account and no cloud dependency beyond the AI providers you already use.
@@ -33,29 +33,32 @@ turtle approvals
 
 ## Status
 
-**Early development.** Milestone M1 (the walking skeleton) is complete and M2 (the first real agent) is in progress. Today you can register a Git repository, create a job and watch Claude Code take it from a specification through approved scope, plan, implementation in an isolated worktree, build and tests, AI review and verification to a delivered commit, with every step in a hash-chained audit log. It has been run for real only on small jobs.
+**Early development.** M1 (the walking skeleton) and the M6 onboarding, export, and release-packaging work are implemented; M2 (the first real agent) remains in progress. Today you can register a Git repository, create a job and watch Claude Code take it from a specification through approved scope, plan, implementation in an isolated worktree, build and tests, AI review and verification to a delivered commit, with every step in a hash-chained audit log. It has been run for real only on small jobs.
 
 | Milestone | State |
 |---|---|
 | M0 spikes | Claude Code headless contract and Codex structured/read-only and workspace-write success paths recorded. S-3 to S-7 not started. |
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
 | M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
-| M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. Strict delivery and PR delivery remain. |
-| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. The live dashboard build is functional; its richer layouts remain in the mock preview. No working Tailscale daemon was available for live verification; browser verification is pending in an environment that can launch Chromium. |
+| M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. |
+| M5 core | Strict discovery, plan approval and review limits; conflict probe/refresh/resolution; optional GitHub PR delivery with merge sync; static gates and resource ingestion/search are implemented. Other M5 work remains. |
+| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, project/job creation, budget updates, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. Live routes now use the mock screen structures for available project, job, run, approval, analytics and provider data; settings and license remain read-only, while resources show the unavailable empty state. Costs, time-series, provider discovery and other unexposed values remain unknown. |
+| M6 onboarding/package | `turtle init`, deterministic job exports, job worktree path, scheduler-owned cancellation cleanup and branch deletion, factory-owned approval-gated `git revert`, Clap shell completions, install/docs, and checksum-verified release archives for macOS and Linux are implemented. Release workflow creates a draft release; code signing and notarization remain manual. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 
 What works:
 
-- `turtle doctor`, `project add|list|show`, `job create|list|show|events|watch|start|pause|resume|cancel`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
+- `turtle doctor`, `project add|list|show|delivery|static-gates`, `job create|list|show|events|watch|start|pause|resume|resolve|sync|cancel`, `resource add`, `search -p <slug> <query>`, `runs list --job <key>` and `runs transcript <run-id>`, `approvals` and `approve`, token budgets, `audit verify`, `up|down|status`
 - `turtle up --agent claude|codex` runs real jobs through an isolated CLI; `--agent claude,codex` uses ordered fallbacks and independent review where the profile asks for it. `--role-agent reviewer=codex` changes a role's priority. `--agent demo` runs a scripted placeholder without spending tokens
 - a token ledger and estimator: reported failed-run usage is charged and closes its reservation, while estimator learning uses reported successful runs only; budgets per job, project (monthly) and globally are reserved before each run and settled after it
 - provider rate-limit holds with reset-aware deferral and failover, plus Claude quota-window utilization snapshots shown as percentages of provider windows
 - a deterministic, redacted repository context package for runs with a checkout or worktree, with a token-capped manifest stored as an artifact and linked from the run record
+- deterministic diff gates (secret patterns, protected paths, diff size, affected-area scope and dependency changes) and content-addressed, redacted text resources with FTS5 search and trust labels
 - redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
-- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits and squash delivery, content-addressed artifacts and hash-bound approvals
+- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (in-process boundary tests and seeded daemon SIGKILL tests), Git worktrees with factory-only commits, local squash and optional GitHub PR delivery, content-addressed artifacts and HMAC-protected, hash-bound approvals
 
-What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and resource/FTS/knowledge retrieval, full secret scanning beyond the current redaction patterns, currency budgets, strict-profile delivery semantics, PR delivery, the Unix-socket CLI API transport (the CLI reads the database directly), `turtle init`, licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
+What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and knowledge retrieval, entropy-based secret scanning beyond the current redaction patterns, PDF extraction, currency budgets, per-task strict gates, automatic remote-base fetching or PR merge polling, the Unix-socket CLI API transport (the CLI reads the database directly), licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
 
 Local dashboard quick start:
 
@@ -92,6 +95,12 @@ The architecture and product documentation package is in [`docs/`](docs/README.m
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture |
 | [docs/adr/](docs/adr/README.md) | Architecture Decision Records |
 | [docs/ARCHITECTURE-REVIEW.md](docs/ARCHITECTURE-REVIEW.md) | Top risks and next steps |
+| [docs/INSTALL.md](docs/INSTALL.md) | Install binaries, checksums, completions, and manual signing |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | First run, approvals, dashboard, phone pairing, exports |
+| [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md) | Generated command reference |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Local and project configuration |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common setup and workflow problems |
+| [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) | Security model summary |
 
 ## Naming
 

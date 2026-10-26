@@ -175,6 +175,124 @@ async fn scenario(crashes: &[usize]) -> Outcome {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CancelOutcome {
+    state: JobState,
+    effect_kinds: Vec<String>,
+    effect_keys: Vec<String>,
+    boundaries: usize,
+    crashed: bool,
+}
+
+async fn cancel_scenario(crashes: &[usize]) -> CancelOutcome {
+    let dir = tempfile::tempdir().expect("temporary home");
+    let path = dir.path().join("turtle.db");
+    let store = turtle_scheduler::SharedStore::new(
+        Store::open(&path, Arc::new(SystemClock)).expect("open store"),
+    );
+    let job = create_job(&store, Profile::standard()).await;
+    drop(store);
+
+    let world = Arc::new(World::default());
+    let exec = SimExecutor::new(Arc::clone(&world));
+    let mut plans = crashes.iter().map(|&n| CrashPlan::at(n));
+    let first = plans.next().unwrap_or_else(CrashPlan::never);
+    let (mut d, _) = boot(&path, &exec, first.clone()).await;
+    let mut restarts = 0;
+    for _ in 0..100 {
+        if state_of(&d, job).await != JobState::Cancelled {
+            match d
+                .engine()
+                .submit(job, C::CancelAndDeleteBranch, Actor::local_user())
+                .await
+            {
+                Ok(_) | Err(EngineError::Rejected(_)) => {}
+                Err(EngineError::Crashed(_)) => {
+                    restarts += 1;
+                    drop(d);
+                    let next = plans.next().unwrap_or_else(CrashPlan::never);
+                    (d, _) = boot(&path, &exec, next).await;
+                    continue;
+                }
+                Err(error) => panic!("cancel failed: {error}"),
+            }
+        }
+        match d.tick().await {
+            Ok(_) => {}
+            Err(error) if is_crash(&error) => {
+                restarts += 1;
+                drop(d);
+                let next = plans.next().unwrap_or_else(CrashPlan::never);
+                (d, _) = boot(&path, &exec, next).await;
+                continue;
+            }
+            Err(error) => panic!("unexpected dispatcher error: {error}"),
+        }
+        let unfinished = d
+            .engine()
+            .store()
+            .with(|s| s.transaction(|tx| tx.unfinished_effect_count()))
+            .await
+            .expect("effects");
+        if state_of(&d, job).await == JobState::Cancelled && unfinished == 0 {
+            break;
+        }
+    }
+    let (state, effects) = d
+        .engine()
+        .store()
+        .with(move |s| {
+            (
+                s.load_job(job).expect("job").job.state,
+                s.list_effects(job).expect("effects"),
+            )
+        })
+        .await;
+    assert_eq!(state, JobState::Cancelled);
+    assert!(effects.iter().all(|effect| effect.status == "completed"));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| effect.kind == "delete_job_branch")
+    );
+    CancelOutcome {
+        state,
+        effect_kinds: effects.iter().map(|effect| effect.kind.clone()).collect(),
+        effect_keys: effects
+            .iter()
+            .map(|effect| {
+                effect
+                    .idempotency_key
+                    .splitn(3, ':')
+                    .nth(2)
+                    .unwrap_or(&effect.idempotency_key)
+                    .to_owned()
+            })
+            .collect(),
+        boundaries: first.boundaries_seen(),
+        crashed: first.fired() && restarts == 1,
+    }
+}
+
+#[tokio::test]
+async fn branch_deletion_effect_recovers_at_each_crash_boundary() {
+    let baseline = cancel_scenario(&[]).await;
+    assert!(baseline.boundaries > 0);
+    for boundary in 0..baseline.boundaries {
+        let recovered = cancel_scenario(&[boundary]).await;
+        assert!(recovered.crashed, "boundary {boundary} was not reached");
+        assert_eq!(recovered.state, baseline.state, "boundary {boundary}");
+        assert_eq!(
+            recovered.effect_kinds, baseline.effect_kinds,
+            "boundary {boundary}"
+        );
+        assert_eq!(
+            recovered.effect_keys, baseline.effect_keys,
+            "boundary {boundary}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_uninterrupted_run_is_the_baseline() {
     let base = scenario(&[]).await;

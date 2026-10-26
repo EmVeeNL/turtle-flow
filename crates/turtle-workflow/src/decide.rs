@@ -64,6 +64,7 @@ fn check_actor(cmd: &JobCommand, actor: &Actor) -> Result<(), &'static str> {
         | C::ResolveBlock { .. }
         | C::MarkFailed
         | C::Cancel
+        | C::CancelAndDeleteBranch
         | C::Pause { .. }
         | C::Resume => {
             if user {
@@ -334,11 +335,14 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
 
     // Commands valid in any non-terminal state.
     match cmd {
-        C::Cancel => {
+        C::Cancel | C::CancelAndDeleteBranch => {
             for hold in std::mem::take(&mut tx.job.holds) {
                 tx.events.push(WorkflowEvent::HoldRemoved { hold });
             }
             tx.enter(S::Cancelled, RunPurpose::Initial, false);
+            if matches!(cmd, C::CancelAndDeleteBranch) {
+                tx.effects.push(Effect::DeleteJobBranch);
+            }
             return Ok(());
         }
         C::Pause { mode } => {
@@ -399,7 +403,14 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             }
             // A human decision grants a fresh fix budget.
             tx.job.counters.fix_iterations = 0;
-            tx.enter(*target, RunPurpose::Retry, true);
+            let purpose = if info.reason == BlockReason::ReviewDecisionRequired
+                && *target == S::Implementation
+            {
+                RunPurpose::Fix
+            } else {
+                RunPurpose::Retry
+            };
+            tx.enter(*target, purpose, true);
             return Ok(());
         }
         C::MarkFailed => {
