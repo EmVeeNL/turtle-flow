@@ -966,6 +966,22 @@ mod tests {
             .body(Body::from(body.to_string()))
             .expect("authorized request")
     }
+
+    #[tokio::test]
+    async fn agent_approval_intent_has_no_decision_route() {
+        let (state, _dir) = state();
+        let response = router(state.clone())
+            .oneshot(session_request(
+                &state,
+                Method::POST,
+                "/api/v1/agents/approvals",
+                json!({"actor":"agent_run", "decision":"approve", "subject_hash":"0".repeat(64)}),
+                false,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
     #[tokio::test]
     async fn rejects_non_loopback_bind_and_rebinding() {
         assert!(loopback_address("0.0.0.0".parse().expect("IP"), 0).is_err());

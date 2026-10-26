@@ -1714,12 +1714,20 @@ mod transcript_tests {
 
     #[test]
     fn transcript_and_gate_redaction_remove_corpus_secrets() {
-        let secret = "api_key = ghp_123456789012345678901234567890123456";
-        let stored = redacted_transcript(&format!("{{\"message\":\"{secret}\"}}\n"));
-        assert!(!stored.contains("ghp_123456789012345678901234567890123456"));
+        let secrets: Vec<_> = (0..60)
+            .map(|i| format!("ghp_synthetic{i:03}abcdefghijklmnop"))
+            .collect();
+        let input = secrets
+            .iter()
+            .map(|secret| format!("api_key = {secret}\n"))
+            .collect::<String>();
+        let stored = redacted_transcript(&input);
         assert!(stored.contains("[REDACTED:"));
-        let gate = redact_gate_output(&format!("test output: {secret}"));
-        assert!(!gate.contains("ghp_123456789012345678901234567890123456"));
+        let gate = redact_gate_output(&input);
+        for secret in secrets {
+            assert!(!stored.contains(&secret), "transcript leaked {secret}");
+            assert!(!gate.contains(&secret), "gate output leaked {secret}");
+        }
     }
 
     #[test]

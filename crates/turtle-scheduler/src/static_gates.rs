@@ -117,7 +117,13 @@ mod tests {
         )
         .expect("change source");
         std::fs::write(dir.path().join("Cargo.lock"), "version = 4\n").expect("lockfile");
-        git(&["add", "src.rs", "Cargo.lock"]);
+        std::fs::create_dir_all(dir.path().join(".github/workflows")).expect("workflows directory");
+        std::fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            "name: changed\n",
+        )
+        .expect("workflow");
+        git(&["add", "src.rs", "Cargo.lock", ".github/workflows/ci.yml"]);
         git(&["commit", "-qm", "change"]);
         let repo = Repo::new(dir.path());
         let changed = repo
@@ -168,6 +174,12 @@ mod tests {
                 .acknowledgement_flags
                 .iter()
                 .any(|flag| flag == "protected_path:Cargo.lock")
+        );
+        assert!(
+            report
+                .acknowledgement_flags
+                .iter()
+                .any(|flag| flag == "protected_path:.github/workflows/ci.yml")
         );
         let serialized = serde_json::to_string(&report.results).expect("serialize report");
         assert!(!serialized.contains("ghp_abcdefghijklmnopqrstuvwxyz"));
