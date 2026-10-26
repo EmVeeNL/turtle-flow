@@ -24,6 +24,8 @@ pub enum ApprovalError {
     /// invalidated and must be requested again.
     #[error("what this approval covers has changed since it was requested; request it again")]
     Stale,
+    #[error("delivery needs a current approved {0:?} approval")]
+    MissingCurrent(GateKind),
     #[error("these flags must be acknowledged before approving: {}", .0.join(", "))]
     FlagsNotAcknowledged(Vec<String>),
 }
@@ -74,6 +76,29 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
             git.as_ref(),
             self.policy_version,
         )?)
+    }
+
+    /// Rechecks the approval against current artifacts and Git immediately before delivery.
+    pub async fn current_approved(
+        &self,
+        job: &JobRecord,
+        gate: GateKind,
+    ) -> Result<ApprovalRecord, ApprovalError> {
+        let id = job.job.id;
+        let approved = self
+            .engine
+            .store()
+            .with(move |s| s.latest_approved(id, gate))
+            .await?
+            .ok_or(ApprovalError::MissingCurrent(gate))?;
+        if approved.binding.subject_hash() != approved.subject_hash
+            || approved.binding.gate_kind != gate
+            || approved.binding.job_id != id
+            || self.current_binding(job, gate).await?.subject_hash() != approved.subject_hash
+        {
+            return Err(ApprovalError::Stale);
+        }
+        Ok(approved)
     }
 
     /// Requests an approval for the job's current state. Idempotent: asking again while nothing

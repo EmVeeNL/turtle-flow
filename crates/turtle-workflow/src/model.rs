@@ -40,6 +40,7 @@ pub enum BlockReason {
     BackTransitionLimitReached,
     PreflightDenied,
     ConflictDetected,
+    ReviewDecisionRequired,
     Timeout,
     Unrecoverable { code: String },
 }
