@@ -14,6 +14,7 @@ pub mod engine;
 pub mod executor;
 pub mod git_facts;
 pub mod layout;
+pub mod pr;
 pub mod project;
 pub mod rate_limit;
 pub mod shared;

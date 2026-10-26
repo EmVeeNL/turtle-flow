@@ -18,6 +18,8 @@ pub struct ExecConfig {
     /// Extra environment for every Git command (tests use it for hermetic configuration).
     pub git_env: Vec<(String, String)>,
     pub default_gate_timeout: Duration,
+    /// `gh` executable; tests can point this at a stand-in script.
+    pub gh_program: PathBuf,
 }
 
 impl ExecConfig {
@@ -29,6 +31,7 @@ impl ExecConfig {
             identity: None,
             git_env: Vec::new(),
             default_gate_timeout: Duration::from_secs(20 * 60),
+            gh_program: PathBuf::from("gh"),
         }
     }
 

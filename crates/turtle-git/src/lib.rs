@@ -61,6 +61,7 @@ pub mod merge;
 pub mod names;
 pub mod policy;
 pub mod recovery;
+pub mod refresh;
 pub mod repo;
 pub mod worktree;
 
