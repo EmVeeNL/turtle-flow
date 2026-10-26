@@ -258,6 +258,8 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/overview", get(data::overview))
         .route("/api/v1/projects", post(create_project))
         .route("/api/v1/projects/{slug}", get(data::project))
+        .route("/api/v1/projects/{slug}/resources", get(data::resources))
+        .route("/api/v1/resources/search", get(data::resource_search))
         .route("/api/v1/projects/{slug}/jobs", post(create_job))
         .route("/api/v1/budgets", post(set_budget))
         .route("/api/v1/jobs/{key}", get(data::job))

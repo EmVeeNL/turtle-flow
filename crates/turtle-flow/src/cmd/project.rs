@@ -53,6 +53,22 @@ pub enum ProjectCommand {
         #[arg(value_parser = ["local-squash", "pr"])]
         mode: String,
     },
+    /// Configure deterministic gates for one project.
+    StaticGates {
+        slug: String,
+        #[arg(long)]
+        secret_scan: Option<bool>,
+        #[arg(long)]
+        protected_paths: Option<bool>,
+        #[arg(long)]
+        max_diff_lines: Option<u64>,
+        #[arg(long)]
+        disable_diff_size: bool,
+        #[arg(long)]
+        scope_conformance: Option<bool>,
+        #[arg(long)]
+        dependency_changes: Option<bool>,
+    },
     /// List registered projects.
     List,
     /// Show one project.
@@ -146,6 +162,42 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
                 .with(move |s| s.transaction(|tx| tx.update_project_settings(id, &settings)))
                 .await?;
             println!("Delivery mode set to {mode}.");
+            Ok(())
+        }
+        ProjectCommand::StaticGates {
+            slug,
+            secret_scan,
+            protected_paths,
+            max_diff_lines,
+            disable_diff_size,
+            scope_conformance,
+            dependency_changes,
+        } => {
+            let project = rt.store.with(move |s| s.project_by_slug(&slug)).await?;
+            let mut settings = project.settings;
+            if let Some(value) = secret_scan {
+                settings.static_gates.secret_scan = value;
+            }
+            if let Some(value) = protected_paths {
+                settings.static_gates.protected_paths = value;
+            }
+            if let Some(value) = max_diff_lines {
+                settings.static_gates.max_diff_lines = Some(value);
+            }
+            if disable_diff_size {
+                settings.static_gates.max_diff_lines = None;
+            }
+            if let Some(value) = scope_conformance {
+                settings.static_gates.scope_conformance = value;
+            }
+            if let Some(value) = dependency_changes {
+                settings.static_gates.dependency_changes = value;
+            }
+            let id = project.id;
+            rt.store
+                .with(move |s| s.transaction(|tx| tx.update_project_settings(id, &settings)))
+                .await?;
+            println!("Static gate settings updated.");
             Ok(())
         }
         ProjectCommand::List => {

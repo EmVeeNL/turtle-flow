@@ -51,6 +51,30 @@ pub struct ProjectSettings {
     pub protected_paths: Option<Vec<String>>,
     /// Extra environment variables passed to gate commands (names only).
     pub env_allowlist: Vec<String>,
+    pub static_gates: StaticGateSettings,
+}
+
+/// Deterministic checks over the implementation diff. Limits and checks are project-local.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct StaticGateSettings {
+    pub secret_scan: bool,
+    pub protected_paths: bool,
+    pub max_diff_lines: Option<u64>,
+    pub scope_conformance: bool,
+    pub dependency_changes: bool,
+}
+
+impl Default for StaticGateSettings {
+    fn default() -> Self {
+        Self {
+            secret_scan: true,
+            protected_paths: true,
+            max_diff_lines: Some(2_000),
+            scope_conformance: true,
+            dependency_changes: true,
+        }
+    }
 }
 
 #[cfg(test)]

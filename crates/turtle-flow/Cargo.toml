@@ -24,6 +24,7 @@ turtle-api = { workspace = true }
 qrcode = { version = "0.14", default-features = false }
 turtle-artifacts = { workspace = true }
 turtle-domain = { workspace = true }
+turtle-context = { workspace = true }
 turtle-git = { workspace = true }
 turtle-policy = { workspace = true }
 turtle-scheduler = { workspace = true }

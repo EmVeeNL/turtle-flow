@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use turtle_domain::{Actor, JobKey, JobState, JobType, Priority};
+use turtle_domain::{Actor, ArtifactKind, JobKey, JobState, JobType, Priority};
 use turtle_scheduler::{Layout, pr::PrClient};
 use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord};
 use turtle_workflow::{Hold, JobCommand, PauseMode, Profile, ProfileBase};
@@ -423,16 +423,43 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
     let job = find(rt, key).await?;
     let id = job.job.id;
     let project = rt.store.with(move |s| s.project_of_job(id)).await?;
-    let (approvals, events, delivery) = rt
+    let (approvals, events, delivery, gate_revision) = rt
         .store
         .with(move |s| {
             Ok::<_, turtle_store::StoreError>((
                 s.list_approvals(id)?,
                 s.list_events(Some(id))?,
                 s.delivery(id)?,
+                s.latest_revision(id, ArtifactKind::GateResult)?,
             ))
         })
         .await?;
+    if let Some(revision) = gate_revision {
+        let bytes = rt.blobs.get(&revision.sha256)?;
+        let gates: serde_json::Value = serde_json::from_slice(&bytes)?;
+        println!(
+            "  gates        {}",
+            if gates["passed"] == true {
+                "passed"
+            } else {
+                "failed"
+            }
+        );
+        if let Some(results) = gates["results"].as_array() {
+            for result in results {
+                println!(
+                    "    {:<22} {}",
+                    result["gate"].as_str().unwrap_or("unknown"),
+                    result["outcome"].as_str().unwrap_or("unknown")
+                );
+            }
+        }
+        if let Some(flags) = gates["acknowledgement_flags"].as_array() {
+            for flag in flags.iter().filter_map(serde_json::Value::as_str) {
+                println!("    acknowledgement      {flag}");
+            }
+        }
+    }
     println!("{}  {}", job.key, job.title);
     println!("  project      {} ({})", project.name, project.slug);
     println!("  state        {}", label(&job.job.state));

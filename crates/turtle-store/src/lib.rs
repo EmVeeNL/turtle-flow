@@ -15,6 +15,7 @@ pub mod migrate;
 pub mod projects;
 pub mod providers;
 pub mod queue;
+pub mod resources;
 pub mod store;
 
 pub use approvals::{ApprovalRecord, Decision};
@@ -29,6 +30,7 @@ pub use ledger::{
 pub use projects::{DeliveryRecord, DeliveryStatus, ProjectRecord};
 pub use providers::{LimitObservation, QuotaSnapshot};
 pub use queue::{ClaimParams, EffectFate, RecoveryReport};
+pub use resources::{NewResource, ResourceHit, ResourceRecord};
 pub use store::{
     Applied, ChainVerdict, EffectRow, EventRow, JobRecord, NewEvent, NewJob, NewProject,
     RebuiltJob, Store, Tx,
