@@ -32,10 +32,7 @@ impl World {
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-q", "-m", "init"]);
         git(&repo, &["config", "user.name", "Turtle Flow Test"]);
-        git(
-            &repo,
-            &["config", "user.email", "turtle-test@fake.invalid"],
-        );
+        git(&repo, &["config", "user.email", "turtle-test@fake.invalid"]);
         Self {
             home: root.join("home"),
             repo,
