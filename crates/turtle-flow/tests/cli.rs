@@ -31,6 +31,11 @@ impl World {
         std::fs::write(repo.join("README.md"), "# payments\n").expect("write");
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-q", "-m", "init"]);
+        git(&repo, &["config", "user.name", "Turtle Flow Test"]);
+        git(
+            &repo,
+            &["config", "user.email", "turtle-test@fake.invalid"],
+        );
         Self {
             home: root.join("home"),
             repo,
@@ -48,10 +53,6 @@ impl World {
             .env("TURTLE_HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "Turtle Flow Test")
-            .env("GIT_AUTHOR_EMAIL", "turtle-test@fake.invalid")
-            .env("GIT_COMMITTER_NAME", "Turtle Flow Test")
-            .env("GIT_COMMITTER_EMAIL", "turtle-test@fake.invalid")
             .stdin(Stdio::null());
         c
     }
