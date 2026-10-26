@@ -183,7 +183,7 @@ All Turtle Flow Git invocations use: `git -c core.hooksPath=/dev/null -c core.fs
 
 - Each event: `hash = SHA-256(prev_hash ‖ canonical_json(event_without_hash))`. Genesis hash = SHA-256 of Turtle Flow instance ID.
 - `turtle audit verify [--project]` walks the chain; output: OK or first broken `seq`.
-- Security-relevant events (`policy_violation`, `approval_invalidated`, `audit_mismatch`, `sandbox_disabled`, `policy_exception_granted`) are additionally written to `logs/security.log` (append-only file opened with `O_APPEND`).
+- Design target: security-relevant events are also written to `logs/security.log`. This separate file is not implemented; `security.approval_integrity_failed` currently goes to the database event chain.
 - Optional anchoring: daily chain head written to a user-chosen location (e.g. a Git notes ref in a private repo) for external tamper evidence (Future).
 
 ### 6.8 Supply chain (SEC-020)
@@ -194,9 +194,9 @@ All Turtle Flow Git invocations use: `git -c core.hooksPath=/dev/null -c core.fs
 ## 7. Credential Management
 
 - **Provider credentials:** owned by provider CLIs (their login flows, their storage). Turtle Flow never reads, copies or stores them (SEC-012). Consequence: credentials are per OS user, not per project. Per-project credentials require isolated CLI config dirs (OQ-03, Team tier).
-- **API-key mode:** if a user prefers API keys, they are stored in the OS keychain via the `keyring` crate and injected only into that provider's agent processes as the documented env variable.
+- **API-key mode (planned):** provider-key injection via an OS keychain is not implemented. Current provider CLIs manage their own credentials.
 - **Git credentials:** user's existing credential helpers / SSH agent; used only by delivery push. Agent processes run with `SSH_AUTH_SOCK` removed and `GIT_TERMINAL_PROMPT=0`.
-- **Turtle Flow secrets:** dashboard session signing key, approval HMAC key, license keys → OS keychain. On systems without a keychain, a `0600` file with a loud warning (`doctor` reports it).
+- **Turtle Flow secrets:** the implemented approval HMAC key uses macOS Keychain or Linux Secret Service when available, with a `0600` file fallback that `doctor` warns about. Dashboard sessions are held in memory; license keys are not implemented.
 
 ## 8. Isolation Tiers
 
