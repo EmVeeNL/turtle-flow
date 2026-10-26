@@ -182,18 +182,25 @@ mod tests {
                 .expect("git command")
         };
         assert!(run_git(&["init", "-q"]).status.success());
-        let secret = "ghp_synthetic_token_12345678901234567890";
-        std::fs::write(repo.path().join("README.md"), format!("api_key={secret}\n"))
-            .expect("write tracked source");
+        let secrets: Vec<_> = (0..60)
+            .map(|i| format!("ghp_synthetic{i:03}abcdefghijklmnop"))
+            .collect();
+        let source = secrets
+            .iter()
+            .map(|secret| format!("api_key={secret}\n"))
+            .collect::<String>();
+        std::fs::write(repo.path().join("README.md"), source).expect("write tracked source");
         assert!(run_git(&["add", "README.md"]).status.success());
-        let package = turtle_context::build(repo.path(), &[], &[], 500).expect("package");
+        let package = turtle_context::build(repo.path(), &[], &[], 10_000).expect("package");
         let mut req = request(Role::Discovery);
         req.context = Some(AgentContext {
             text: package.text,
             manifest_json: serde_json::to_string(&package.manifest).expect("manifest json"),
         });
         let prompt = build(&req);
-        assert!(!prompt.contains(secret));
+        for secret in secrets {
+            assert!(!prompt.contains(&secret), "prompt leaked {secret}");
+        }
         assert!(prompt.contains("[REDACTED:api_key]"));
         assert!(prompt.contains("<untrusted-repository-context>"));
     }

@@ -18,7 +18,7 @@ specification → scope approval → planning → implementation (isolated Git w
 
 Rust owns the workflow state, policies, budgets, approvals and Git operations. The AI agents act as workers: they produce artifacts, and they never decide what happens next.
 
-- **Hash-bound approvals.** You approve an exact spec or diff revision, and the approval becomes invalid when that revision changes.
+- **Hash-bound approvals.** You approve an exact spec or diff revision; changes invalidate it, and a per-row HMAC detects direct database edits.
 - **Token intelligence.** Every agent run is estimated, reserved against a budget, measured and fed back into estimation and routing. Unknown provider quota is shown as unknown.
 - **Crash-safe.** Every side effect is a recorded, idempotent step, so Turtle Flow resumes correctly after crashes, rate limits or reboots.
 - **Local-first.** A single binary with SQLite. No account and no cloud dependency beyond the AI providers you already use.
@@ -56,7 +56,7 @@ What works:
 - a deterministic, redacted repository context package for runs with a checkout or worktree, with a token-capped manifest stored as an artifact and linked from the run record
 - deterministic diff gates (secret patterns, protected paths, diff size, affected-area scope and dependency changes) and content-addressed, redacted text resources with FTS5 search and trust labels
 - redacted, size-capped run transcripts in the blob store, with permission denials in run events and `turtle job show`
-- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (crash-injection tested at every step), Git worktrees with factory-only commits, local squash and optional GitHub PR delivery, content-addressed artifacts and hash-bound approvals
+- the workflow state machine, SQLite store with hash-chained events, effect outbox with leases and crash recovery (in-process boundary tests and seeded daemon SIGKILL tests), Git worktrees with factory-only commits, local squash and optional GitHub PR delivery, content-addressed artifacts and HMAC-protected, hash-bound approvals
 
 What does not exist yet: automatic preflight approval binding, retry-cost calibration, per-role context budgets and knowledge retrieval, entropy-based secret scanning beyond the current redaction patterns, PDF extraction, currency budgets, per-task strict gates, automatic remote-base fetching or PR merge polling, the Unix-socket CLI API transport (the CLI reads the database directly), licensing. Claude quota snapshots are available only when the CLI emits them; no real Claude limit transcript has been captured yet. Without reported successful history, reservations retain the fixed per-role cold-start size.
 

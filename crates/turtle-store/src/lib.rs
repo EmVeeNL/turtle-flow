@@ -10,6 +10,7 @@ pub mod dashboard;
 pub mod dashboard_reads;
 pub mod error;
 pub mod estimation;
+pub mod integrity;
 pub mod ledger;
 pub mod migrate;
 pub mod projects;

@@ -34,6 +34,8 @@ pub enum StoreError {
     SchemaTooNew { found: u32, supported: u32 },
     #[error("stored data is inconsistent: {0}")]
     Corrupt(String),
+    #[error("approval {id} failed integrity verification")]
+    ApprovalIntegrity { id: String, job: String },
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;

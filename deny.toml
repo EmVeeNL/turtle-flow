@@ -4,7 +4,8 @@
 all-features = true
 
 [advisories]
-# Fail on known vulnerabilities and unmaintained crates in the dependency tree.
+# The CI `cargo deny check` advisory pass scans RustSec like `cargo audit`.
+# Keep this blocking; duplicate-version warnings are reviewed separately.
 unmaintained = "workspace"
 yanked = "deny"
 
