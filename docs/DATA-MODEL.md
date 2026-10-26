@@ -376,7 +376,7 @@ CREATE TABLE approvals (
   auto_rule_id    TEXT,
   expires_at      TEXT,
   invalidated_reason TEXT,
-  hmac            TEXT,                             -- HMAC-SHA256 over (id, subject_hash, status, decided_by, decided_at)
+  hmac            TEXT,                             -- HMAC-SHA256 over all persisted approval fields except hmac (implemented in schema v7)
   created_at      TEXT NOT NULL,
   CHECK (job_id IS NOT NULL OR release_id IS NOT NULL)
 );
