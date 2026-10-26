@@ -88,7 +88,15 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
         let approved = self
             .engine
             .store()
-            .with(move |s| s.latest_approved(id, gate))
+            .with(move |s| {
+                let approved = s.latest_approved(id, gate)?;
+                if let turtle_store::ChainVerdict::Broken { seq, .. } = s.verify_chain()? {
+                    return Err(StoreError::Corrupt(format!(
+                        "audit chain broken at event {seq}"
+                    )));
+                }
+                Ok(approved)
+            })
             .await?
             .ok_or(ApprovalError::MissingCurrent(gate))?;
         if approved.binding.subject_hash() != approved.subject_hash

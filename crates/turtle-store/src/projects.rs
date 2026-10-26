@@ -278,6 +278,7 @@ impl Tx<'_> {
                 "UPDATE approvals SET status = 'superseded' WHERE id = ?1",
                 [id],
             )?;
+            self.resign_approval(id)?;
             self.append_event(&NewEvent {
                 project_id: Some(rec.project_id),
                 job_id: Some(job),

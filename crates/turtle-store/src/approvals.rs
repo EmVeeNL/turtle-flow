@@ -9,6 +9,7 @@ use turtle_domain::{Actor, ApprovalId, ApprovalStatus, GateKind, JobId, Sha256};
 use turtle_policy::ApprovalBinding;
 
 use crate::error::{Result, StoreError};
+use crate::integrity::{self, Key};
 use crate::store::{NewEvent, Tx, from_s, to_s};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,8 @@ pub struct ApprovalRecord {
 }
 
 const SELECT: &str = "SELECT id, job_id, gate_kind, binding_json, subject_hash, status, decided_by,
-    decided_at, channel, comment, invalidated_reason, created_at FROM approvals";
+    decided_at, channel, comment, invalidated_reason, created_at, hmac, release_id,
+    auto_rule_id, expires_at FROM approvals";
 
 /// An approval row exactly as stored, before parsing.
 struct RawApproval {
@@ -51,6 +53,10 @@ struct RawApproval {
     comment: Option<String>,
     invalidated_reason: Option<String>,
     created_at: String,
+    hmac: Option<String>,
+    release_id: Option<String>,
+    auto_rule_id: Option<String>,
+    expires_at: Option<String>,
 }
 
 fn map(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawApproval> {
@@ -67,10 +73,49 @@ fn map(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawApproval> {
         comment: r.get(9)?,
         invalidated_reason: r.get(10)?,
         created_at: r.get(11)?,
+        hmac: r.get(12)?,
+        release_id: r.get(13)?,
+        auto_rule_id: r.get(14)?,
+        expires_at: r.get(15)?,
     })
 }
 
-fn build(t: RawApproval) -> Result<ApprovalRecord> {
+fn signature(t: &RawApproval, key: &Key) -> Result<String> {
+    let fields = serde_json::json!([
+        t.id,
+        t.job_id,
+        t.gate,
+        t.binding,
+        t.subject_hash,
+        t.status,
+        t.decided_by,
+        t.decided_at,
+        t.channel,
+        t.comment,
+        t.invalidated_reason,
+        t.created_at,
+        t.release_id,
+        t.auto_rule_id,
+        t.expires_at
+    ]);
+    Ok(integrity::mac(
+        key,
+        serde_json::to_string(&fields)?.as_bytes(),
+    ))
+}
+
+fn build(t: RawApproval, key: &Key) -> Result<ApprovalRecord> {
+    let expected = signature(&t, key)?;
+    if !t
+        .hmac
+        .as_ref()
+        .is_some_and(|h| integrity::matches(h, &expected))
+    {
+        return Err(StoreError::ApprovalIntegrity {
+            id: t.id,
+            job: t.job_id,
+        });
+    }
     Ok(ApprovalRecord {
         id: t
             .id
@@ -96,16 +141,21 @@ fn build(t: RawApproval) -> Result<ApprovalRecord> {
     })
 }
 
-pub(crate) fn approval(conn: &rusqlite::Connection, id: ApprovalId) -> Result<ApprovalRecord> {
+pub(crate) fn approval(
+    conn: &rusqlite::Connection,
+    key: &Key,
+    id: ApprovalId,
+) -> Result<ApprovalRecord> {
     conn.query_row(&format!("{SELECT} WHERE id = ?1"), [id.to_string()], map)
         .optional()?
-        .map(build)
+        .map(|r| build(r, key))
         .transpose()?
         .ok_or_else(|| StoreError::NotFound(format!("approval {id}")))
 }
 
 pub(crate) fn latest_with_status(
     conn: &rusqlite::Connection,
+    key: &Key,
     job: JobId,
     gate: GateKind,
     status: ApprovalStatus,
@@ -116,29 +166,72 @@ pub(crate) fn latest_with_status(
         map,
     )
     .optional()?
-    .map(build)
+    .map(|r| build(r, key))
     .transpose()
 }
 
-pub(crate) fn pending(conn: &rusqlite::Connection) -> Result<Vec<ApprovalRecord>> {
+pub(crate) fn pending(conn: &rusqlite::Connection, key: &Key) -> Result<Vec<ApprovalRecord>> {
     let mut stmt = conn.prepare(&format!(
         "{SELECT} WHERE status = 'pending' ORDER BY created_at, id"
     ))?;
     let rows = stmt.query_map([], map)?;
-    rows.map(|r| build(r?)).collect()
+    rows.map(|r| build(r?, key)).collect()
 }
 
-pub(crate) fn list_for_job(conn: &rusqlite::Connection, job: JobId) -> Result<Vec<ApprovalRecord>> {
+pub(crate) fn list_for_job(
+    conn: &rusqlite::Connection,
+    key: &Key,
+    job: JobId,
+) -> Result<Vec<ApprovalRecord>> {
     let mut stmt = conn.prepare(&format!(
         "{SELECT} WHERE job_id = ?1 ORDER BY created_at, id"
     ))?;
     let rows = stmt.query_map([job.to_string()], map)?;
-    rows.map(|r| build(r?)).collect()
+    rows.map(|r| build(r?, key)).collect()
+}
+
+fn verify_for_gate(
+    conn: &rusqlite::Connection,
+    key: &Key,
+    job: JobId,
+    gate: GateKind,
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("{SELECT} WHERE job_id = ?1 AND gate_kind = ?2"))?;
+    let rows = stmt.query_map(params![job.to_string(), to_s(&gate)?], map)?;
+    for row in rows {
+        build(row?, key)?;
+    }
+    Ok(())
+}
+
+fn sign_row(conn: &rusqlite::Connection, key: &Key, id: &str) -> Result<()> {
+    let raw = conn.query_row(&format!("{SELECT} WHERE id = ?1"), [id], map)?;
+    let mac = signature(&raw, key)?;
+    conn.execute(
+        "UPDATE approvals SET hmac = ?1 WHERE id = ?2",
+        params![mac, id],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn sign_legacy_rows(conn: &rusqlite::Connection, key: &Key) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT id FROM approvals WHERE hmac IS NULL")?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for id in ids {
+        sign_row(conn, key, &id)?;
+    }
+    Ok(())
 }
 
 impl Tx<'_> {
+    pub(crate) fn resign_approval(&self, id: &str) -> Result<()> {
+        sign_row(&self.tx, self.approval_key, id)
+    }
+
     pub fn approval(&self, id: ApprovalId) -> Result<ApprovalRecord> {
-        approval(&self.tx, id)
+        approval(&self.tx, self.approval_key, id)
     }
 
     /// Requests an approval for `binding`. Idempotent: an identical pending approval is
@@ -151,9 +244,13 @@ impl Tx<'_> {
         let gate = binding.gate_kind;
         let hash = binding.subject_hash();
 
-        if let Some(existing) =
-            latest_with_status(&self.tx, binding.job_id, gate, ApprovalStatus::Pending)?
-        {
+        if let Some(existing) = latest_with_status(
+            &self.tx,
+            self.approval_key,
+            binding.job_id,
+            gate,
+            ApprovalStatus::Pending,
+        )? {
             if existing.subject_hash == hash {
                 return Ok((existing, false));
             }
@@ -161,6 +258,7 @@ impl Tx<'_> {
                 "UPDATE approvals SET status = 'superseded' WHERE id = ?1",
                 [existing.id.to_string()],
             )?;
+            sign_row(&self.tx, self.approval_key, &existing.id.to_string())?;
             self.approval_event(
                 &job,
                 "approval.superseded",
@@ -175,7 +273,8 @@ impl Tx<'_> {
              VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
             params![id.to_string(), binding.job_id.to_string(), to_s(&gate)?, binding.canonical_json(), hash.to_string(), now],
         )?;
-        let record = approval(&self.tx, id)?;
+        sign_row(&self.tx, self.approval_key, &id.to_string())?;
+        let record = approval(&self.tx, self.approval_key, id)?;
         self.approval_event(&job, "approval.requested", &record, serde_json::json!({}))?;
         Ok((record, true))
     }
@@ -197,7 +296,7 @@ impl Tx<'_> {
                 "only users can decide approvals".into(),
             ));
         };
-        let current = approval(&self.tx, id)?;
+        let current = approval(&self.tx, self.approval_key, id)?;
         if current.status != ApprovalStatus::Pending {
             return Err(StoreError::NotPending {
                 id: id.to_string(),
@@ -222,7 +321,8 @@ impl Tx<'_> {
              WHERE id = ?6 AND status = 'pending'",
             params![status, user, now, channel, comment, id.to_string()],
         )?;
-        let record = approval(&self.tx, id)?;
+        sign_row(&self.tx, self.approval_key, &id.to_string())?;
+        let record = approval(&self.tx, self.approval_key, id)?;
         let job = self.load_job(record.job_id)?;
         self.approval_event(
             &job,
@@ -248,13 +348,15 @@ impl Tx<'_> {
                     "{SELECT} WHERE job_id = ?1 AND gate_kind = ?2 AND status IN ('pending','approved')"
                 ))?;
                 let rows = stmt.query_map(params![job.to_string(), to_s(gate)?], map)?;
-                rows.map(|r| build(r?)).collect::<Result<_>>()?
+                rows.map(|r| build(r?, self.approval_key))
+                    .collect::<Result<_>>()?
             };
             for a in affected {
                 self.tx.execute(
                     "UPDATE approvals SET status = 'invalidated', invalidated_reason = ?1 WHERE id = ?2",
                     params![reason, a.id.to_string()],
                 )?;
+                sign_row(&self.tx, self.approval_key, &a.id.to_string())?;
                 self.approval_event(
                     &job_rec,
                     "approval.invalidated",
@@ -301,23 +403,73 @@ impl Tx<'_> {
 }
 
 impl crate::store::Store {
-    pub fn approval(&self, id: ApprovalId) -> Result<ApprovalRecord> {
-        approval(self.raw_connection(), id)
+    fn report_integrity_failure<T>(&mut self, result: Result<T>) -> Result<T> {
+        if let Err(StoreError::ApprovalIntegrity { id, job }) = &result {
+            let id = id.clone();
+            let linked = job.parse::<JobId>().ok().and_then(|job_id| {
+                self.load_job(job_id)
+                    .ok()
+                    .map(|record| (job_id, record.project_id))
+            });
+            let seen: bool = self.raw_connection().query_row(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE type='security.approval_integrity_failed' AND json_extract(payload, '$.approval')=?1)",
+                [id.as_str()], |r| r.get(0)
+            )?;
+            if seen {
+                return result;
+            }
+            self.transaction(|tx| {
+                tx.append_event(&crate::store::NewEvent {
+                    project_id: linked.map(|(_, project_id)| project_id),
+                    job_id: linked.map(|(job_id, _)| job_id),
+                    kind: "security.approval_integrity_failed".into(),
+                    payload: serde_json::json!({"approval": id}),
+                    actor: Actor::System,
+                })?;
+                Ok(())
+            })?;
+        }
+        result
     }
 
-    pub fn latest_approved(&self, job: JobId, gate: GateKind) -> Result<Option<ApprovalRecord>> {
-        latest_with_status(self.raw_connection(), job, gate, ApprovalStatus::Approved)
+    pub fn approval(&mut self, id: ApprovalId) -> Result<ApprovalRecord> {
+        let result = approval(self.raw_connection(), &self.approval_key, id);
+        self.report_integrity_failure(result)
+    }
+
+    pub fn latest_approved(
+        &mut self,
+        job: JobId,
+        gate: GateKind,
+    ) -> Result<Option<ApprovalRecord>> {
+        let result = verify_for_gate(self.raw_connection(), &self.approval_key, job, gate)
+            .and_then(|()| {
+                latest_with_status(
+                    self.raw_connection(),
+                    &self.approval_key,
+                    job,
+                    gate,
+                    ApprovalStatus::Approved,
+                )
+            });
+        self.report_integrity_failure(result)
     }
 
     pub fn pending_approval(&self, job: JobId, gate: GateKind) -> Result<Option<ApprovalRecord>> {
-        latest_with_status(self.raw_connection(), job, gate, ApprovalStatus::Pending)
+        latest_with_status(
+            self.raw_connection(),
+            &self.approval_key,
+            job,
+            gate,
+            ApprovalStatus::Pending,
+        )
     }
 
     pub fn pending_approvals(&self) -> Result<Vec<ApprovalRecord>> {
-        pending(self.raw_connection())
+        pending(self.raw_connection(), &self.approval_key)
     }
 
     pub fn list_approvals(&self, job: JobId) -> Result<Vec<ApprovalRecord>> {
-        list_for_job(self.raw_connection(), job)
+        list_for_job(self.raw_connection(), &self.approval_key, job)
     }
 }

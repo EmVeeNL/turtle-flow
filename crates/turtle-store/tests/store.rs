@@ -529,6 +529,10 @@ fn database_file_is_private_and_reopens_with_same_identity() {
         |p: &std::path::Path| std::fs::metadata(p).expect("meta").permissions().mode() & 0o777;
     assert_eq!(mode(&path), 0o600);
     assert_eq!(mode(path.parent().expect("parent")), 0o700);
+    let fallback = path.with_extension("approval-key");
+    if fallback.exists() {
+        assert_eq!(mode(&fallback), 0o600);
+    }
 
     let s = Store::open(&path, Arc::new(StepClock::default())).expect("reopen");
     assert_eq!(s.installation_id().expect("id"), id);

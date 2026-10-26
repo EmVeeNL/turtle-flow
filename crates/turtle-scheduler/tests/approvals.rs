@@ -300,7 +300,20 @@ async fn a_tampered_approved_binding_is_rejected() {
         .current_approved(&job, GateKind::Scope)
         .await
         .expect_err("tampered binding");
-    assert!(matches!(err, ApprovalError::Stale));
+    assert!(matches!(
+        err,
+        ApprovalError::Store(StoreError::ApprovalIntegrity { .. })
+    ));
+    let events = e
+        .store
+        .with(move |s| s.list_events(Some(id)))
+        .await
+        .expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == "security.approval_integrity_failed")
+    );
 }
 
 #[tokio::test]
@@ -780,6 +793,35 @@ async fn acceptance_binds_to_the_commit_and_requires_acknowledging_flags() {
         .await
         .expect("approve with all flags");
     assert_eq!(job.job.state, JobState::Delivery);
+}
+
+#[tokio::test]
+async fn delivery_guard_rejects_a_broken_job_audit_chain() {
+    let e = env(Profile::standard()).await;
+    to_acceptance(&e).await;
+    e.git.set("head-1", &[]);
+    e.service
+        .request(e.job, GateKind::Acceptance)
+        .await
+        .expect("request");
+    e.approve(GateKind::Acceptance, vec![])
+        .await
+        .expect("approve");
+    let id = e.job;
+    e.store.with(move |s| {
+        s.raw_connection().execute_batch("DROP TRIGGER trg_events_no_update").expect("disable append-only trigger for tamper fixture");
+        s.raw_connection().execute("UPDATE events SET payload='{}' WHERE seq=(SELECT min(seq) FROM events WHERE job_id=?1)", [id.to_string()]).expect("tamper event");
+    }).await;
+    let job = e.store.with(move |s| s.load_job(id)).await.expect("job");
+    let err = e
+        .service
+        .current_approved(&job, GateKind::Acceptance)
+        .await
+        .expect_err("broken chain must block delivery");
+    assert!(
+        matches!(err, ApprovalError::Store(StoreError::Corrupt(_))),
+        "{err}"
+    );
 }
 
 #[tokio::test]

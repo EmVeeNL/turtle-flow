@@ -42,6 +42,7 @@ pub async fn run(json: bool) -> ExitCode {
         });
     }
     checks.push(check_data_dir());
+    checks.push(check_approval_key());
 
     if json {
         let out = serde_json::to_string_pretty(&checks)
@@ -160,6 +161,46 @@ fn check_data_dir() -> Check {
                     fix: Some(format!("chmod 700 {}", dir.display())),
                 }
             }
+        }
+    }
+}
+
+fn check_approval_key() -> Check {
+    let Some(dir) = data_dir() else {
+        return Check {
+            name: "approval-key".into(),
+            level: Level::Fail,
+            detail: "data directory unavailable".into(),
+            fix: None,
+        };
+    };
+    let key = dir.join("turtle.approval-key");
+    if key.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&key).map(|m| m.permissions().mode() & 0o777);
+        if !mode.is_ok_and(|m| m & 0o077 == 0) {
+            return Check {
+                name: "approval-key".into(),
+                level: Level::Fail,
+                detail: "fallback key file is readable by other users".into(),
+                fix: Some(format!("chmod 600 {}", key.display())),
+            };
+        }
+        Check {
+            name: "approval-key".into(),
+            level: Level::Warn,
+            detail: "0600 file fallback (weaker than OS keychain)".into(),
+            fix: Some(
+                "configure macOS Keychain or Linux Secret Service for stronger key isolation"
+                    .into(),
+            ),
+        }
+    } else {
+        Check {
+            name: "approval-key".into(),
+            level: Level::Warn,
+            detail: "no fallback file; keychain status unknown without opening the database".into(),
+            fix: None,
         }
     }
 }

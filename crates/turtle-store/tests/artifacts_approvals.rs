@@ -70,6 +70,160 @@ fn binding(job: &JobRecord, gate: GateKind, spec_hash: Sha256, rev: u32) -> Appr
 }
 
 #[test]
+fn direct_database_edits_cannot_forge_or_retarget_approvals() {
+    let dir = tempfile::tempdir().expect("temporary database directory");
+    let path = dir.path().join("turtle.db");
+    let mut s = Store::open(&path, Arc::new(StepClock::default())).expect("open");
+    let job = s
+        .transaction(|tx| {
+            let project_id = tx.insert_project(&NewProject {
+                slug: "proj".into(),
+                key_prefix: "API".into(),
+                name: "P".into(),
+                description: String::new(),
+                repo_path: "/tmp/p".into(),
+                default_branch: "main".into(),
+                default_profile: "standard".into(),
+            })?;
+            tx.create_job(
+                &NewJob {
+                    project_id,
+                    title: "t".into(),
+                    description: String::new(),
+                    job_type: JobType::Feature,
+                    priority: Priority::Normal,
+                    profile: Profile::standard(),
+                },
+                &Actor::local_user(),
+            )
+        })
+        .expect("job");
+    let (forged, edited) = s
+        .transaction(|tx| {
+            let a = tx
+                .request_approval(&binding(&job, GateKind::Scope, sha(1), 1))?
+                .0;
+            let b = tx
+                .request_approval(&binding(&job, GateKind::Plan, sha(2), 1))?
+                .0;
+            Ok((a, b))
+        })
+        .expect("approvals");
+    drop(s);
+
+    let db = rusqlite::Connection::open(&path).expect("open database directly");
+    db.execute(
+        "UPDATE approvals SET status='approved', decided_by='attacker' WHERE id=?1",
+        [forged.id.to_string()],
+    )
+    .expect("forge decision");
+    db.execute(
+        "UPDATE approvals SET subject_hash=?1 WHERE id=?2",
+        rusqlite::params![sha(9).to_string(), edited.id.to_string()],
+    )
+    .expect("edit binding hash");
+    drop(db);
+
+    let mut s = Store::open(&path, Arc::new(StepClock::default())).expect("reopen");
+    assert!(matches!(
+        s.latest_approved(job.job.id, GateKind::Scope),
+        Err(StoreError::ApprovalIntegrity { .. })
+    ));
+    assert!(matches!(
+        s.approval(edited.id),
+        Err(StoreError::ApprovalIntegrity { .. })
+    ));
+    assert!(matches!(
+        s.latest_approved(job.job.id, GateKind::Scope),
+        Err(StoreError::ApprovalIntegrity { .. })
+    ));
+    let events = s.list_events(Some(job.job.id)).expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "security.approval_integrity_failed")
+            .count(),
+        2
+    );
+    assert!(matches!(
+        s.verify_chain().expect("chain"),
+        ChainVerdict::Intact { .. }
+    ));
+    drop(s);
+    let db = rusqlite::Connection::open(&path).expect("open database directly");
+    db.execute(
+        "UPDATE approvals SET hmac=NULL WHERE id=?1",
+        [forged.id.to_string()],
+    )
+    .expect("remove signature");
+    drop(db);
+    let mut s = Store::open(&path, Arc::new(StepClock::default())).expect("reopen unsigned row");
+    assert!(matches!(
+        s.latest_approved(job.job.id, GateKind::Scope),
+        Err(StoreError::ApprovalIntegrity { .. })
+    ));
+    drop(s);
+    let db = rusqlite::Connection::open(&path).expect("open database directly");
+    db.pragma_update(None, "user_version", 6)
+        .expect("downgrade schema marker");
+    drop(db);
+    assert!(matches!(
+        Store::open(&path, Arc::new(StepClock::default())),
+        Err(StoreError::Corrupt(_))
+    ));
+}
+
+#[test]
+fn v6_unsigned_approvals_are_signed_once_during_upgrade() {
+    let dir = tempfile::tempdir().expect("temporary database directory");
+    let path = dir.path().join("turtle.db");
+    let db = rusqlite::Connection::open(&path).expect("create v6 database");
+    for sql in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_estimation_observations.sql"),
+        include_str!("../migrations/0003_provider_quota.sql"),
+        include_str!("../migrations/0004_dashboard_login.sql"),
+        include_str!("../migrations/0005_dashboard_scope.sql"),
+        include_str!("../migrations/0006_resources_fts.sql"),
+    ] {
+        db.execute_batch(sql).expect("old migration");
+    }
+    db.pragma_update(None, "user_version", 6)
+        .expect("v6 marker");
+    db.execute(
+        "INSERT INTO store_meta(key,value) VALUES ('installation_id','legacy-installation')",
+        [],
+    )
+    .expect("installation");
+    db.pragma_update(None, "foreign_keys", "OFF")
+        .expect("isolated legacy approval fixture");
+    let binding = ApprovalBinding::new(GateKind::Scope, turtle_domain::JobId::new(), sha(1), 1);
+    let id = turtle_domain::ApprovalId::new();
+    db.execute("INSERT INTO approvals(id,job_id,gate_kind,binding_json,subject_hash,status,created_at) VALUES (?1,?2,'scope',?3,?4,'pending','2026-01-01T00:00:00Z')",
+        rusqlite::params![id.to_string(), binding.job_id.to_string(), binding.canonical_json(), binding.subject_hash().to_string()]).expect("legacy approval");
+    drop(db);
+
+    let mut store = Store::open(&path, Arc::new(StepClock::default())).expect("upgrade");
+    assert_eq!(
+        store.approval(id).expect("signed approval").status,
+        ApprovalStatus::Pending
+    );
+    let hmac: Option<String> = store
+        .raw_connection()
+        .query_row(
+            "SELECT hmac FROM approvals WHERE id=?1",
+            [id.to_string()],
+            |r| r.get(0),
+        )
+        .expect("signature");
+    assert_eq!(hmac.expect("signed row").len(), 64);
+    assert_eq!(
+        turtle_store::migrate::current_version(store.raw_connection()).expect("version"),
+        7
+    );
+}
+
+#[test]
 fn revisions_are_numbered_linked_and_deduplicated() {
     let (mut s, job) = setup();
     let agent = Actor::AgentRun { id: RunId::new() };
