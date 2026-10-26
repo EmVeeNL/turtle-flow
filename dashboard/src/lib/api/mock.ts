@@ -59,6 +59,7 @@ export const mockData: DashboardData = {
 };
 mockData.approvals[0]!.binding.artifacts = mockData.artifacts;
 export const mockAdapter: DashboardAdapter = {
+  async me() { return {readonly:false}; },
   async overview(){ return mockData; },
   async project(slug){ return mockData.projects.find(p=>p.slug===slug) ?? null; },
   async job(key){ return mockData.jobs.find(j=>j.key===key) ?? null; },

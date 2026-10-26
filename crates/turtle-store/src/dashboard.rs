@@ -38,7 +38,12 @@ impl Tx<'_> {
 
 impl Store {
     /// Only the digest is stored. The caller gives the code to the browser once.
-    pub fn create_dashboard_code(&mut self, hash: &str, expires_at: &str) -> Result<()> {
+    pub fn create_dashboard_code(
+        &mut self,
+        hash: &str,
+        expires_at: &str,
+        scope: &str,
+    ) -> Result<()> {
         let now = self
             .now()
             .format(&Rfc3339)
@@ -48,34 +53,34 @@ impl Store {
             [now],
         )?;
         self.conn.execute(
-            "INSERT INTO dashboard_login_codes(code_hash, expires_at) VALUES (?1, ?2)",
-            params![hash, expires_at],
+            "INSERT INTO dashboard_login_codes(code_hash, expires_at, scope) VALUES (?1, ?2, ?3)",
+            params![hash, expires_at, scope],
         )?;
         Ok(())
     }
 
     /// An immediate transaction makes redemption atomic across concurrent requests.
-    pub fn redeem_dashboard_code(&mut self, hash: &str) -> Result<bool> {
+    pub fn redeem_dashboard_code(&mut self, hash: &str) -> Result<Option<String>> {
         let now = self
             .now()
             .format(&Rfc3339)
             .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         self.transaction(|tx| {
             let candidate = {
-                let mut stmt = tx.tx.prepare("SELECT code_hash FROM dashboard_login_codes WHERE used_at IS NULL AND julianday(expires_at)>julianday(?1)")?;
-                let rows = stmt.query_map([&now], |r| r.get::<_, String>(0))?;
+                let mut stmt = tx.tx.prepare("SELECT code_hash, scope FROM dashboard_login_codes WHERE used_at IS NULL AND julianday(expires_at)>julianday(?1)")?;
+                let rows = stmt.query_map([&now], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
                 let mut found = None;
                 for row in rows {
-                    let stored = row?;
+                    let (stored, scope) = row?;
                     let mut diff = 0u8;
                     for (a, b) in stored.bytes().zip(hash.bytes()) { diff |= a ^ b; }
-                    if stored.len() == hash.len() && diff == 0 { found = Some(stored); }
+                    if stored.len() == hash.len() && diff == 0 { found = Some((stored, scope)); }
                 }
                 found
             };
-            let Some(candidate) = candidate else { return Ok(false); };
+            let Some((candidate, scope)) = candidate else { return Ok(None); };
             let changed = tx.tx.execute("UPDATE dashboard_login_codes SET used_at=?2 WHERE code_hash=?1 AND used_at IS NULL", params![candidate, now])?;
-            Ok(changed == 1)
+            Ok((changed == 1).then_some(scope))
         })
     }
 

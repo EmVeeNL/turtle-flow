@@ -1,12 +1,13 @@
 # Local API v1
 
-The daemon serves the built dashboard and JSON API on `http://127.0.0.1:<port>`. The chosen port is in `<TURTLE_HOME>/run/api.port` (0600). `turtle dashboard` requires an interactive terminal, creates a 60-second single-use code, and opens `/login#code=…`. The fragment never reaches the server. `/api/v1/session` exchanges it for an in-memory 12-hour sliding session. The cookie is `HttpOnly; SameSite=Strict; Path=/`; it has no `Secure` attribute because this server uses plain loopback HTTP and browsers must send it back.
+The daemon serves the built dashboard and JSON API on `http://127.0.0.1:<port>`. The chosen port is in `<TURTLE_HOME>/run/api.port` (0600). `turtle dashboard` requires an interactive terminal, creates a 60-second single-use full-scope code, and opens `/login#code=…`. `turtle dashboard --phone` issues a read-only code for `https://<tailnet-host>/login#code=…` after checking the daemon's configured host and Tailscale Serve status. The fragment never reaches the server. `/api/v1/session` exchanges the code for an in-memory 12-hour sliding session. Loopback cookies are `HttpOnly; SameSite=Strict; Path=/`; tailnet cookies also set `Secure`.
 
-Every request needs `Host: 127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`. Every POST also needs an exact same-origin `Origin` and `X-Turtle-Request: 1`. Only `/login`, `/login.js`, `/api/v1/session`, and `/api/v1/health` are public. No CORS headers are sent. Errors are JSON: `{ "error": { "code": "not_found|conflict|unauthorized|unavailable|bad_request|invalid_origin|invalid_host|invalid_code|method_not_allowed", "message": "…" } }`.
+Every request needs a configured Host: loopback hosts above, or the daemon's exact validated `--tailnet-host` / auto-detected Tailscale DNS name. Mutating methods also need an exact same-origin `Origin` and `X-Turtle-Request: 1`. Only `/login`, `/login.js`, `/api/v1/session`, and `/api/v1/health` are public. No CORS headers are sent. Read-only sessions may use GET and HEAD only; other methods return `403` with code `read_only_session`. `GET /api/v1/me` returns `{ "readonly": boolean }`. Errors are JSON: `{ "error": { "code": "not_found|conflict|unauthorized|unavailable|bad_request|invalid_origin|invalid_host|invalid_code|read_only_session|method_not_allowed", "message": "…" } }`.
 
 | Method | Path | Result |
 | --- | --- | --- |
-| GET | `/api/v1/health` | Public `{status:"ok"}` |
+| GET | `/api/v1/health` | Public `{status:"ok",tailnet_host:string|null}`; the host is used by the CLI to verify daemon configuration |
+| GET | `/api/v1/me` | Current session scope `{readonly:boolean}` |
 | POST | `/api/v1/session` | `{code}` → session cookie; expired and replayed codes return 401 |
 | GET | `/api/v1/overview` | `DashboardData`: projects, jobs, pending approvals, recent runs and events, artifacts, tasks, providers, budgets. Resources are empty until resource ingestion exists. |
 | GET | `/api/v1/projects/{slug}` | Project with its jobs, or 404 |

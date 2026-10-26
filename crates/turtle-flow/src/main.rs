@@ -51,7 +51,11 @@ enum Command {
     /// Say whether the daemon is running.
     Status,
     /// Open the local dashboard using a one-time interactive login code.
-    Dashboard,
+    Dashboard {
+        /// Print a read-only QR login link for a Tailscale device.
+        #[arg(long)]
+        phone: bool,
+    },
     /// Run the daemon in the foreground (what `up` starts).
     Daemon {
         #[command(flatten)]
@@ -97,6 +101,9 @@ struct AgentArgs {
     /// Fixed loopback API port (default: random available port).
     #[arg(long)]
     api_port: Option<u16>,
+    /// Allow the API through Tailscale Serve at this MagicDNS name.
+    #[arg(long)]
+    tailnet_host: Option<String>,
     /// Ordered provider list: claude, codex, or both (demo runs alone).
     #[arg(long)]
     agent: Option<String>,
@@ -125,6 +132,7 @@ impl AgentArgs {
         DaemonOptions {
             no_api: self.no_api,
             api_port: self.api_port,
+            tailnet_host: self.tailnet_host.clone(),
             agent: self.agent.clone(),
             role_agent: self.role_agent.clone(),
             claude_model: self.claude_model.clone(),
@@ -174,7 +182,7 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home).await?,
-        Command::Dashboard => cmd::daemon::dashboard(&home).await?,
+        Command::Dashboard { phone } => cmd::daemon::dashboard(&home, phone).await?,
         Command::Daemon { agent } => {
             let options = agent.options();
             cmd::daemon::run(home, options).await?;

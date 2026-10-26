@@ -22,6 +22,7 @@ async function optional<T>(path: string): Promise<T | null> {
   catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
 }
 export const realAdapter: DashboardAdapter = {
+  me: () => request<{readonly:boolean}>('/me'),
   overview: () => request<DashboardData>('/overview'),
   project: slug => optional<Project>(`/projects/${encodeURIComponent(slug)}`),
   job: key => optional<Job>(`/jobs/${encodeURIComponent(key)}?include=tasks,artifacts,approvals,usage,events`),

@@ -19,6 +19,7 @@ export interface Event { id: string; seq: number; occurred_at: string; type: str
 export interface Provider { id: string; name: string; version: string | null; model: string | null; status: 'healthy' | 'rate_limited' | 'untested'; running: string | null; quota: string | null; capabilities: Record<string, 'known' | 'unsupported' | 'unknown'>; price_per_million: number | null; }
 export interface DashboardData { projects: Project[]; jobs: Job[]; approvals: Approval[]; runs: AgentRun[]; artifacts: ArtifactRevision[]; tasks: Task[]; resources: Resource[]; events: Event[]; providers: Provider[]; }
 export interface DashboardAdapter {
+  me(): Promise<{ readonly: boolean }>;
   overview(): Promise<DashboardData>;
   project(slug: string): Promise<Project | null>;
   job(key: string): Promise<Job | null>;
