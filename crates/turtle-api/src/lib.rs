@@ -22,12 +22,13 @@ use subtle::ConstantTimeEq;
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{net::TcpListener, sync::watch};
 use turtle_artifacts::BlobStore;
-use turtle_domain::{Actor, ApprovalId, JobKey, Sha256 as SubjectHash};
+use turtle_domain::{Actor, ApprovalId, JobKey, JobType, Priority, Sha256 as SubjectHash};
 use turtle_scheduler::{
-    ApprovalError, ApprovalService, Engine, RepoGitFacts, SharedStore, StoreContext,
+    AddProject, ApprovalError, ApprovalService, Engine, ProjectError, ProjectService, RepoGitFacts,
+    SharedStore, StoreContext, lift_budget_hold,
 };
-use turtle_store::{Decision, StoreError};
-use turtle_workflow::{JobCommand, PauseMode};
+use turtle_store::{BudgetScope, Decision, NewJob, StoreError};
+use turtle_workflow::{JobCommand, PauseMode, Profile, ProfileBase};
 
 type Context = StoreContext<RepoGitFacts>;
 
@@ -36,6 +37,7 @@ pub struct Services {
     pub store: SharedStore,
     pub engine: Engine<Context>,
     pub approvals: ApprovalService<Context, RepoGitFacts>,
+    pub projects: ProjectService,
     pub blobs: Arc<BlobStore>,
 }
 #[derive(Debug)]
@@ -254,7 +256,10 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/session", post(exchange_session))
         .route("/api/v1/me", get(me))
         .route("/api/v1/overview", get(data::overview))
+        .route("/api/v1/projects", post(create_project))
         .route("/api/v1/projects/{slug}", get(data::project))
+        .route("/api/v1/projects/{slug}/jobs", post(create_job))
+        .route("/api/v1/budgets", post(set_budget))
         .route("/api/v1/jobs/{key}", get(data::job))
         .route("/api/v1/approvals/{id}", get(data::approval))
         .route("/api/v1/approvals/{id}/decisions", post(decide_approval))
@@ -481,6 +486,221 @@ async fn me(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
     Json(json!({"readonly":read_only}))
 }
 #[derive(Deserialize)]
+struct CreateProjectRequest {
+    path: String,
+    slug: Option<String>,
+    name: Option<String>,
+    key: Option<String>,
+    profile: Option<String>,
+    branch: Option<String>,
+}
+async fn create_project(
+    State(state): State<AppState>,
+    payload: Result<Json<CreateProjectRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(input) = payload.map_err(|_| ApiError::bad("invalid JSON body"))?;
+    let project = state
+        .services
+        .projects
+        .add(AddProject {
+            path: PathBuf::from(input.path),
+            slug: input.slug,
+            name: input.name,
+            key: input.key,
+            profile: input.profile.unwrap_or_else(|| "standard".into()),
+            branch: input.branch,
+        })
+        .await
+        .map_err(|error| match error {
+            ProjectError::Invalid(message) => ApiError::bad(message),
+            ProjectError::Store(error) => store_error(error),
+        })?;
+    Ok(Json(
+        json!({"ok":true,"id":project.0.to_string(),"slug":project.1}),
+    ))
+}
+#[derive(Deserialize)]
+struct CreateJobRequest {
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(rename = "type", default = "default_job_type")]
+    job_type: String,
+    #[serde(default = "default_priority")]
+    priority: String,
+    profile: Option<String>,
+    budget: Option<u64>,
+    start: Option<bool>,
+}
+fn default_job_type() -> String {
+    "feature".into()
+}
+fn default_priority() -> String {
+    "normal".into()
+}
+async fn create_job(
+    State(state): State<AppState>,
+    AxumPath(slug): AxumPath<String>,
+    payload: Result<Json<CreateJobRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(input) = payload.map_err(|_| ApiError::bad("invalid JSON body"))?;
+    if input.title.trim().is_empty() {
+        return Err(ApiError::bad("title must not be empty"));
+    }
+    let job_type: JobType = serde_json::from_value(json!(input.job_type))
+        .map_err(|_| ApiError::bad("type must be feature, bugfix, refactor, docs, or chore"))?;
+    let priority: Priority = serde_json::from_value(json!(input.priority))
+        .map_err(|_| ApiError::bad("priority must be low, normal, high, or urgent"))?;
+    if input.budget == Some(0) {
+        return Err(ApiError::bad("a budget must be more than zero tokens"));
+    }
+    let start = input.start.unwrap_or(false);
+    let project = state
+        .services
+        .store
+        .with(move |s| s.project_by_slug(&slug))
+        .await
+        .map_err(store_error)?;
+    let profile_name = input
+        .profile
+        .unwrap_or_else(|| project.default_profile.clone());
+    let base = match profile_name.as_str() {
+        "fast" => ProfileBase::Fast,
+        "standard" => ProfileBase::Standard,
+        "strict" => ProfileBase::Strict,
+        _ => return Err(ApiError::bad("profile must be fast, standard, or strict")),
+    };
+    let new = NewJob {
+        project_id: project.id,
+        title: input.title,
+        description: input.description,
+        job_type,
+        priority,
+        profile: Profile::builtin(base),
+    };
+    let record = state
+        .services
+        .store
+        .with(move |s| {
+            s.transaction(|tx| {
+                let job = tx.create_job(&new, &Actor::local_user())?;
+                if let Some(budget) = input.budget {
+                    tx.set_budget(
+                        BudgetScope::Job(job.job.id),
+                        budget,
+                        true,
+                        Some(job.job.id),
+                        &Actor::local_user(),
+                    )?;
+                }
+                Ok(job)
+            })
+        })
+        .await
+        .map_err(store_error)?;
+    let mut version = record.job.version;
+    if start {
+        let started = state
+            .services
+            .engine
+            .submit(record.job.id, JobCommand::Start, Actor::local_user())
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        version = started.job.version;
+    }
+    Ok(Json(
+        json!({"ok":true,"id":record.job.id.to_string(),"key":record.key.to_string(),"version":version,"started":start}),
+    ))
+}
+#[derive(Deserialize)]
+struct SetBudgetRequest {
+    scope: String,
+    target: Option<String>,
+    limit: u64,
+    soft: Option<bool>,
+}
+async fn set_budget(
+    State(state): State<AppState>,
+    payload: Result<Json<SetBudgetRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(input) = payload.map_err(|_| ApiError::bad("invalid JSON body"))?;
+    if input.limit == 0 {
+        return Err(ApiError::bad("a budget must be more than zero tokens"));
+    }
+    let (scope, job_id, jobs) = match (input.scope.as_str(), input.target) {
+        ("job", Some(key)) => {
+            let key: JobKey = key.parse().map_err(|_| ApiError::not_found())?;
+            let j = state
+                .services
+                .store
+                .with(move |s| s.find_job(&key))
+                .await
+                .map_err(store_error)?;
+            (BudgetScope::Job(j.job.id), Some(j.job.id), vec![j.job.id])
+        }
+        ("project", Some(slug)) => {
+            let p = state
+                .services
+                .store
+                .with(move |s| s.project_by_slug(&slug))
+                .await
+                .map_err(store_error)?;
+            let id = p.id;
+            let jobs = state
+                .services
+                .store
+                .with(move |s| s.list_jobs(Some(id)))
+                .await
+                .map_err(store_error)?
+                .into_iter()
+                .map(|j| j.job.id)
+                .collect();
+            (BudgetScope::Project(p.id), None, jobs)
+        }
+        ("global", None) => {
+            let jobs = state
+                .services
+                .store
+                .with(|s| s.list_jobs(None))
+                .await
+                .map_err(store_error)?
+                .into_iter()
+                .map(|j| j.job.id)
+                .collect();
+            (BudgetScope::Global, None, jobs)
+        }
+        _ => {
+            return Err(ApiError::bad(
+                "choose job with a key, project with a slug, or global scope",
+            ));
+        }
+    };
+    let hard = !input.soft.unwrap_or(false);
+    let budget = state
+        .services
+        .store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(scope, input.limit, hard, job_id, &Actor::local_user())
+            })
+        })
+        .await
+        .map_err(store_error)?;
+    for id in jobs {
+        lift_budget_hold(&state.services.engine, id)
+            .await
+            .map_err(|_| ApiError::unavailable())?;
+    }
+    let budget_scope = match budget.scope {
+        BudgetScope::Global => "global",
+        BudgetScope::Project(_) => "project",
+        BudgetScope::Job(_) => "job",
+    };
+    Ok(Json(
+        json!({"ok":true,"budget":{"id":budget.id.to_string(),"scope":budget_scope,"settled":budget.settled_tokens,"reserved":budget.reserved_tokens,"limit":budget.limit_tokens,"kind":if budget.hard{"hard"}else{"soft"}}}),
+    ))
+}
+#[derive(Deserialize)]
 struct DecisionRequest {
     decision: String,
     subject_hash: String,
@@ -696,9 +916,10 @@ mod tests {
         (
             AppState {
                 services: Services {
-                    store,
+                    store: store.clone(),
                     engine,
                     approvals,
+                    projects: ProjectService::new(store.clone()),
                     blobs,
                 },
                 sessions: Arc::new(Mutex::new(Vec::new())),
@@ -718,6 +939,30 @@ mod tests {
             .header(header::HOST, host)
             .body(Body::empty())
             .expect("request")
+    }
+    fn session_request(
+        state: &AppState,
+        method: Method,
+        path: &str,
+        body: Value,
+        read_only: bool,
+    ) -> Request<Body> {
+        let token = "a".repeat(64);
+        state.sessions.lock().expect("session lock").push(Session {
+            digest: Sha256::digest(token.as_bytes()).into(),
+            expires: Instant::now() + Duration::from_secs(60),
+            read_only,
+        });
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, format!("127.0.0.1:{}", state.port))
+            .header(header::ORIGIN, format!("http://127.0.0.1:{}", state.port))
+            .header("X-Turtle-Request", "1")
+            .header(header::COOKIE, format!("turtle_session={token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("authorized request")
     }
     #[tokio::test]
     async fn rejects_non_loopback_bind_and_rebinding() {
@@ -743,6 +988,94 @@ mod tests {
                 .get("access-control-allow-origin")
                 .is_none()
         );
+    }
+    #[tokio::test]
+    async fn dashboard_write_routes_create_project_job_and_budget() {
+        let (state, dir) = state();
+        let repo = dir.path().join("example repo");
+        std::fs::create_dir_all(&repo).expect("repo directory");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .expect("git command")
+        };
+        assert!(git(&["init", "-b", "main"]).status.success());
+        assert!(
+            git(&["config", "user.email", "test@example.invalid"])
+                .status
+                .success()
+        );
+        assert!(git(&["config", "user.name", "API test"]).status.success());
+        std::fs::write(repo.join("README.md"), "hello\n").expect("initial file");
+        assert!(git(&["add", "README.md"]).status.success());
+        assert!(git(&["commit", "-m", "initial"]).status.success());
+        let app = router(state.clone());
+        let response = app
+            .clone()
+            .oneshot(session_request(
+                &state,
+                Method::POST,
+                "/api/v1/projects",
+                json!({"path":repo}),
+                false,
+            ))
+            .await
+            .expect("project response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("project body");
+        let project: Value = serde_json::from_slice(&bytes).expect("project JSON");
+        assert_eq!(project["slug"], "example-repo");
+        let response=app.clone().oneshot(session_request(&state,Method::POST,"/api/v1/projects/example-repo/jobs",json!({"title":"Ship feature","description":"Detailed request","type":"bugfix","priority":"urgent","profile":"strict","budget":250000,"start":false}),false)).await.expect("job response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("job body");
+        let job: Value = serde_json::from_slice(&bytes).expect("job JSON");
+        let key = job["key"].as_str().expect("job key");
+        assert!(key.starts_with("EXA-"));
+        assert_eq!(job["started"], false);
+        let response = app
+            .clone()
+            .oneshot(session_request(
+                &state,
+                Method::POST,
+                "/api/v1/budgets",
+                json!({"scope":"job","target":key,"limit":500000,"soft":true}),
+                false,
+            ))
+            .await
+            .expect("budget response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("budget body");
+        let budget: Value = serde_json::from_slice(&bytes).expect("budget JSON");
+        assert_eq!(budget["budget"]["limit"], 500000);
+        assert_eq!(budget["budget"]["kind"], "soft");
+    }
+    #[tokio::test]
+    async fn read_only_session_cannot_use_any_dashboard_write_route() {
+        let (state, _dir) = state();
+        for (path, body) in [
+            ("/api/v1/projects", json!({"path":"/tmp"})),
+            ("/api/v1/projects/demo/jobs", json!({"title":"blocked"})),
+            ("/api/v1/budgets", json!({"scope":"global","limit":1000})),
+        ] {
+            let response = router(state.clone())
+                .oneshot(session_request(&state, Method::POST, path, body, true))
+                .await
+                .expect("write response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("error body");
+            let value: Value = serde_json::from_slice(&bytes).expect("error JSON");
+            assert_eq!(value["error"]["code"], "read_only_session");
+        }
     }
     #[test]
     fn tailnet_host_validation_is_strict() {

@@ -41,7 +41,7 @@ turtle approvals
 | **M1 walking skeleton** | **Complete.** Full loop with real Git, gates, hash-bound approvals, crash recovery and the `turtle` CLI. |
 | M2 first real agent | Nearly done: Claude Code adapter, token ledger, run estimator, repository context builder and initial capability registry work; a live run on a real project remains. |
 | M3 | Part 1 and rate-limit handling done: Codex adapter, provider routing and independent review, limit observations/holds/reset scheduling, quota snapshots and provider status display. Strict delivery and PR delivery remain. |
-| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. The live dashboard build is functional; its richer layouts remain in the mock preview. No working Tailscale daemon was available for live verification; browser verification is pending in an environment that can launch Chromium. |
+| M4 | In progress: loopback API, dashboard login, live events, approval and job commands, project/job creation, budget updates, static dashboard serving, and Tailscale QR pairing with server-enforced read-only sessions are implemented. Live routes now use the mock screen structures for available project, job, run, approval, analytics and provider data; settings and license remain read-only, while resources show the unavailable empty state. Costs, time-series, provider discovery and other unexposed values remain unknown. |
 
 Details and the list of known simplifications: [docs/MVP.md §6.1](docs/MVP.md#61-progress-against-the-milestones-2026-10-25). The dashboard defaults to a mock preview; build it with `PUBLIC_API_ADAPTER=real` for the daemon's live API.
 

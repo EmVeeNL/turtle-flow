@@ -19,7 +19,12 @@ use turtle_store::{
 };
 
 fn budget(b: &BudgetRecord) -> Value {
-    json!({"id":b.id.to_string(),"settled":b.settled_tokens,"reserved":b.reserved_tokens,"limit":b.limit_tokens,"kind":if b.hard {"hard"} else {"soft"}})
+    let scope = match b.scope {
+        BudgetScope::Global => "global",
+        BudgetScope::Project(_) => "project",
+        BudgetScope::Job(_) => "job",
+    };
+    json!({"id":b.id.to_string(),"scope":scope,"settled":b.settled_tokens,"reserved":b.reserved_tokens,"limit":b.limit_tokens,"kind":if b.hard {"hard"} else {"soft"}})
 }
 fn project_value(
     p: &ProjectRecord,
