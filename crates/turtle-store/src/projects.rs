@@ -25,6 +25,7 @@ pub struct ProjectRecord {
 pub enum DeliveryStatus {
     Delivered,
     PendingIntegration,
+    PendingPr,
 }
 
 impl DeliveryStatus {
@@ -32,6 +33,7 @@ impl DeliveryStatus {
         match self {
             Self::Delivered => "delivered",
             Self::PendingIntegration => "pending_integration",
+            Self::PendingPr => "pending",
         }
     }
 }
@@ -42,6 +44,7 @@ pub struct DeliveryRecord {
     pub mode: String,
     pub target_branch: String,
     pub result_commit: Option<String>,
+    pub pr_url: Option<String>,
     pub status: String,
     pub approval_id: String,
 }
@@ -85,7 +88,7 @@ pub(crate) fn load_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
 pub(crate) fn delivery(conn: &rusqlite::Connection, job: JobId) -> Result<Option<DeliveryRecord>> {
     Ok(conn
         .query_row(
-            "SELECT mode, target_branch, result_commit, status, approval_id FROM delivery_records
+            "SELECT mode, target_branch, result_commit, pr_url, status, approval_id FROM delivery_records
              WHERE job_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
             [job.to_string()],
             |r| {
@@ -94,8 +97,9 @@ pub(crate) fn delivery(conn: &rusqlite::Connection, job: JobId) -> Result<Option
                     mode: r.get(0)?,
                     target_branch: r.get(1)?,
                     result_commit: r.get(2)?,
-                    status: r.get(3)?,
-                    approval_id: r.get(4)?,
+                    pr_url: r.get(3)?,
+                    status: r.get(4)?,
+                    approval_id: r.get(5)?,
                 })
             },
         )
@@ -151,6 +155,22 @@ impl Tx<'_> {
         }
     }
 
+    /// Advances the recorded base after a conflict-free refresh. The caller first moves the
+    /// worktree to the new base, then submits `BaseRefreshed` to invalidate acceptance.
+    pub fn refresh_base_commit(&mut self, job: JobId, old: &str, new: &str) -> Result<()> {
+        let changed = self.tx.execute(
+            "UPDATE jobs SET base_commit=?1 WHERE id=?2 AND base_commit=?3",
+            params![new, job.to_string(), old],
+        )?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(StoreError::Corrupt(format!(
+                "base commit of job {job} changed during refresh"
+            )))
+        }
+    }
+
     /// Records the outcome of delivering a job. Idempotent: a job already delivered or parked
     /// for integration keeps its first record.
     pub fn record_delivery(
@@ -192,6 +212,54 @@ impl Tx<'_> {
             }),
             actor: Actor::Scheduler,
         })?;
+        Ok(())
+    }
+
+    pub fn record_pr(
+        &mut self,
+        job: JobId,
+        target_branch: &str,
+        head_commit: &str,
+        url: &str,
+        approval: ApprovalId,
+    ) -> Result<()> {
+        if delivery(&self.tx, job)?.is_some() {
+            return Ok(());
+        }
+        let now = self.now()?;
+        self.tx.execute(
+            "INSERT INTO delivery_records(id,job_id,mode,target_branch,result_commit,pr_url,status,approval_id,created_at)
+             VALUES (?1,?2,'pr',?3,?4,?5,'pending',?6,?7)",
+            params![ulid::Ulid::generate().to_string(), job.to_string(), target_branch, head_commit, url, approval.to_string(), now],
+        )?;
+        let rec = self.load_job(job)?;
+        self.append_event(&NewEvent {
+            project_id: Some(rec.project_id),
+            job_id: Some(job),
+            kind: "job.pr_opened".into(),
+            payload: serde_json::json!({"url":url,"head_commit":head_commit}),
+            actor: Actor::Scheduler,
+        })?;
+        Ok(())
+    }
+
+    pub fn mark_pr_merged(&mut self, job: JobId, url: &str) -> Result<()> {
+        let now = self.now()?;
+        let changed = self.tx.execute(
+            "UPDATE delivery_records SET status='delivered',completed_at=?1
+             WHERE job_id=?2 AND mode='pr' AND pr_url=?3 AND status='pending'",
+            params![now, job.to_string(), url],
+        )?;
+        if changed == 1 {
+            let rec = self.load_job(job)?;
+            self.append_event(&NewEvent {
+                project_id: Some(rec.project_id),
+                job_id: Some(job),
+                kind: "job.pr_merged".into(),
+                payload: serde_json::json!({"url":url}),
+                actor: Actor::Scheduler,
+            })?;
+        }
         Ok(())
     }
 

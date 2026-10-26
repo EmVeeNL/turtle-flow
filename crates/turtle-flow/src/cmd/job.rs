@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use turtle_domain::{Actor, JobKey, JobState, JobType, Priority};
+use turtle_scheduler::{Layout, pr::PrClient};
 use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord};
 use turtle_workflow::{Hold, JobCommand, PauseMode, Profile, ProfileBase};
 
@@ -74,6 +75,17 @@ pub enum JobCommandLine {
         hard: bool,
     },
     Resume {
+        key: String,
+    },
+    /// Continue a blocked conflict or authorize a fix after review findings.
+    Resolve {
+        key: String,
+        /// For review findings: implementation, planning or specification.
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Check whether a pending pull request has merged and finish delivery.
+    Sync {
         key: String,
     },
     Cancel {
@@ -211,8 +223,148 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
             act(rt, &key, JobCommand::Pause { mode }, "Paused").await
         }
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
+        JobCommandLine::Resolve { key, target } => resolve(rt, &key, target.as_deref()).await,
+        JobCommandLine::Sync { key } => sync(rt, &key).await,
         JobCommandLine::Cancel { key } => act(rt, &key, JobCommand::Cancel, "Cancelled").await,
     }
+}
+
+async fn resolve(rt: &Runtime, key: &str, target: Option<&str>) -> Result<()> {
+    let job = find(rt, key).await?;
+    let blocked = job
+        .job
+        .blocked
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("job is not blocked"))?;
+    if blocked.reason == turtle_workflow::BlockReason::ReviewDecisionRequired {
+        let target: JobState =
+            parse_label("resolution target", target.unwrap_or("implementation"))?;
+        let after = rt
+            .engine
+            .submit(
+                job.job.id,
+                JobCommand::ResolveBlock { target },
+                Actor::local_user(),
+            )
+            .await?;
+        println!("Resolved {}: now {}.", after.key, label(&after.job.state));
+        return Ok(());
+    }
+    if blocked.reason != turtle_workflow::BlockReason::ConflictDetected {
+        bail!("job is blocked for another reason: {:?}", blocked.reason);
+    }
+    if target.is_some_and(|value| value != "build_test") {
+        bail!("conflict resolution continues at build_test");
+    }
+    let id = job.job.id;
+    let project = rt.store.with(move |s| s.project_of_job(id)).await?;
+    let base = job
+        .base_commit
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("job has no base commit"))?;
+    let layout = Layout::new(&rt.cfg, &project, &job, base)?;
+    let repo = rt.cfg.repo(&project);
+    let wt = repo.at(&layout.path);
+    let tip = repo
+        .branch_tip(&layout.target_branch)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("target branch is missing"))?;
+    let head = wt.head().await?;
+    if !wt.is_clean().await? || !repo.is_ancestor(&tip, &head).await? {
+        bail!(
+            "incorporate `{}` into `{}` and commit the resolved changes in {} first; then run `turtle job resolve {}`",
+            layout.target_branch,
+            layout.spec.branch,
+            layout.path.display(),
+            job.key
+        );
+    }
+    if base != tip {
+        let old = base.to_owned();
+        let new = tip.clone();
+        rt.store
+            .with(move |s| {
+                s.transaction(|tx| {
+                    tx.refresh_base_commit(id, &old, &new)?;
+                    tx.invalidate_approvals(
+                        id,
+                        &[turtle_domain::GateKind::Acceptance],
+                        "base_refreshed",
+                    )?;
+                    Ok(())
+                })
+            })
+            .await?;
+    }
+    let after = rt
+        .engine
+        .submit(
+            id,
+            JobCommand::ResolveBlock {
+                target: JobState::BuildTest,
+            },
+            Actor::local_user(),
+        )
+        .await?;
+    println!(
+        "Resolved {}: now {}. Gates, review, verification and acceptance will run again.",
+        after.key,
+        label(&after.job.state)
+    );
+    Ok(())
+}
+
+async fn sync(rt: &Runtime, key: &str) -> Result<()> {
+    let job = find(rt, key).await?;
+    let id = job.job.id;
+    let delivery = rt
+        .store
+        .with(move |s| s.delivery(id))
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("job has no delivery record"))?;
+    if delivery.mode != "pr" {
+        bail!("job was not delivered through a pull request");
+    }
+    if job.job.state == JobState::Done {
+        println!("{} is already delivered.", job.key);
+        return Ok(());
+    }
+    if job.job.state != JobState::Delivery {
+        bail!("job is not waiting for a pull request merge");
+    }
+    let url = delivery
+        .pr_url
+        .ok_or_else(|| anyhow::anyhow!("PR URL is missing"))?;
+    let project = rt.store.with(move |s| s.project_of_job(id)).await?;
+    let info = PrClient::new(rt.cfg.gh_program.clone())
+        .view(std::path::Path::new(&project.repo_path), &url)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    if info.url != url {
+        bail!("gh returned a different PR URL");
+    }
+    if info.head_ref_oid.as_deref() != delivery.result_commit.as_deref() {
+        bail!("the PR head changed after acceptance; inspect it before marking delivery complete");
+    }
+    if !info.merged() {
+        println!("{} is still waiting for PR merge: {}", job.key, url);
+        return Ok(());
+    }
+    let u = url.clone();
+    rt.store
+        .with(move |s| s.transaction(|tx| tx.mark_pr_merged(id, &u)))
+        .await?;
+    let after = rt
+        .engine
+        .submit(id, JobCommand::Delivered, Actor::Scheduler)
+        .await?;
+    println!(
+        "Delivered {} via {}: now {}.",
+        after.key,
+        url,
+        label(&after.job.state)
+    );
+    Ok(())
 }
 
 fn builtin_profile(name: &str) -> Result<Profile> {
@@ -295,6 +447,17 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             "  blocked      {}",
             serde_json::to_string(b).unwrap_or_default()
         );
+        if b.reason == turtle_workflow::BlockReason::ConflictDetected {
+            println!(
+                "  resolution   incorporate the current target branch into the job branch, commit the resolution, then run `turtle job resolve {}`",
+                job.key
+            );
+        } else if b.reason == turtle_workflow::BlockReason::ReviewDecisionRequired {
+            println!(
+                "  resolution   inspect the review findings, then run `turtle job resolve {}` to authorize a fix",
+                job.key
+            );
+        }
     }
     if !job.job.holds.is_empty() {
         println!(
@@ -331,6 +494,15 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             d.target_branch,
             d.result_commit.as_deref().unwrap_or("")
         );
+        if let Some(url) = &d.pr_url {
+            println!("  pull request {url}");
+            if d.status == "pending" {
+                println!(
+                    "  waiting      merge the PR, then run `turtle job sync {}`",
+                    job.key
+                );
+            }
+        }
         if d.status == "pending_integration" {
             delivery_hint = Some(format!(
                 "               `{}` is checked out, so the result waits at refs/turtle/delivery/{}\n               Integrate it yourself: git merge --ff-only refs/turtle/delivery/{}",

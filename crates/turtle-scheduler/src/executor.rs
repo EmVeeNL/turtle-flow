@@ -26,12 +26,13 @@ use turtle_agents::{
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
-    Actor, ApprovalStatus, ArtifactKind, GateKind, Plan, QuotaStatus, ReviewOutcome, ReviewReport,
-    Role, RunId, Specification, UsageValue, VerificationDecision, VerificationReport,
+    Actor, ApprovalStatus, ArtifactKind, DeliveryMode, GateKind, Plan, QuotaStatus, ReviewReport,
+    Role, RunId, Severity, Specification, UsageValue, VerificationDecision, VerificationReport,
 };
 use turtle_exec::{CommandSpec, ExitOutcome};
 use turtle_git::commit::Trailers;
 use turtle_git::delivery::{DeliveryOutcome, SquashRequest};
+use turtle_git::refresh::RefreshOutcome;
 use turtle_git::worktree::WorktreeOutcome;
 use turtle_git::{GitError, Repo};
 use turtle_store::{
@@ -41,13 +42,17 @@ use turtle_store::{
 use turtle_tokens::{
     BucketPath, cold_start_estimate, estimate, reservation_size, score_complexity,
 };
-use turtle_workflow::{Effect, JobCommand, ReviewIndependence, ReviewVerdict, VerificationOutcome};
+use turtle_workflow::{
+    BlockReason, Effect, JobCommand, ProfileBase, ReviewIndependence, ReviewVerdict,
+    VerificationOutcome,
+};
 
 use crate::approvals::ApprovalService;
 use crate::binding::GitFactsProvider;
 use crate::dispatcher::{ExecError, ExecOutcome, Executor};
 use crate::engine::ContextProvider;
 use crate::layout::{ExecConfig, Layout};
+use crate::pr::{PrClient, approved_body};
 use crate::shared::SharedStore;
 
 /// Largest slice of gate output kept in the gate result artifact.
@@ -826,11 +831,29 @@ where
                         report
                     }
                 };
-                let verdict = match report.outcome() {
-                    ReviewOutcome::Pass => ReviewVerdict::Pass,
-                    ReviewOutcome::Fixable => ReviewVerdict::Fixable,
-                    ReviewOutcome::Replan => ReviewVerdict::Replan,
-                    ReviewOutcome::ScopeCreep => ReviewVerdict::ScopeCreep,
+                let (min_fix, max_auto_fix) = match job.job.profile.base {
+                    ProfileBase::Fast => (Severity::Major, Severity::Major),
+                    ProfileBase::Standard => (Severity::Major, Severity::Major),
+                    ProfileBase::Strict => (Severity::Nit, Severity::Nit),
+                };
+                if !report.scope_creep
+                    && !report.replan
+                    && report.findings.iter().any(|f| f.severity > max_auto_fix)
+                {
+                    return Ok(ExecOutcome::done(json!({"findings": report.findings.len(),
+                        "decision": "human_review_required"}))
+                    .with_command(JobCommand::Halt {
+                        reason: BlockReason::ReviewDecisionRequired,
+                    }));
+                }
+                let verdict = if report.scope_creep {
+                    ReviewVerdict::ScopeCreep
+                } else if report.replan {
+                    ReviewVerdict::Replan
+                } else if report.findings.iter().any(|f| f.severity >= min_fix) {
+                    ReviewVerdict::Fixable
+                } else {
+                    ReviewVerdict::Pass
                 };
                 Ok(
                     ExecOutcome::done(json!({"findings": report.findings.len()}))
@@ -1195,17 +1218,131 @@ where
 
     async fn deliver(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
         let (job, project) = self.load(effect).await?;
-        let (layout, _base) = self.layout(&project, &job)?;
+        let (layout, base) = self.layout(&project, &job)?;
         let repo = self.cfg.repo(&project);
         let key = job.key.to_string();
         let target = layout.target_branch.clone();
         let id = job.job.id;
-        let approval = self
+        if project.settings.delivery == DeliveryMode::Pr
+            && let Some(existing) = self
+                .store
+                .with(move |s| s.delivery(id))
+                .await
+                .map_err(retryable)?
+            && existing.mode == "pr"
+            && existing.status == "pending"
+        {
+            return Ok(ExecOutcome::done(
+                json!({"pr_url": existing.pr_url, "status": "pending"}),
+            ));
+        }
+        if project.settings.delivery == DeliveryMode::LocalSquash {
+            let parked = format!("refs/turtle/delivery/{key}");
+            let recovered = if let Some(commit) = repo
+                .find_delivery_commit(&target, &key)
+                .await
+                .map_err(git_error)?
+            {
+                Some(DeliveryOutcome::Delivered { commit })
+            } else if let Ok(commit) = repo.rev(&parked).await {
+                Some(DeliveryOutcome::PendingIntegration {
+                    commit,
+                    reference: parked,
+                })
+            } else {
+                None
+            };
+            if let Some(outcome) = recovered {
+                let approval = self
+                    .approvals
+                    .current_approved(&job, GateKind::Acceptance)
+                    .await
+                    .map_err(fatal)?;
+                let (commit, status) = match &outcome {
+                    DeliveryOutcome::Delivered { commit } => {
+                        (commit.clone(), DeliveryStatus::Delivered)
+                    }
+                    DeliveryOutcome::PendingIntegration { commit, .. } => {
+                        (commit.clone(), DeliveryStatus::PendingIntegration)
+                    }
+                };
+                let (c, t, aid) = (commit.clone(), target.clone(), approval.id);
+                self.store
+                    .with(move |s| {
+                        s.transaction(|tx| {
+                            tx.record_delivery(id, "local_squash", &t, &c, status, aid)
+                        })
+                    })
+                    .await
+                    .map_err(retryable)?;
+                return Ok(
+                    ExecOutcome::done(json!({"commit": commit, "status": "recovered"}))
+                        .with_command(JobCommand::Delivered),
+                );
+            }
+        }
+        let tip = repo
+            .branch_tip(&target)
+            .await
+            .map_err(git_error)?
+            .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
+        if tip != base {
+            let wt = repo.at(&layout.path);
+            let head = wt.head().await.map_err(git_error)?;
+            if !repo.is_ancestor(&tip, &head).await.map_err(git_error)? {
+                self.approvals
+                    .current_approved(&job, GateKind::Acceptance)
+                    .await
+                    .map_err(fatal)?;
+            }
+            match repo
+                .refresh_job(&wt, &base, &tip, &key)
+                .await
+                .map_err(git_error)?
+            {
+                RefreshOutcome::Conflicts { files } => {
+                    return Ok(ExecOutcome::done(json!({"conflicts": files,
+                        "resolution": format!("resolve the conflicts on {}, incorporate {}, then run `turtle job resolve {key}`", layout.spec.branch, target)}))
+                        .with_command(JobCommand::ConflictDetected));
+                }
+                RefreshOutcome::Refreshed { head } => {
+                    let old = base.clone();
+                    let new = tip.clone();
+                    self.store
+                        .with(move |s| s.transaction(|tx| tx.refresh_base_commit(id, &old, &new)))
+                        .await
+                        .map_err(retryable)?;
+                    return Ok(ExecOutcome::done(json!({"base": tip, "head": head}))
+                        .with_command(JobCommand::BaseRefreshed));
+                }
+            }
+        }
+        let approved = self
             .store
             .with(move |s| s.latest_approved(id, GateKind::Acceptance))
             .await
             .map_err(retryable)?
             .ok_or_else(|| fatal("delivery needs an approved acceptance"))?;
+        if approved
+            .binding
+            .git
+            .as_ref()
+            .is_some_and(|g| g.base_commit != base)
+        {
+            // A crash may have occurred after persisting a refreshed base but before the
+            // BaseRefreshed command invalidated acceptance and scheduled fresh gates.
+            return Ok(ExecOutcome::done(json!({"base": base, "recovered": true}))
+                .with_command(JobCommand::BaseRefreshed));
+        }
+        let approval = self
+            .approvals
+            .current_approved(&job, GateKind::Acceptance)
+            .await
+            .map_err(fatal)?;
+
+        if project.settings.delivery == DeliveryMode::Pr {
+            return self.deliver_pr(&job, &project, &layout, &approval).await;
+        }
 
         // Probes: an earlier attempt may already have delivered or parked the result.
         let parked = format!("refs/turtle/delivery/{key}");
@@ -1221,11 +1358,6 @@ where
                 reference: parked,
             }
         } else {
-            let tip = repo
-                .branch_tip(&target)
-                .await
-                .map_err(git_error)?
-                .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
             let (spec, _): (Specification, _) = self
                 .need_doc(&job, ArtifactKind::Specification, "specification")
                 .await?;
@@ -1271,6 +1403,110 @@ where
         };
         Ok(ExecOutcome::done(json!({"commit": commit, "status": note}))
             .with_command(JobCommand::Delivered))
+    }
+
+    async fn deliver_pr(
+        &self,
+        job: &JobRecord,
+        project: &ProjectRecord,
+        layout: &Layout,
+        approval: &turtle_store::ApprovalRecord,
+    ) -> Result<ExecOutcome, ExecError> {
+        let id = job.job.id;
+        let repo = self.cfg.repo(project);
+        let head = repo
+            .branch_tip(&layout.spec.branch)
+            .await
+            .map_err(git_error)?
+            .ok_or_else(|| fatal("job branch is missing"))?;
+        let spec_ref = approval
+            .binding
+            .artifacts
+            .get("specification")
+            .ok_or_else(|| fatal("acceptance approval has no specification"))?;
+        let bytes = self.blobs.get(&spec_ref.sha256).map_err(fatal)?;
+        let spec: Specification = serde_json::from_slice(&bytes).map_err(fatal)?;
+        let scope = self
+            .approvals
+            .current_approved(job, GateKind::Scope)
+            .await
+            .map_err(fatal)?;
+        let plan = self
+            .store
+            .with(move |s| s.latest_approved(id, GateKind::Plan))
+            .await
+            .map_err(retryable)?;
+        let plan_hash = if plan.is_some() {
+            Some(
+                self.approvals
+                    .current_approved(job, GateKind::Plan)
+                    .await
+                    .map_err(fatal)?
+                    .subject_hash
+                    .to_hex(),
+            )
+        } else {
+            None
+        };
+        if job.job.profile.plan_approval_required(false) && plan_hash.is_none() {
+            return Err(fatal(
+                "this profile requires an approved plan before PR delivery",
+            ));
+        }
+        let body = approved_body(
+            &spec,
+            &scope.subject_hash.to_hex(),
+            plan_hash.as_deref(),
+            &approval.subject_hash.to_hex(),
+        );
+        let client = PrClient::new(self.cfg.gh_program.clone());
+        let existing = client
+            .find(Path::new(&project.repo_path), &layout.spec.branch)
+            .await
+            .map_err(retryable)?;
+        let url = if let Some(pr) = existing {
+            if pr.head_ref_oid.as_deref() != Some(head.as_str()) {
+                return Err(fatal(
+                    "the existing PR has a different head; inspect it before delivery",
+                ));
+            }
+            if pr.body.as_deref() != Some(body.as_str()) || pr.state == "CLOSED" {
+                return Err(fatal(
+                    "the existing PR body or state differs from the approved delivery",
+                ));
+            }
+            pr.url
+        } else {
+            // The acceptance check above precedes this first remote mutation.
+            repo.run(&[
+                "push",
+                "origin",
+                &format!("refs/heads/{0}:refs/heads/{0}", layout.spec.branch),
+            ])
+            .await
+            .map_err(git_error)?;
+            client
+                .create(
+                    Path::new(&project.repo_path),
+                    &layout.target_branch,
+                    &layout.spec.branch,
+                    &format!("{}: {}", job.key, job.title),
+                    &body,
+                )
+                .await
+                .map_err(retryable)?
+        };
+        let target = layout.target_branch.clone();
+        let a = approval.id;
+        let h = head.clone();
+        let u = url.clone();
+        self.store
+            .with(move |s| s.transaction(|tx| tx.record_pr(id, &target, &h, &u, a)))
+            .await
+            .map_err(retryable)?;
+        Ok(ExecOutcome::done(
+            json!({"pr_url": url, "status": "pending"}),
+        ))
     }
 
     async fn cleanup_worktree(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {

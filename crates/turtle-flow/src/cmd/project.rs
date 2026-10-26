@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use turtle_domain::{ProjectCommands, ProjectSettings};
+use turtle_domain::{DeliveryMode, ProjectCommands, ProjectSettings};
 use turtle_git::Repo;
 use turtle_store::NewProject;
 
@@ -43,6 +43,15 @@ pub enum ProjectCommand {
         /// Command run once after a job worktree is created (install dependencies).
         #[arg(long)]
         worktree_setup: Option<String>,
+        /// Delivery mode: local-squash (default) or pr.
+        #[arg(long, default_value = "local-squash", value_parser = ["local-squash", "pr"])]
+        delivery: String,
+    },
+    /// Change how future deliveries for this project are made.
+    Delivery {
+        slug: String,
+        #[arg(value_parser = ["local-squash", "pr"])]
+        mode: String,
     },
     /// List registered projects.
     List,
@@ -63,6 +72,7 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             test,
             lint,
             worktree_setup,
+            delivery,
         } => {
             let repo = inspect_repo(&path).await?;
             let branch = match branch {
@@ -88,6 +98,7 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
                     ..ProjectCommands::default()
                 },
                 target_branch: Some(branch.clone()),
+                delivery: parse_delivery(&delivery)?,
                 ..ProjectSettings::default()
             };
             let new = NewProject {
@@ -126,6 +137,17 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             println!("Next: turtle job create -p {slug} \"what you want built\" --start");
             Ok(())
         }
+        ProjectCommand::Delivery { slug, mode } => {
+            let project = rt.store.with(move |s| s.project_by_slug(&slug)).await?;
+            let mut settings = project.settings;
+            settings.delivery = parse_delivery(&mode)?;
+            let id = project.id;
+            rt.store
+                .with(move |s| s.transaction(|tx| tx.update_project_settings(id, &settings)))
+                .await?;
+            println!("Delivery mode set to {mode}.");
+            Ok(())
+        }
         ProjectCommand::List => {
             let projects = rt.store.with(|s| s.list_projects()).await?;
             if projects.is_empty() {
@@ -146,6 +168,13 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             println!("  key prefix   {}", p.key_prefix);
             println!("  repository   {}", p.repo_path);
             println!(
+                "  delivery     {}",
+                match p.settings.delivery {
+                    DeliveryMode::LocalSquash => "local-squash",
+                    DeliveryMode::Pr => "pr",
+                }
+            );
+            println!(
                 "  target       {}",
                 p.settings
                     .target_branch
@@ -161,6 +190,14 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+fn parse_delivery(value: &str) -> Result<DeliveryMode> {
+    match value {
+        "local-squash" => Ok(DeliveryMode::LocalSquash),
+        "pr" => Ok(DeliveryMode::Pr),
+        _ => bail!("delivery must be local-squash or pr"),
     }
 }
 

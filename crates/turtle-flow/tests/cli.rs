@@ -342,6 +342,10 @@ fn project_add_accepts_a_repository_and_rejects_the_rest() {
     );
     let show = w.ok(&["project", "show", "payments-api"]);
     assert!(show.contains("gate build"), "{show}");
+    assert!(show.contains("delivery     local-squash"), "{show}");
+    w.ok(&["project", "delivery", "payments-api", "pr"]);
+    let show = w.ok(&["project", "show", "payments-api"]);
+    assert!(show.contains("delivery     pr"), "{show}");
 
     let again = w.fails(&["project", "add", w.repo.to_str().expect("utf8")]);
     assert!(again.contains("already exists"), "{again}");
