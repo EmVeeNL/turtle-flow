@@ -105,6 +105,20 @@ fn init_refuses_non_interactive_without_creating_turtle_home() {
 }
 
 #[test]
+fn job_sync_wait_has_bounded_polling_options() {
+    let w = World::new();
+    let help = w.turtle(&["job", "sync", "--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("--wait"), "{help}");
+    assert!(help.contains("--interval"), "{help}");
+
+    let invalid = w.turtle(&["job", "sync", "PAY-1", "--wait", "--interval", "4"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("5"));
+}
+
+#[test]
 fn job_export_is_repeatable_and_worktree_path_is_printed_without_creation() {
     let w = World::new();
     w.add_project();

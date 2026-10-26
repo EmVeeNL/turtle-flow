@@ -502,13 +502,15 @@ Options:
 ```text
 Check whether a pending pull request has merged and finish delivery
 
-Usage: turtle job sync <KEY>
+Usage: turtle job sync [OPTIONS] <KEY>
 
 Arguments:
   <KEY>
 
 Options:
-  -h, --help  Print help
+      --wait                 Keep checking until the pull request is merged
+      --interval <INTERVAL>  Seconds between checks when --wait is set [default: 30]
+  -h, --help                 Print help
 ```
 
 ## `turtle job worktree`

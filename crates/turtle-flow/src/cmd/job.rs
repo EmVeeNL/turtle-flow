@@ -87,6 +87,12 @@ pub enum JobCommandLine {
     /// Check whether a pending pull request has merged and finish delivery.
     Sync {
         key: String,
+        /// Keep checking until the pull request is merged.
+        #[arg(long)]
+        wait: bool,
+        /// Seconds between checks when --wait is set.
+        #[arg(long, default_value = "30", value_parser = clap::value_parser!(u64).range(5..=3600))]
+        interval: u64,
     },
     /// Print the deterministic worktree path for a job.
     Worktree {
@@ -235,7 +241,11 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
         }
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
         JobCommandLine::Resolve { key, target } => resolve(rt, &key, target.as_deref()).await,
-        JobCommandLine::Sync { key } => sync(rt, &key).await,
+        JobCommandLine::Sync {
+            key,
+            wait,
+            interval,
+        } => sync(rt, &key, wait, interval).await,
         JobCommandLine::Worktree { key } => worktree_path(rt, &key).await,
         JobCommandLine::Revert { key } => revert(rt, &key).await,
         JobCommandLine::Cancel { key, delete_branch } => cancel(rt, &key, delete_branch).await,
@@ -419,7 +429,17 @@ async fn resolve(rt: &Runtime, key: &str, target: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-async fn sync(rt: &Runtime, key: &str) -> Result<()> {
+async fn sync(rt: &Runtime, key: &str, wait: bool, interval_seconds: u64) -> Result<()> {
+    loop {
+        if sync_once(rt, key).await? || !wait {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
+    }
+}
+
+/// Returns true when the job is already delivered or this check completed delivery.
+async fn sync_once(rt: &Runtime, key: &str) -> Result<bool> {
     let job = find(rt, key).await?;
     let id = job.job.id;
     let delivery = rt
@@ -432,7 +452,7 @@ async fn sync(rt: &Runtime, key: &str) -> Result<()> {
     }
     if job.job.state == JobState::Done {
         println!("{} is already delivered.", job.key);
-        return Ok(());
+        return Ok(true);
     }
     if job.job.state != JobState::Delivery {
         bail!("job is not waiting for a pull request merge");
@@ -453,7 +473,7 @@ async fn sync(rt: &Runtime, key: &str) -> Result<()> {
     }
     if !info.merged() {
         println!("{} is still waiting for PR merge: {}", job.key, url);
-        return Ok(());
+        return Ok(false);
     }
     let u = url.clone();
     rt.store
@@ -469,7 +489,7 @@ async fn sync(rt: &Runtime, key: &str) -> Result<()> {
         url,
         label(&after.job.state)
     );
-    Ok(())
+    Ok(true)
 }
 
 fn builtin_profile(name: &str) -> Result<Profile> {
