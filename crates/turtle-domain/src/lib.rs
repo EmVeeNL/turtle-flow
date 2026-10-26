@@ -32,5 +32,5 @@ pub use reports::{
     VerificationDecision, VerificationReport,
 };
 pub use roles::{Actor, Complexity, Role, TrustLevel};
-pub use settings::{DeliveryMode, ProjectCommands, ProjectSettings};
+pub use settings::{DeliveryMode, ProjectCommands, ProjectSettings, StaticGateSettings};
 pub use usage::{TokenUsage, UsageProvenance, UsageValue};

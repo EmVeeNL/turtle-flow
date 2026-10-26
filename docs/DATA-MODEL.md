@@ -453,6 +453,8 @@ CREATE TABLE knowledge_items (
 CREATE INDEX ix_knowledge_project_status ON knowledge_items(project_id, status, type);
 ```
 
+**Implementation status (M5, 2026-10-26):** resources use the project schema above with content-addressed blobs and immutable versions. Migration 0006 adds FTS5 maintenance triggers on `chunks`; extracted UTF-8 text is stored as `resource_version` chunks and searched with the bundled SQLite FTS5 build. Project and job attachments select a pinned version. Resource context entries appear in run manifests with trust and relevance reason. Text, Markdown and source files are supported; PDFs, scanned documents, images and URL formats that are not UTF-8 text are unsupported.
+
 ### 3.7 Git records, providers, releases
 
 ```sql

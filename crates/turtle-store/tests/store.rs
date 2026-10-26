@@ -7,7 +7,7 @@ use turtle_domain::{
     Actor, ApprovalValidity, GateKind, JobState, JobType, Priority, Role, RunId, WindowStatus,
 };
 use turtle_store::{
-    ChainVerdict, JobRecord, NewJob, NewProject, NewRun, StepClock, Store, StoreError,
+    ChainVerdict, JobRecord, NewJob, NewProject, NewResource, NewRun, StepClock, Store, StoreError,
 };
 use turtle_workflow::{DecisionContext, JobCommand as C, PreflightDecision, Profile, decide};
 
@@ -97,6 +97,69 @@ fn creates_job_with_key_and_round_trips() {
         })
         .expect("second job");
     assert_eq!(second.key.to_string(), "API-2");
+}
+
+#[test]
+fn resource_fts5_search_ranks_relevant_chunks_and_versions_content() {
+    let mut s = store();
+    let project_id = s
+        .transaction(|tx| tx.insert_project(&project()))
+        .expect("project");
+    let job = s
+        .transaction(|tx| {
+            tx.create_job(
+                &NewJob {
+                    project_id,
+                    title: "resource context job".into(),
+                    description: String::new(),
+                    job_type: JobType::Feature,
+                    priority: Priority::Normal,
+                    profile: Profile::standard(),
+                },
+                &Actor::local_user(),
+            )
+        })
+        .expect("job");
+    let add = |title: &str, hash: char, text: &str| NewResource {
+        project_id,
+        title: title.into(),
+        kind: "markdown".into(),
+        trust: "untrusted".into(),
+        source: Some(title.into()),
+        sha256: hash.to_string().repeat(64),
+        media_type: "text/markdown".into(),
+        size_bytes: text.len() as u64,
+        extracted_text: Some(text.into()),
+        job_id: Some(job.job.id),
+    };
+    s.add_resource(&add(
+        "guide.md",
+        'a',
+        "rate limiting uses a token bucket algorithm",
+    ))
+    .expect("first resource");
+    s.add_resource(&add(
+        "other.md",
+        'b',
+        &format!("rate limiting {}", "unrelated ".repeat(80)),
+    ))
+    .expect("second resource");
+    let hits = s
+        .search_resources(project_id, Some(job.job.id), "rate limiting", 10)
+        .expect("FTS5 query");
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].title, "guide.md");
+    assert!(hits[0].rank < 0.0);
+    assert!(hits[0].rank < hits[1].rank, "best match must rank first");
+
+    let updated = s
+        .add_resource(&add("guide.md", 'c', "rate limiting with a sliding window"))
+        .expect("new version");
+    assert_eq!(updated.version, 2);
+    let hits = s
+        .search_resources(project_id, Some(job.job.id), "sliding window", 10)
+        .expect("new version indexed");
+    assert_eq!(hits[0].title, "guide.md");
 }
 
 #[test]

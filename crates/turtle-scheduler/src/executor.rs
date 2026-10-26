@@ -54,6 +54,7 @@ use crate::engine::ContextProvider;
 use crate::layout::{ExecConfig, Layout};
 use crate::pr::{PrClient, approved_body};
 use crate::shared::SharedStore;
+use crate::static_gates::evaluate as evaluate_static_gates;
 
 /// Largest slice of gate output kept in the gate result artifact.
 const OUTPUT_TAIL_CHARS: usize = 4_000;
@@ -275,7 +276,7 @@ where
                 .collect();
             // Walking and reading the checkout is blocking file IO; keep it off the async threads.
             let root = workdir.to_path_buf();
-            let package = tokio::task::spawn_blocking(move || {
+            let mut package = tokio::task::spawn_blocking(move || {
                 turtle_context::build(
                     &root,
                     &areas,
@@ -286,6 +287,55 @@ where
             .await
             .map_err(retryable)?
             .map_err(fatal)?;
+            let terms: Vec<String> = format!("{} {}", job.title, job.description)
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|term| term.len() >= 3)
+                .take(12)
+                .map(str::to_owned)
+                .collect();
+            if !terms.is_empty() {
+                let query = terms.join(" OR ");
+                let project_id = job.project_id;
+                let job_id = job.job.id;
+                let hits = self
+                    .store
+                    .with(move |store| store.search_resources(project_id, Some(job_id), &query, 12))
+                    .await
+                    .map_err(retryable)?;
+                for hit in hits {
+                    let encoded = serde_json::to_string(&hit.text)
+                        .map_err(fatal)?
+                        .replace('<', "\\u003c");
+                    let title = hit
+                        .title
+                        .replace('&', "&amp;")
+                        .replace('"', "&quot;")
+                        .replace('<', "&lt;");
+                    let block = format!(
+                        "\n\n<resource trust=\"{}\" id=\"{}\" title=\"{}\">\n{}\n</resource>",
+                        hit.trust, hit.resource_id, title, encoded
+                    );
+                    let candidate = format!("{}{block}", package.text);
+                    let candidate_tokens = turtle_context::estimate_tokens(&candidate);
+                    if candidate_tokens > turtle_context::DEFAULT_TOKEN_BUDGET {
+                        continue;
+                    }
+                    package.text = candidate;
+                    let resource_tokens = turtle_context::estimate_tokens(&block);
+                    package.manifest.estimated_tokens = candidate_tokens;
+                    package
+                        .manifest
+                        .resources
+                        .push(turtle_context::ManifestResource {
+                            id: hit.resource_id,
+                            title: hit.title,
+                            trust: hit.trust,
+                            estimated_tokens: resource_tokens,
+                            reason: "fts_ranked".into(),
+                        });
+                }
+            }
+            package.manifest.content_sha256 = turtle_context::content_sha256(&package.text);
             req.context = Some(AgentContext {
                 text: package.text,
                 manifest_json: serde_json::to_string(&package.manifest).map_err(fatal)?,
@@ -1126,8 +1176,26 @@ where
         let head = wt.head().await.map_err(git_error)?;
         let tree = wt.tree_of("HEAD").await.map_err(git_error)?;
 
-        let mut results = Vec::new();
-        let mut passed = true;
+        let (spec, _): (Specification, _) = self
+            .need_doc(&job, ArtifactKind::Specification, "specification")
+            .await?;
+        let changes = wt
+            .changed_files(job.base_commit.as_deref().unwrap_or(&head), &head)
+            .await
+            .map_err(git_error)?;
+        let diff = wt
+            .diff_bytes(job.base_commit.as_deref().unwrap_or(&head), &head)
+            .await
+            .map_err(git_error)?;
+        let static_report = evaluate_static_gates(
+            &project.settings.static_gates,
+            project.settings.protected_paths.as_deref(),
+            &spec,
+            &changes,
+            &diff,
+        );
+        let mut results = static_report.results;
+        let mut passed = static_report.passed;
         for (name, command) in project.settings.commands.gates() {
             let run = self.run_shell(&project, &layout.path, command).await?;
             passed &= run.outcome == "passed";
@@ -1139,7 +1207,7 @@ where
         }
         let doc = json!({
             "head_commit": head, "tree_hash": tree, "passed": passed,
-            "configured": !results.is_empty(), "results": results,
+            "configured": !results.is_empty(), "results": results, "acknowledgement_flags": static_report.acknowledgement_flags,
         });
         self.store_doc(&job, ArtifactKind::GateResult, &doc, Actor::Scheduler)
             .await?;

@@ -326,7 +326,7 @@ Input tokens dominate agent cost; the context builder ([ADR-010](adr/ADR-010-pro
 
 Each context manifest records estimated tokens per item category, so analytics can show "where input tokens come from".
 
-**Implementation status (M2, 2026-10-25):** repository context v1 is implemented in `turtle-context`. It reads only sorted `git ls-files` paths, includes relevant files and key project documents plus a size-capped map, uses a replaceable chars/4 estimate with a 12k-token package cap, redacts supported credential patterns, and records included/dropped items in a content-hashed manifest linked from each run. Per-role budgets, artifact excerpts, symbols, gate-output trimming, review windowing, and resource/knowledge retrieval are not implemented.
+**Implementation status (M2/M5, 2026-10-26):** repository context v1 is implemented in `turtle-context`. It reads only sorted `git ls-files` paths, includes relevant files and key project documents plus a size-capped map, uses a replaceable chars/4 estimate with a 12k-token package cap, redacts supported credential patterns, and records included/dropped items in a content-hashed manifest linked from each run. Resource versions are redacted on ingest, chunked and indexed by bundled SQLite FTS5; FTS-ranked chunks attached to the project or job are appended within the remaining package budget with trust labels and manifest entries. Prompt construction presents the whole context as untrusted data and resource text is JSON-escaped inside resource delimiters. Per-role budgets, artifact excerpts, symbols, gate-output trimming, review windowing, knowledge retrieval and PDF extraction remain unimplemented.
 
 ## 11. Retry Cost Estimation
 

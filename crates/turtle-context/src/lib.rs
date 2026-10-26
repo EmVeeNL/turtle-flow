@@ -38,6 +38,17 @@ pub struct ContextManifest {
     pub content_sha256: String,
     pub included: Vec<ManifestItem>,
     pub excluded: Vec<ExcludedItem>,
+    #[serde(default)]
+    pub resources: Vec<ManifestResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestResource {
+    pub id: String,
+    pub title: String,
+    pub trust: String,
+    pub estimated_tokens: usize,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +77,12 @@ fn sha256_hex(text: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// SHA-256 hex digest for a completed prompt context package.
+#[must_use]
+pub fn content_sha256(text: &str) -> String {
+    sha256_hex(text)
 }
 
 /// Replace with a provider tokenizer later; v1 deliberately uses the documented chars/4 proxy.
@@ -365,6 +382,7 @@ pub fn build_with_estimator(
             content_sha256: digest,
             included,
             excluded,
+            resources: Vec::new(),
         },
     })
 }

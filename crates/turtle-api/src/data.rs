@@ -12,7 +12,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{convert::Infallible, time::Duration};
-use turtle_domain::{ApprovalId, JobKey};
+use turtle_domain::{ApprovalId, ArtifactKind, JobKey};
 use turtle_store::{
     ApprovalRecord, BudgetRecord, BudgetScope, DashboardEstimate, EventRow, JobRecord,
     ProjectRecord, ProjectStats, RevisionRecord, RunRecord, TaskRow,
@@ -255,6 +255,45 @@ pub async fn project(
     );
     Ok(Json(value))
 }
+
+pub async fn resources(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let records = state
+        .services
+        .store
+        .with(move |store| {
+            let project = store.project_by_slug(&slug)?;
+            store.list_resources(project.id)
+        })
+        .await
+        .map_err(store_error)?;
+    Ok(Json(json!({"resources": records})))
+}
+
+#[derive(Deserialize)]
+pub struct ResourceSearchQuery {
+    project: String,
+    query: String,
+}
+
+pub async fn resource_search(
+    State(state): State<AppState>,
+    query: Result<Query<ResourceSearchQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::bad("invalid query"))?;
+    let hits = state
+        .services
+        .store
+        .with(move |store| {
+            let project = store.project_by_slug(&query.project)?;
+            store.search_resources(project.id, None, &query.query, 20)
+        })
+        .await
+        .map_err(store_error)?;
+    Ok(Json(json!({"hits": hits})))
+}
 #[derive(Deserialize)]
 pub struct JobQuery {
     include: Option<String>,
@@ -266,32 +305,49 @@ pub async fn job(
 ) -> Result<Json<Value>, ApiError> {
     let Query(query) = query.map_err(|_| ApiError::bad("invalid query"))?;
     let key: JobKey = key.parse().map_err(|_| ApiError::not_found())?;
-    let (job, usage, approvals, runs, events, revisions, tasks, provider, estimate, budgets) =
-        state
-            .services
-            .store
-            .with(move |s| {
-                let j = s.find_job(&key)?;
-                let id = j.job.id;
-                Ok::<_, turtle_store::StoreError>((
-                    j,
-                    s.dashboard_job_usage(id)?,
-                    s.list_approvals(id)?,
-                    s.runs_for_job(id)?,
-                    s.list_events(Some(id))?,
-                    s.all_revisions()?
-                        .into_iter()
-                        .filter(|r| r.job_id == id)
-                        .collect::<Vec<_>>(),
-                    s.dashboard_tasks(Some(id))?,
-                    s.dashboard_latest_provider(id)?,
-                    s.dashboard_estimate(id)?,
-                    s.list_budgets()?,
-                ))
-            })
-            .await
-            .map_err(store_error)?;
+    let (
+        job,
+        usage,
+        approvals,
+        runs,
+        events,
+        revisions,
+        tasks,
+        provider,
+        estimate,
+        budgets,
+        gate_revision,
+    ) = state
+        .services
+        .store
+        .with(move |s| {
+            let j = s.find_job(&key)?;
+            let id = j.job.id;
+            Ok::<_, turtle_store::StoreError>((
+                j,
+                s.dashboard_job_usage(id)?,
+                s.list_approvals(id)?,
+                s.runs_for_job(id)?,
+                s.list_events(Some(id))?,
+                s.all_revisions()?
+                    .into_iter()
+                    .filter(|r| r.job_id == id)
+                    .collect::<Vec<_>>(),
+                s.dashboard_tasks(Some(id))?,
+                s.dashboard_latest_provider(id)?,
+                s.dashboard_estimate(id)?,
+                s.list_budgets()?,
+                s.latest_revision(id, ArtifactKind::GateResult)?,
+            ))
+        })
+        .await
+        .map_err(store_error)?;
     let mut value = job_value(&job, &usage, &provider, &estimate, &budgets);
+    value["gates"] = gate_revision
+        .as_ref()
+        .and_then(|revision| state.services.blobs.get(&revision.sha256).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
     if query.include.is_some() {
         value["approvals"] = json!(
             approvals

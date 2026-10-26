@@ -16,6 +16,7 @@ use crate::cmd::budget::BudgetCommand;
 use crate::cmd::daemon::DaemonOptions;
 use crate::cmd::job::JobCommandLine;
 use crate::cmd::project::ProjectCommand;
+use crate::cmd::resource::ResourceCommand;
 use crate::paths::Home;
 use crate::runtime::Runtime;
 
@@ -64,6 +65,15 @@ enum Command {
     /// Register and inspect projects.
     #[command(subcommand)]
     Project(ProjectCommand),
+    /// Attach versioned resources and search them with full-text retrieval.
+    #[command(subcommand)]
+    Resource(ResourceCommand),
+    /// Search project resources with SQLite FTS5.
+    Search {
+        #[arg(short, long)]
+        project: String,
+        query: String,
+    },
     /// Create and follow jobs.
     #[command(subcommand)]
     Job(JobCommandLine),
@@ -188,6 +198,24 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
             cmd::daemon::run(home, options).await?;
         }
         Command::Project(c) => cmd::project::run(&Runtime::open(home)?, c).await?,
+        Command::Resource(ResourceCommand::Add {
+            input,
+            project,
+            job,
+            trust,
+        }) => {
+            cmd::resource::add(
+                &Runtime::open(home)?,
+                &input,
+                project.as_deref(),
+                job.as_deref(),
+                &trust,
+            )
+            .await?
+        }
+        Command::Search { project, query } => {
+            cmd::resource::search(&Runtime::open(home)?, &project, &query).await?
+        }
         Command::Job(c) => cmd::job::run(&Runtime::open(home)?, c).await?,
         Command::Budget(c) => cmd::budget::run(&Runtime::open(home)?, c).await?,
         Command::Runs(c) => runs::run(&Runtime::open(home)?, c).await?,
