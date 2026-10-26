@@ -42,7 +42,7 @@ const SELECT: &str = "SELECT id, job_id, gate_kind, binding_json, subject_hash, 
 /// An approval row exactly as stored, before parsing.
 struct RawApproval {
     id: String,
-    job_id: String,
+    job_id: Option<String>,
     gate: String,
     binding: String,
     subject_hash: String,
@@ -113,7 +113,7 @@ fn build(t: RawApproval, key: &Key) -> Result<ApprovalRecord> {
     {
         return Err(StoreError::ApprovalIntegrity {
             id: t.id,
-            job: t.job_id,
+            job: t.job_id.unwrap_or_else(|| "release approval".into()),
         });
     }
     Ok(ApprovalRecord {
@@ -123,6 +123,7 @@ fn build(t: RawApproval, key: &Key) -> Result<ApprovalRecord> {
             .map_err(|e| StoreError::Corrupt(format!("bad approval id: {e}")))?,
         job_id: t
             .job_id
+            .ok_or_else(|| StoreError::Corrupt("release approval has no job".into()))?
             .parse()
             .map_err(|e| StoreError::Corrupt(format!("bad job id: {e}")))?,
         gate: from_s(&t.gate)?,
@@ -214,14 +215,73 @@ fn sign_row(conn: &rusqlite::Connection, key: &Key, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn sign_legacy_rows(conn: &rusqlite::Connection, key: &Key) -> Result<()> {
-    let mut stmt = conn.prepare("SELECT id FROM approvals WHERE hmac IS NULL")?;
+/// Adds integrity metadata while reopening every pre-v7 approved row for a fresh human decision.
+/// Legacy row contents have no keyed proof, so migration must not treat their old approval as
+/// authenticated. The operation is transactional and safe to repeat if startup is interrupted.
+pub(crate) fn migrate_legacy_rows(
+    conn: &mut rusqlite::Connection,
+    clock: &dyn crate::clock::Clock,
+    key: &Key,
+) -> Result<()> {
+    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let mut tx = Tx {
+        tx: transaction,
+        clock,
+        approval_key: key,
+    };
+    let mut stmt = tx.tx.prepare("SELECT id FROM approvals")?;
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(stmt);
     for id in ids {
-        sign_row(conn, key, &id)?;
+        let mut raw = tx
+            .tx
+            .query_row(&format!("{SELECT} WHERE id = ?1"), [&id], map)?;
+        if let Some(stored) = &raw.hmac {
+            let expected = signature(&raw, key)?;
+            if !integrity::matches(stored, &expected) {
+                return Err(StoreError::ApprovalIntegrity {
+                    id: raw.id,
+                    job: raw
+                        .job_id
+                        .clone()
+                        .unwrap_or_else(|| "release approval".into()),
+                });
+            }
+        }
+        let reopened = raw.status == "approved";
+        if reopened {
+            tx.tx.execute(
+                "UPDATE approvals SET status = 'pending', decided_by = NULL, decided_at = NULL,
+                    channel = NULL, comment = NULL, invalidated_reason = NULL WHERE id = ?1",
+                [&id],
+            )?;
+            raw = tx
+                .tx
+                .query_row(&format!("{SELECT} WHERE id = ?1"), [&id], map)?;
+        }
+        sign_row(&tx.tx, key, &id)?;
+        if reopened {
+            let job_id = raw
+                .job_id
+                .as_deref()
+                .and_then(|id| id.parse::<JobId>().ok());
+            let linked = job_id.and_then(|job| {
+                crate::store::load_job(&tx.tx, job)
+                    .ok()
+                    .map(|record| (job, record.project_id))
+            });
+            tx.append_event(&NewEvent {
+                project_id: linked.map(|(_, project)| project),
+                job_id: linked.map(|(job, _)| job),
+                kind: "approval.reapproval_required".into(),
+                payload: serde_json::json!({"approval": id, "reason": "integrity_upgrade"}),
+                actor: Actor::System,
+            })?;
+        }
     }
+    tx.tx.commit()?;
     Ok(())
 }
 

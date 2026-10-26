@@ -162,14 +162,8 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
-            let (key, storage, created) =
-                integrity::load(Some(path), &installation_id(&conn)?, signed)?;
-            if !created {
-                return Err(StoreError::Corrupt(
-                    "approval integrity migration was interrupted or schema was downgraded".into(),
-                ));
-            }
-            crate::approvals::sign_legacy_rows(&conn, &key)?;
+            let (key, storage, _) = integrity::load(Some(path), &installation_id(&conn)?, signed)?;
+            crate::approvals::migrate_legacy_rows(&mut conn, &*clock, &key)?;
             Some((key, storage))
         } else {
             None

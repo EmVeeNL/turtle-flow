@@ -133,9 +133,8 @@ pub(crate) fn load(
         return Ok((fresh()?, KeyStorage::Ephemeral, true));
     };
     let file = db_path.with_extension("approval-key");
-    if let Some(key) = keychain_read(id) {
-        return Ok((key, KeyStorage::OsKeychain, false));
-    }
+    // Prefer an existing fallback file. It may have been written after a keychain command
+    // reported success but its item could not be read back (for example, a locked CI keychain).
     if file.exists() {
         use std::os::unix::fs::PermissionsExt;
         if std::fs::metadata(&file)?.permissions().mode() & 0o077 != 0 {
@@ -149,13 +148,16 @@ pub(crate) fn load(
             false,
         ));
     }
+    if let Some(key) = keychain_read(id) {
+        return Ok((key, KeyStorage::OsKeychain, false));
+    }
     if signed_rows {
         return Err(StoreError::Corrupt(
             "approval signing key is unavailable".into(),
         ));
     }
     let key = fresh()?;
-    if keychain_write(id, &key) {
+    if keychain_write(id, &key) && keychain_read(id).is_some_and(|stored| stored.0 == key.0) {
         return Ok((key, KeyStorage::OsKeychain, true));
     }
     use std::os::unix::fs::OpenOptionsExt;
