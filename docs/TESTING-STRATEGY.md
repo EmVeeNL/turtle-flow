@@ -138,7 +138,7 @@ The FakeAdapter reads a scenario script that defines, per role and attempt, what
 
 ### 9.2 Live E2E (reference repositories)
 
-Three small reference repos maintained in the project (`fixtures/ref-rust-cli`, `fixtures/ref-ts-api`, `fixtures/ref-py-lib`) each with ~5 benchmark jobs and hidden acceptance tests. Pre-release requirement (AC-01): each repo completes at least one `standard` job with Claude Code and one with Codex. Results also feed the evaluation suite.
+Three small reference project templates are maintained in `fixtures/reference-sources/` (Rust CLI, TypeScript API utilities, Python library), with five prompts per repo in `fixtures/benchmarks/`. `scripts/prepare-live-e2e.sh` creates disposable Git repositories outside the checkout; the benchmark prompts and hidden checks in `fixtures/acceptance/` are not copied into those repositories. Run a check after delivery with `scripts/check-live-e2e-acceptance.py <benchmark-id> <delivered-repo-path>`. Pre-release requirement (AC-01): each repo completes at least one `standard` job with Claude Code and one with Codex. Use distinct clean fixture clones and `TURTLE_HOME` values for each provider. See [the live E2E checklist](LIVE-E2E-CHECKLIST.md). Results also feed the evaluation suite.
 
 ## 10. Dashboard Tests (TST-17, TST-18)
 
@@ -177,7 +177,8 @@ Coverage targets (NFR-013): `turtle-workflow`, `turtle-policy`, `turtle-tokens` 
 
 ## 14. Test Data and Fixtures
 
-- `fixtures/repos/` — scripted generators (not committed repos) for: simple Rust/TS/Python projects, malicious repo (hooks, fsmonitor, filters, injection text), large repo generator, LFS repo, submodule repo.
+- `fixtures/reference-sources/`, `fixtures/benchmarks/`, `fixtures/acceptance/` — source templates, job prompts, and acceptance scripts for the live reference-repository suite. Acceptance files stay outside the generated project repositories.
+- `fixtures/repos/` — scripted generators (not committed repos) for: malicious repo (hooks, fsmonitor, filters, injection text), large repo generator, LFS repo, submodule repo.
 - `fixtures/transcripts/<provider>/<cli-version>/` — recorded CLI outputs with secrets removed.
 - `fixtures/secrets-corpus/` — synthetic secrets only (never real credentials).
 - `fixtures/injection-corpus/` — prompt-injection strings by category.
