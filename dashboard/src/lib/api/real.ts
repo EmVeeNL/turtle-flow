@@ -38,9 +38,16 @@ export const realAdapter: DashboardAdapter = {
   }
 };
 export const realCommands = {
+  createProject: (input: {path:string;slug?:string;name?:string;key?:string;profile?:string;branch?:string}) =>
+    request<{ok:boolean;id:string;slug:string}>('/projects',{method:'POST',body:JSON.stringify(input)}),
+  createJob: (slug:string,input:{title:string;description:string;type:string;priority:string;profile?:string;budget?:number;start:boolean}) =>
+    request<{ok:boolean;id:string;key:string;version:number;started:boolean}>(`/projects/${encodeURIComponent(slug)}/jobs`,{method:'POST',body:JSON.stringify(input)}),
+  setBudget: (input:{scope:'job'|'project'|'global';target?:string;limit:number;soft:boolean}) =>
+    request<{ok:boolean;budget:{id:string;settled:number;reserved:number;limit:number;kind:'hard'|'soft'}}>('/budgets',{method:'POST',body:JSON.stringify(input)}),
   job: (key: string, command: 'start' | 'pause' | 'resume' | 'cancel', expected_version: number, idempotency_key: string) =>
     request<{ok:boolean;version:number;replayed:boolean}>(`/jobs/${encodeURIComponent(key)}/commands`, {method:'POST',body:JSON.stringify({command,expected_version,idempotency_key})}),
   transcript: (id: string, offset = 0, limit = 100) =>
     request<{lines:string[];next_offset:number|null;provenance:string}>(`/runs/${encodeURIComponent(id)}/transcript?offset=${offset}&limit=${limit}`),
+  artifact: (id:string) => request<{id:string;content:string|null;kind:string;rev:number;sha256:string;created_at:string}>(`/artifacts/${encodeURIComponent(id)}`),
   usage: () => request<{jobs:unknown[]}>(`/analytics/usage`)
 };
