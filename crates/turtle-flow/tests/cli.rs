@@ -48,6 +48,10 @@ impl World {
             .env("TURTLE_HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Turtle Flow Test")
+            .env("GIT_AUTHOR_EMAIL", "turtle-test@fake.invalid")
+            .env("GIT_COMMITTER_NAME", "Turtle Flow Test")
+            .env("GIT_COMMITTER_EMAIL", "turtle-test@fake.invalid")
             .stdin(Stdio::null());
         c
     }
@@ -862,7 +866,7 @@ fn kill_scenario(delay_ms: Option<u64>) -> KillOutcome {
             panic!("daemon exited with {status} while the job was in {state:?}");
         }
         assert!(
-            start.elapsed() < Duration::from_secs(120),
+            start.elapsed() < Duration::from_secs(45),
             "job stuck in {state:?}; runs={:?}; events={:?}",
             store.runs_for_job(job.job.id).expect("job runs"),
             store
