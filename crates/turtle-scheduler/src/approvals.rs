@@ -75,6 +75,7 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
             &snap.artifacts,
             git.as_ref(),
             self.policy_version,
+            snap.job_budget_tokens,
         )?)
     }
 

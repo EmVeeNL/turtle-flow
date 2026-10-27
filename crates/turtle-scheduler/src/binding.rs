@@ -8,7 +8,7 @@ use std::future::Future;
 
 use sha2::{Digest, Sha256 as Hasher};
 use turtle_domain::{GateKind, Sha256};
-use turtle_policy::{ApprovalBinding, ArtifactRef, GitBinding};
+use turtle_policy::{ApprovalBinding, ArtifactRef, BudgetEnvelope, GitBinding};
 use turtle_store::{JobRecord, RevisionRecord};
 use turtle_workflow::Profile;
 
@@ -29,6 +29,7 @@ pub enum BindingError {
 pub struct ArtifactSnapshot {
     pub specification: Option<RevisionRecord>,
     pub plan: Option<RevisionRecord>,
+    pub preflight_report: Option<RevisionRecord>,
     pub review_report: Option<RevisionRecord>,
     pub verification_report: Option<RevisionRecord>,
 }
@@ -85,6 +86,7 @@ pub fn build_binding(
     artifacts: &ArtifactSnapshot,
     git: Option<&GitFacts>,
     policy_version: u32,
+    job_budget_tokens: Option<u64>,
 ) -> Result<ApprovalBinding, BindingError> {
     let mut b = ApprovalBinding::new(
         gate,
@@ -97,6 +99,7 @@ pub fn build_binding(
             let spec = require(artifacts.specification.as_ref(), "specification")?;
             b.artifacts
                 .insert("specification".into(), artifact_ref(spec));
+            b.budget_envelope = job_budget_tokens.map(|tokens_max| BudgetEnvelope { tokens_max });
         }
         GateKind::Plan => {
             let spec = require(artifacts.specification.as_ref(), "specification")?;
@@ -104,6 +107,11 @@ pub fn build_binding(
             b.artifacts
                 .insert("specification".into(), artifact_ref(spec));
             b.artifacts.insert("plan".into(), artifact_ref(plan));
+            if let Some(report) = &artifacts.preflight_report {
+                b.artifacts
+                    .insert("preflight_report".into(), artifact_ref(report));
+            }
+            b.budget_envelope = job_budget_tokens.map(|tokens_max| BudgetEnvelope { tokens_max });
         }
         GateKind::Acceptance => {
             let spec = require(artifacts.specification.as_ref(), "specification")?;

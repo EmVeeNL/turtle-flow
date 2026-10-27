@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use turtle_artifacts::BlobStore;
 use turtle_domain::{ApprovalValidity, ArtifactKind, Complexity, GateKind, Plan};
-use turtle_store::JobRecord;
+use turtle_store::{BudgetScope, JobRecord};
 use turtle_workflow::{DecisionContext, PreflightDecision, ScopeApprovalMode};
 
 use crate::binding::{ArtifactSnapshot, GitFactsProvider, POLICY_VERSION, build_binding};
@@ -72,6 +72,7 @@ pub(crate) struct Snapshot {
     pub artifacts: ArtifactSnapshot,
     pub approved: Vec<(GateKind, turtle_store::ApprovalRecord)>,
     pub dependencies_delivered: bool,
+    pub job_budget_tokens: Option<u64>,
 }
 
 pub(crate) async fn read_snapshot(
@@ -85,6 +86,7 @@ pub(crate) async fn read_snapshot(
             let artifacts = ArtifactSnapshot {
                 specification: latest(ArtifactKind::Specification)?,
                 plan: latest(ArtifactKind::Plan)?,
+                preflight_report: latest(ArtifactKind::PreflightReport)?,
                 review_report: latest(ArtifactKind::ReviewReport)?,
                 verification_report: latest(ArtifactKind::VerificationReport)?,
             };
@@ -94,10 +96,16 @@ pub(crate) async fn read_snapshot(
                     approved.push((gate, a));
                 }
             }
+            let budgets = s.transaction(|tx| tx.budgets_for_job(id))?;
+            let job_budget_tokens = budgets
+                .iter()
+                .find(|budget| budget.scope == BudgetScope::Job(id))
+                .map(|budget| budget.limit_tokens);
             Ok(Snapshot {
                 artifacts,
                 approved,
                 dependencies_delivered: s.dependencies_delivered(id)?,
+                job_budget_tokens,
             })
         })
         .await
@@ -128,6 +136,7 @@ impl<G: GitFactsProvider> ContextProvider for StoreContext<G> {
                         &snap.artifacts,
                         git.as_ref(),
                         self.config.policy_version,
+                        snap.job_budget_tokens,
                     ) {
                         Ok(expected)
                             if approved.binding.subject_hash() == approved.subject_hash
@@ -149,12 +158,42 @@ impl<G: GitFactsProvider> ContextProvider for StoreContext<G> {
 
         cx.plan_thresholds_exceeded = match &snap.artifacts.plan {
             None => false,
-            Some(rev) => self
-                .blobs
-                .get(&rev.sha256)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Plan>(&bytes).ok())
-                .is_none_or(|plan| plan.task_count() > self.config.plan_task_threshold),
+            Some(rev) => {
+                match self
+                    .blobs
+                    .get(&rev.sha256)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Plan>(&bytes).ok())
+                {
+                    None => true,
+                    Some(plan) => {
+                        let task_threshold = plan.task_count() > self.config.plan_task_threshold;
+                        let budget_threshold = if let Some(limit) = snap.job_budget_tokens {
+                            let plan_hash = rev.sha256.to_hex();
+                            snap.artifacts
+                                .preflight_report
+                                .as_ref()
+                                .and_then(|report| self.blobs.get(&report.sha256).ok())
+                                .and_then(|bytes| {
+                                    serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+                                })
+                                .filter(|report| {
+                                    report
+                                        .get("plan_sha256")
+                                        .and_then(serde_json::Value::as_str)
+                                        == Some(plan_hash.as_str())
+                                })
+                                .and_then(|report| {
+                                    report.get("estimate")?.get("envelope_tokens")?.as_u64()
+                                })
+                                .is_none_or(|tokens| tokens > limit)
+                        } else {
+                            false
+                        };
+                        task_threshold || budget_threshold
+                    }
+                }
+            }
         };
 
         cx.scope_auto_approvable = self.config.auto_scope_enabled

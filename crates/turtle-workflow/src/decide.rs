@@ -282,6 +282,7 @@ impl Tx<'_> {
     }
 
     fn proceed_to_implementation(&mut self) -> Result<(), &'static str> {
+        self.require_approval(GateKind::Scope)?;
         if self.cx.dependencies_delivered {
             self.job.ready_for_implementation = false;
             self.enter(S::Implementation, RunPurpose::Initial, false);
@@ -529,6 +530,8 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             if !within_scope {
                 tx.invalidate(GateKind::Scope, MaterialChange::PlanRevised);
                 tx.auto_back(S::Specification, Loop::Respec, RunPurpose::Revise);
+            } else if tx.cx.approval(GateKind::Scope) != ApprovalValidity::Valid {
+                tx.enter(S::ScopeApproval, RunPurpose::Initial, false);
             } else if tx
                 .job
                 .profile
@@ -548,8 +551,12 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             tx.re_request(GateKind::Plan);
         }
         (S::PlanApproval, C::ApprovalGranted { .. }) => {
-            tx.require_approval(GateKind::Plan)?;
-            tx.proceed_to_implementation()?;
+            if tx.cx.approval(GateKind::Scope) != ApprovalValidity::Valid {
+                tx.enter(S::ScopeApproval, RunPurpose::Initial, false);
+            } else {
+                tx.require_approval(GateKind::Plan)?;
+                tx.proceed_to_implementation()?;
+            }
         }
         (S::PlanApproval, C::ApprovalChangesRequested { .. }) => {
             tx.user_back(S::Planning, RunPurpose::Revise);

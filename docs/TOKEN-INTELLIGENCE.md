@@ -101,7 +101,7 @@ Implemented in `turtle-store::ledger` and used by the executor: the budget scope
 - The task scope is not used. Reservations use historical P90 × (1 + confidence buffer) when reported runs exist for the role/complexity bucket, and retain the original fixed per-role size for a cold start. The `ledger.reserved` event records the estimate range, confidence and bucket level.
 - A failed run with reported final usage is recorded as *reported* and charged at settlement; it does not train the estimator because an aborted run is not representative of a normal run. A failed run with no usage remains `unavailable` and releases its reservation. A successful run that reports nothing is charged the reservation.
 - The budget-increase approval of §6.3 is not wired in. A held job (`awaiting_budget`, no attempt used) is resumed by raising the budget (`turtle budget set`), which is recorded as a `limit_change` entry; the scheduler then lifts the hold, because `BudgetRestored` is a machine-only command.
-- `turtle budget estimate <job-key>` and `turtle job show` expose planned-job ranges and confidence after the plan exists. The report is advisory and is not yet attached to an approval or stored as a preflight artifact; a job has a budget only if the user sets one.
+- `turtle budget estimate <job-key>` and `turtle job show` expose planned-job ranges and confidence after the plan exists. The scheduler freezes the same role-mix estimate in a plan-hash-bound `PreflightReport`; in `standard`, an envelope above an explicitly configured job token limit requires plan approval. Scope and plan approval bindings include the configured job limit so edits invalidate stale approvals. A job remains unbudgeted unless the user sets a limit.
 
 ## 5. Complexity Estimation
 
