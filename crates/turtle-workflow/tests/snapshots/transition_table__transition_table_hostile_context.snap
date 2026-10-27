@@ -199,7 +199,7 @@ expression: render(&hostile())
 {"command":"approval_changes_requested","gate":"acceptance"} => rejected: stage_awaits_approval
 {"command":"approval_rejected","gate":"scope"} => rejected: stage_awaits_approval
 {"command":"approval_invalidated","gate":"acceptance","change":"worktree_changed"} => ok -> Planning []
-{"command":"plan_produced","valid":true,"within_scope":true} => ok -> Planning []
+{"command":"plan_produced","valid":true,"within_scope":true} => ok -> ScopeApproval [{"effect":"request_approval","gate":"scope","auto":false}, {"effect":"notify_user"}]
 {"command":"plan_produced","valid":true,"within_scope":false} => ok -> Specification [{"effect":"start_run","role":"spec_writer","purpose":"revise"}]
 {"command":"dependencies_delivered"} => rejected: ready_for_implementation
 {"command":"all_tasks_succeeded"} => rejected: no_transition
@@ -239,7 +239,7 @@ expression: render(&hostile())
 {"command":"spec_produced","valid":true,"criteria_count":4} => rejected: no_transition
 {"command":"spec_produced","valid":true,"criteria_count":0} => rejected: no_transition
 {"command":"approval_granted","gate":"scope"} => rejected: gate_matches_stage
-{"command":"approval_granted","gate":"plan"} => rejected: approval_valid
+{"command":"approval_granted","gate":"plan"} => ok -> ScopeApproval [{"effect":"request_approval","gate":"scope","auto":false}, {"effect":"notify_user"}]
 {"command":"approval_granted","gate":"acceptance"} => rejected: gate_matches_stage
 {"command":"approval_changes_requested","gate":"scope"} => rejected: gate_matches_stage
 {"command":"approval_changes_requested","gate":"acceptance"} => rejected: gate_matches_stage
