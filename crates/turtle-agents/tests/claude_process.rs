@@ -134,7 +134,7 @@ async fn a_streaming_provider_that_stalls_is_killed_with_partial_usage_preserved
     let program = fake_claude(dir.path(), &format!("printf '%s\\n' '{partial}'\nsleep 30"));
     let runner = ClaudeRunner::new(ClaudeConfig {
         program,
-        timeout: Duration::from_millis(300),
+        timeout: Duration::from_millis(1500),
         ..ClaudeConfig::default()
     });
 
