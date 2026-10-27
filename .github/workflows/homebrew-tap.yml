@@ -1,0 +1,47 @@
+name: homebrew-tap
+
+# Publishing a release (the draft made by `release`) refreshes the formula in the private tap.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to write into the tap
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+      - name: Download release checksums
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir sums
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: EmVeeNL/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+      - name: Render formula
+        run: .github/scripts/render-homebrew-formula.sh "$TAG" sums "$GITHUB_REPOSITORY" > tap/Formula/turtle-flow.rb
+      - name: Commit and push
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Formula already at $TAG"
+            exit 0
+          fi
+          git config user.name "turtle-flow release"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -am "feat: turtle-flow $TAG"
+          git push origin HEAD:main
