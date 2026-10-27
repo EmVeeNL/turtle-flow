@@ -48,6 +48,8 @@ pub enum GitError {
     CommitRefused(String),
     #[error("target branch `{branch}` moved since the delivery was prepared")]
     TargetMoved { branch: String },
+    #[error("failed to fetch origin/{branch} after {attempts} attempts")]
+    RemoteFetch { branch: String, attempts: u8 },
     #[error("merge has conflicts in {} file(s)", .0.len())]
     Conflicts(Vec<String>),
 }
