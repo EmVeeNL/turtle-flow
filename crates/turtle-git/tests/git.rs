@@ -95,6 +95,121 @@ async fn validates_project_repositories() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
+async fn origin_fetch_retries_a_transient_failure_and_recovers_idempotently() {
+    let f = fixture().await;
+    let remote_path = f.root.parent().expect("parent").join("origin.git");
+    std::fs::create_dir_all(&remote_path).expect("remote directory");
+    Repo::new(&remote_path)
+        .run(&["init", "--bare", "-q"])
+        .await
+        .expect("bare origin");
+    f.repo
+        .run(&[
+            "remote",
+            "add",
+            "origin",
+            remote_path.to_str().expect("path"),
+        ])
+        .await
+        .expect("add origin");
+    f.repo
+        .run(&["push", "origin", "main"])
+        .await
+        .expect("push main");
+
+    let bin = f.root.parent().expect("parent").join("bin");
+    std::fs::create_dir_all(&bin).expect("fake bin");
+    let marker = f.root.parent().expect("parent").join("fetch-failed-once");
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .map(|path| path.join("git"))
+        .find(|path| path.is_file())
+        .expect("git executable");
+    let wrapper = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) if [ ! -f '{}' ]; then touch '{}'; echo 'temporary network error' >&2; exit 128; fi;; esac\nexec '{}' \"$@\"\n",
+        marker.display(),
+        marker.display(),
+        real_git.display(),
+    );
+    let git_wrapper = bin.join("git");
+    std::fs::write(&git_wrapper, wrapper).expect("write git wrapper");
+    let mut permissions = std::fs::metadata(&git_wrapper)
+        .expect("wrapper metadata")
+        .permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&git_wrapper, permissions).expect("make executable");
+    }
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("PATH value");
+    let repo = f
+        .repo
+        .clone()
+        .with_env("PATH", path.to_str().expect("UTF-8 PATH"));
+
+    let first = repo
+        .fetch_origin_branch("main")
+        .await
+        .expect("retry after transient fetch failure")
+        .expect("origin/main");
+    assert!(
+        marker.exists(),
+        "the first fetch attempt should have failed"
+    );
+    assert_eq!(first, f.repo.head().await.expect("local head"));
+    assert_eq!(
+        repo.fetch_origin_branch("main")
+            .await
+            .expect("idempotent recovery")
+            .as_deref(),
+        Some(first.as_str())
+    );
+}
+
+#[tokio::test]
+async fn origin_fetch_without_remote_or_published_branch_keeps_local_base_available() {
+    let f = fixture().await;
+    assert_eq!(
+        f.repo.fetch_origin_branch("main").await.expect("no origin"),
+        None
+    );
+
+    let remote_path = f.root.parent().expect("parent").join("empty-origin.git");
+    std::fs::create_dir_all(&remote_path).expect("remote directory");
+    Repo::new(&remote_path)
+        .run(&["init", "--bare", "-q"])
+        .await
+        .expect("bare origin");
+    f.repo
+        .run(&[
+            "remote",
+            "add",
+            "origin",
+            remote_path.to_str().expect("path"),
+        ])
+        .await
+        .expect("add origin");
+    assert_eq!(
+        f.repo
+            .fetch_origin_branch("main")
+            .await
+            .expect("unpublished branch"),
+        None
+    );
+    assert!(
+        f.repo
+            .branch_tip("main")
+            .await
+            .expect("local main")
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn worktree_creation_is_idempotent_and_leaves_main_checkout_alone() {
     let f = fixture().await;
     let base = f.repo.head().await.expect("head");
