@@ -7,6 +7,8 @@ use turtle_domain::Sha256 as Digest256;
 
 use crate::{GitError, Repo, Result};
 
+const MAX_UNTRACKED_DIFF_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangedFile {
     pub path: String,
@@ -19,6 +21,121 @@ pub struct ChangedFile {
 }
 
 impl Repo {
+    /// Diff the current index and worktree against `HEAD`, including non-ignored untracked files.
+    /// This is used for pre-commit task gates so newly created files receive the same scope and
+    /// secret checks as modified tracked files.
+    pub async fn working_tree_diff(&self) -> Result<(Vec<ChangedFile>, Vec<u8>)> {
+        let status = self
+            .run(&[
+                "diff",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                "HEAD",
+            ])
+            .await?;
+        let numstat = self
+            .run(&[
+                "diff",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                "HEAD",
+            ])
+            .await?;
+        let mut changed = parse_name_status(&status)?;
+        let counts = parse_numstat(&numstat)?;
+        for file in &mut changed {
+            if let Some((added, removed)) = counts
+                .iter()
+                .find(|(path, _, _)| *path == file.path)
+                .map(|(_, added, removed)| (*added, *removed))
+            {
+                file.added = added;
+                file.removed = removed;
+            }
+        }
+
+        let patch = self
+            .raw(&[
+                "diff",
+                "--binary",
+                "--full-index",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--diff-algorithm=histogram",
+                "HEAD",
+            ])
+            .await?;
+        if !patch.success() {
+            return Err(GitError::Command {
+                args: "diff HEAD".into(),
+                code: "nonzero".into(),
+                stderr: String::from_utf8_lossy(&patch.stderr).into_owned(),
+            });
+        }
+        let mut bytes = patch.stdout;
+
+        let untracked = self
+            .raw(&["ls-files", "--others", "--exclude-standard", "-z"])
+            .await?;
+        if !untracked.success() {
+            return Err(GitError::Command {
+                args: "ls-files --others".into(),
+                code: "nonzero".into(),
+                stderr: String::from_utf8_lossy(&untracked.stderr).into_owned(),
+            });
+        }
+        for path in String::from_utf8_lossy(&untracked.stdout)
+            .split('\0')
+            .filter(|path| !path.is_empty())
+        {
+            if path.starts_with('/')
+                || std::path::Path::new(path)
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(GitError::Invalid(
+                    "Git returned an unsafe untracked path".into(),
+                ));
+            }
+            let full_path = self.path().join(path);
+            let metadata = std::fs::symlink_metadata(&full_path)?;
+            if metadata.file_type().is_file() && metadata.len() > MAX_UNTRACKED_DIFF_FILE_BYTES {
+                return Err(GitError::Invalid(format!(
+                    "untracked file `{path}` exceeds the 5 MiB task-gate inspection limit"
+                )));
+            }
+            let content = if metadata.file_type().is_symlink() {
+                std::fs::read_link(&full_path)?
+                    .to_string_lossy()
+                    .as_bytes()
+                    .to_vec()
+            } else if metadata.file_type().is_file() {
+                std::fs::read(&full_path)?
+            } else {
+                Vec::new()
+            };
+            changed.push(ChangedFile {
+                path: path.to_owned(),
+                status: 'A',
+                old_path: None,
+                added: None,
+                removed: None,
+            });
+            bytes.extend_from_slice(b"\n+++ turtle-flow untracked file: ");
+            bytes.extend_from_slice(path.as_bytes());
+            bytes.extend_from_slice(b"\n");
+            bytes.extend_from_slice(&content);
+            bytes.extend_from_slice(b"\n");
+        }
+
+        Ok((changed, bytes))
+    }
+
     /// The full binary-safe diff from `base` to `head`.
     pub async fn diff_bytes(&self, base: &str, head: &str) -> Result<Vec<u8>> {
         let out = self

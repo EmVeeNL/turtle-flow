@@ -9,7 +9,7 @@ This checklist records the remaining release evidence for Turtle Flow 0.3. Featu
 
 ## M5 completeness and safety
 
-- [ ] Implement per-task strict gates and the estimate-envelope plan approval threshold.
+- [ ] Merge and validate per-task strict build/test/lint, secret-scan and scope gates with bounded fixer retries, and the plan-estimate threshold against the configured job token limit.
 - [ ] Add PDF resource extraction with content limits, redaction, and negative/security tests.
 - [ ] Add remote-base fetching with retry/recovery coverage.
 - [ ] Complete the remaining security fixture matrix in [TESTING-STRATEGY.md §7](TESTING-STRATEGY.md#7-security-tests-tst-13). PR #29 added prompt-injection, unauthorized-commit/push, and context-budget regressions; broader injection and resource-limit coverage remains.

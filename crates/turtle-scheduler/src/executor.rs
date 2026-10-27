@@ -20,6 +20,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use sha2::Digest;
 use turtle_agents::{
     AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, Independence, RouteContext,
 };
@@ -27,7 +28,8 @@ use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
     Actor, ApprovalStatus, ArtifactKind, DeliveryMode, GateKind, Plan, QuotaStatus, ReviewReport,
-    Role, RunId, Severity, Specification, UsageValue, VerificationDecision, VerificationReport,
+    Role, RunId, Severity, Specification, StaticGateSettings, UsageValue, VerificationDecision,
+    VerificationReport,
 };
 use turtle_exec::{CommandSpec, ExitOutcome};
 use turtle_git::commit::Trailers;
@@ -848,6 +850,33 @@ where
                         plan
                     }
                 };
+                let (_, plan_revision): (Plan, RevisionRecord) =
+                    self.need_doc(&job, ArtifactKind::Plan, "plan").await?;
+                let plan_sha256 = plan_revision.sha256.to_hex();
+                let has_current_preflight = self
+                    .read_doc::<Value>(&job, ArtifactKind::PreflightReport)
+                    .await?
+                    .is_some_and(|(report, _)| {
+                        report.get("plan_sha256").and_then(Value::as_str)
+                            == Some(plan_sha256.as_str())
+                    });
+                if !has_current_preflight {
+                    let estimate = crate::estimate::for_job(&self.store, &job, &spec, &plan)
+                        .await
+                        .map_err(retryable)?;
+                    let report = json!({
+                        "schema": "turtle.preflight-report.v1",
+                        "plan_sha256": plan_sha256,
+                        "estimate": estimate,
+                    });
+                    self.store_doc(
+                        &job,
+                        ArtifactKind::PreflightReport,
+                        &report,
+                        Actor::Scheduler,
+                    )
+                    .await?;
+                }
                 let within_scope = plan
                     .tasks
                     .iter()
@@ -1126,6 +1155,41 @@ where
         let repo = self.cfg.repo(&project);
         let wt = repo.at(&layout.path);
         let key = job.key.to_string();
+        let strict = job.job.profile.base == ProfileBase::Strict;
+        let required_task_gates: &[&str] = &["build", "test", "lint"];
+        let task_gates: Vec<_> = project
+            .settings
+            .commands
+            .gates()
+            .into_iter()
+            .filter(|(name, _)| !strict || required_task_gates.contains(name))
+            .collect();
+
+        if strict {
+            let missing: Vec<_> = required_task_gates
+                .iter()
+                .filter(|required| !task_gates.iter().any(|(name, _)| name == *required))
+                .copied()
+                .collect();
+            if !missing.is_empty() {
+                let report = json!({
+                    "passed": false,
+                    "configured": false,
+                    "gate_scope": "strict_task",
+                    "missing_gates": missing,
+                    "results": [],
+                });
+                self.store_doc(&job, ArtifactKind::GateResult, &report, Actor::Scheduler)
+                    .await?;
+                return Ok(
+                    ExecOutcome::done(json!({"missing_task_gates": missing})).with_command(
+                        JobCommand::TaskFailed {
+                            replan_allowed: false,
+                        },
+                    ),
+                );
+            }
+        }
 
         let mut done = 0;
         for task in plan.execution_order().map_err(fatal)? {
@@ -1140,14 +1204,132 @@ where
                 done += 1;
                 continue;
             }
-            let run_id = RunId::new();
-            let mut req = self.request(&job, Role::Implementer);
-            req.run_id = run_id;
-            req.workdir = Some(layout.path.clone());
-            req.spec = Some(spec.clone());
-            req.plan = Some(plan.clone());
-            req.task = Some(task.clone());
-            self.run_code_agent(req, &job, &wt).await?;
+            let run_id = if strict {
+                let mut feedback = match self
+                    .read_doc::<Value>(&job, ArtifactKind::GateResult)
+                    .await?
+                {
+                    Some((report, _))
+                        if report.get("gate_scope").and_then(Value::as_str)
+                            == Some("strict_task")
+                            && report.get("task_id").and_then(Value::as_str)
+                                == Some(task.id.as_str())
+                            && report.get("passed").and_then(Value::as_bool) == Some(false) =>
+                    {
+                        Some(format!(
+                            "Retrying task `{}` after its previous strict gate attempt failed. Fix these checks before making other changes.\n{}",
+                            task.id,
+                            serde_json::to_string_pretty(&report)
+                                .unwrap_or_else(|_| "gate result unavailable".to_owned()),
+                        ))
+                    }
+                    _ => None,
+                };
+                let mut passed_run = None;
+                for fix_iteration in 0..=job.job.profile.max_fix_iterations {
+                    let run_id = RunId::new();
+                    let role = if fix_iteration == 0 && feedback.is_none() {
+                        Role::Implementer
+                    } else {
+                        Role::Fixer
+                    };
+                    let mut req = self.request(&job, role);
+                    req.run_id = run_id;
+                    req.workdir = Some(layout.path.clone());
+                    req.spec = Some(spec.clone());
+                    req.plan = Some(plan.clone());
+                    req.task = Some(task.clone());
+                    req.feedback = feedback.clone();
+                    self.run_code_agent(req, &job, &wt).await?;
+
+                    let mut results = Vec::with_capacity(task_gates.len());
+                    let mut gates_passed = true;
+                    for (name, command) in &task_gates {
+                        let run = self.run_shell(&project, &layout.path, command).await?;
+                        gates_passed &= run.outcome == "passed";
+                        results.push(json!({
+                            "gate": name,
+                            "command": command,
+                            "outcome": run.outcome,
+                            "exit_code": run.exit_code,
+                            "duration_ms": run.duration_ms,
+                            "output_tail": run.tail,
+                        }));
+                    }
+                    let task_diff_sha256 = match wt.working_tree_diff().await {
+                        Ok((changed, diff)) => {
+                            let settings = StaticGateSettings {
+                                secret_scan: true,
+                                protected_paths: false,
+                                max_diff_lines: None,
+                                scope_conformance: true,
+                                dependency_changes: false,
+                            };
+                            let report = evaluate_static_gates(
+                                &settings,
+                                project.settings.protected_paths.as_deref(),
+                                &spec,
+                                &changed,
+                                &diff,
+                            );
+                            gates_passed &= report.passed;
+                            results.extend(report.results);
+                            let digest = sha2::Sha256::digest(&diff);
+                            Some(turtle_domain::Sha256::from_bytes(digest.into()).to_hex())
+                        }
+                        Err(error) => {
+                            gates_passed = false;
+                            results.push(json!({
+                                "gate": "task_diff_inspection",
+                                "outcome": "failed",
+                                "summary": error.to_string(),
+                            }));
+                            None
+                        }
+                    };
+                    let report = json!({
+                        "passed": gates_passed,
+                        "configured": true,
+                        "gate_scope": "strict_task",
+                        "task_id": task.id,
+                        "fix_iteration": fix_iteration,
+                        "task_diff_sha256": task_diff_sha256,
+                        "results": results,
+                    });
+                    self.store_doc(&job, ArtifactKind::GateResult, &report, Actor::Scheduler)
+                        .await?;
+                    if gates_passed {
+                        passed_run = Some(run_id);
+                        break;
+                    }
+                    feedback = Some(format!(
+                        "The strict task gates failed for task `{}`. Fix the reported checks and do not change unrelated files.\n{}",
+                        task.id,
+                        serde_json::to_string_pretty(&results)
+                            .unwrap_or_else(|_| "gate result serialization failed".to_owned()),
+                    ));
+                }
+                let Some(run_id) = passed_run else {
+                    return Ok(ExecOutcome::done(json!({
+                        "task": task.id,
+                        "reason": "strict_task_gate_fix_limit_reached",
+                    }))
+                    .with_command(JobCommand::TaskFailed {
+                        replan_allowed: false,
+                    }));
+                };
+                run_id
+            } else {
+                let run_id = RunId::new();
+                let mut req = self.request(&job, Role::Implementer);
+                req.run_id = run_id;
+                req.workdir = Some(layout.path.clone());
+                req.spec = Some(spec.clone());
+                req.plan = Some(plan.clone());
+                req.task = Some(task.clone());
+                self.run_code_agent(req, &job, &wt).await?;
+                run_id
+            };
             wt.commit_all(
                 &format!("feat({key}): {}", task.title),
                 &task.instructions,

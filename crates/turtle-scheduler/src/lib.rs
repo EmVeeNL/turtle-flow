@@ -11,6 +11,7 @@ pub mod context;
 pub mod crash;
 pub mod dispatcher;
 pub mod engine;
+pub mod estimate;
 pub mod executor;
 pub mod git_facts;
 pub mod layout;
