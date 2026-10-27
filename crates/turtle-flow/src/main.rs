@@ -38,6 +38,9 @@ struct Cli {
 enum Command {
     /// Link this CLI to your Turtle Flow account license.
     Login,
+    /// Internal subprocess used to extract text from an attached PDF.
+    #[command(name = "__extract-pdf", hide = true)]
+    ExtractPdf,
     /// Check the environment: Git, provider CLIs and the data directory.
     Doctor {
         /// Print machine-readable JSON instead of a table.
@@ -206,6 +209,9 @@ async fn main() -> ExitCode {
 }
 
 async fn dispatch(command: Command) -> Result<ExitCode> {
+    if matches!(&command, Command::ExtractPdf) {
+        return cmd::resource::extract_pdf_worker();
+    }
     if let Command::Doctor { json } = command {
         return Ok(doctor::run(json).await);
     }
@@ -226,6 +232,7 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     let ok = ExitCode::SUCCESS;
     match command {
         Command::Login => account_license::login(&home).await?,
+        Command::ExtractPdf => unreachable!("handled above"),
         Command::Doctor { .. } => unreachable!("handled above"),
         Command::Init | Command::Completions { .. } => unreachable!("handled above"),
         Command::Export {
