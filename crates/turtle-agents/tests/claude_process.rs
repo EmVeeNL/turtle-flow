@@ -123,3 +123,36 @@ async fn a_failing_cli_surfaces_its_message_and_a_missing_cli_is_fatal() {
         other => panic!("expected a fatal error, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn a_streaming_provider_that_stalls_is_killed_with_partial_usage_preserved() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let work = tempfile::tempdir().expect("workdir");
+    let partial = r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01,"result":"partial response","usage":{"input_tokens":12,"output_tokens":3}}"#;
+    let program = fake_claude(dir.path(), &format!("printf '%s\\n' '{partial}'\nsleep 30"));
+    let runner = ClaudeRunner::new(ClaudeConfig {
+        program,
+        timeout: Duration::from_millis(300),
+        ..ClaudeConfig::default()
+    });
+
+    let started = std::time::Instant::now();
+    let error = runner
+        .run(&request(Some(work.path())))
+        .await
+        .expect_err("stalled provider must time out");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(!error.retryable(), "provider timeout remains fatal");
+    assert!(error.to_string().contains("stopped after"), "{error}");
+    assert!(
+        error
+            .transcript()
+            .is_some_and(|text| text.contains("partial response"))
+    );
+    assert!(
+        error.usage().is_some(),
+        "usage reported before timeout is retained"
+    );
+}
