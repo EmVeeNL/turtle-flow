@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { env } from 'cloudflare:workers'
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
 import { createAuthContext, hasAccountProtection } from '../../../server/auth'
 import { cliDeviceAuthorization, cliInstallation, license, licenseAuditEvent, user } from '../../../server/schema'
 import { signFreeLicense } from '../../../server/license-issuing'
@@ -25,6 +25,11 @@ async function keyedUserCode(value: string) {
   if (!pepper) throw new Error('CLI device authorization is not configured.')
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pepper), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   return b64url(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value.replace(/[-\s]/g, '').toUpperCase()))))
+}
+
+function normalizeUserCode(value: string) {
+  const normalized = value.replace(/[-\s]/g, '').toUpperCase()
+  return /^[0-9A-HJ-KM-NP-TV-Z]{10}$/.test(normalized) ? normalized : null
 }
 
 async function body(request: Request) {
@@ -52,6 +57,8 @@ async function handler(request: Request) {
     const id = `dva_${crypto.randomUUID().replaceAll('-', '')}`
     const context = await createAuthContext()
     try {
+      // Expire stale one-time secrets so only live authorization records accumulate.
+      await context.db.delete(cliDeviceAuthorization).where(lt(cliDeviceAuthorization.expiresAt, now))
       await context.db.insert(cliDeviceAuthorization).values({
         id, deviceCodeHash: await sha256(deviceCode), userCodeHash: await keyedUserCode(userCode),
         publicKey: input.public_key, thumbprint: await sha256(b64url(publicBytes)),
@@ -86,16 +93,17 @@ async function handler(request: Request) {
   }
 
   if ((path === '/api/cli/device/authorizations/approve' || path === '/api/cli/device/authorizations/deny') && request.method === 'POST') {
-    if (await rateLimited(request, 'decision', 12, 600)) return json({ error: 'slow_down' }, 429)
     if (!originOk(request)) return json({ error: 'invalid_origin' }, 403)
+    if (await rateLimited(request, 'decision', 12, 600)) return json({ error: 'slow_down' }, 429)
     const context = await createAuthContext()
     try {
       const session = await context.auth.api.getSession({ headers: request.headers })
       if (!session || !(await hasAccountProtection(context, session.user))) return json({ error: 'protected_account_required' }, 403)
       const input = await body(request)
-      if (!input || typeof input.user_code !== 'string') return json({ error: 'invalid_request' }, 400)
+      const userCode = input && typeof input.user_code === 'string' ? normalizeUserCode(input.user_code) : null
+      if (!userCode) return json({ error: 'invalid_request' }, 400)
       const [authorization] = await context.db.select().from(cliDeviceAuthorization)
-        .where(and(eq(cliDeviceAuthorization.userCodeHash, await keyedUserCode(input.user_code)), eq(cliDeviceAuthorization.status, 'pending'))).limit(1)
+        .where(and(eq(cliDeviceAuthorization.userCodeHash, await keyedUserCode(userCode)), eq(cliDeviceAuthorization.status, 'pending'))).limit(1)
       if (!authorization || authorization.expiresAt <= now || authorization.attempts >= 8) return json({ error: 'invalid_or_expired_code' }, 404)
       if (path.endsWith('/deny')) {
         await context.db.update(cliDeviceAuthorization).set({ status: 'denied', userId: session.user.id }).where(eq(cliDeviceAuthorization.id, authorization.id))
@@ -143,15 +151,21 @@ async function handler(request: Request) {
   }
 
   if (path === '/api/cli/device/authorizations/pending' && request.method === 'POST') {
+    if (!originOk(request)) return json({ error: 'invalid_origin' }, 403)
     if (await rateLimited(request, 'code', 20, 600)) return json({ error: 'slow_down' }, 429)
     const context = await createAuthContext()
     try {
       const session = await context.auth.api.getSession({ headers: request.headers })
       if (!session || !(await hasAccountProtection(context, session.user))) return json({ error: 'protected_account_required' }, 403)
       const input = await body(request)
-      if (!input || typeof input.user_code !== 'string') return json({ error: 'invalid_request' }, 400)
-      const [authorization] = await context.db.select({ id: cliDeviceAuthorization.id, deviceName: cliDeviceAuthorization.deviceName, platform: cliDeviceAuthorization.platform, cliVersion: cliDeviceAuthorization.cliVersion, expiresAt: cliDeviceAuthorization.expiresAt }).from(cliDeviceAuthorization)
-        .where(and(eq(cliDeviceAuthorization.userCodeHash, await keyedUserCode(input.user_code)), eq(cliDeviceAuthorization.status, 'pending'))).limit(1)
+      const userCode = input && typeof input.user_code === 'string' ? normalizeUserCode(input.user_code) : null
+      if (!userCode) return json({ error: 'invalid_request' }, 400)
+      const [authorization] = await context.db.update(cliDeviceAuthorization).set({ attempts: sql`${cliDeviceAuthorization.attempts} + 1` }).where(and(
+        eq(cliDeviceAuthorization.userCodeHash, await keyedUserCode(userCode)),
+        eq(cliDeviceAuthorization.status, 'pending'),
+        lt(cliDeviceAuthorization.attempts, 8),
+        gt(cliDeviceAuthorization.expiresAt, now),
+      )).returning({ id: cliDeviceAuthorization.id, deviceName: cliDeviceAuthorization.deviceName, platform: cliDeviceAuthorization.platform, cliVersion: cliDeviceAuthorization.cliVersion, expiresAt: cliDeviceAuthorization.expiresAt })
       if (!authorization || authorization.expiresAt <= now) return json({ error: 'invalid_or_expired_code' }, 404)
       return json({ device: { name: authorization.deviceName, platform: authorization.platform, version: authorization.cliVersion }, expires_at: authorization.expiresAt })
     } finally { await context.close() }
