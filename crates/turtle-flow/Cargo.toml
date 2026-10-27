@@ -25,6 +25,7 @@ qrcode = { version = "0.14", default-features = false }
 turtle-artifacts = { workspace = true }
 turtle-domain = { workspace = true }
 turtle-context = { workspace = true }
+turtle-exec = { workspace = true }
 turtle-git = { workspace = true }
 turtle-policy = { workspace = true }
 turtle-scheduler = { workspace = true }
@@ -45,6 +46,7 @@ getrandom = { workspace = true }
 keyring = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+pdf-extract = "0.12.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

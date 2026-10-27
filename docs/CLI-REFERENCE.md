@@ -297,7 +297,7 @@ Attach versioned resources and search them with full-text retrieval
 Usage: turtle resource <COMMAND>
 
 Commands:
-  add   Add a local file or take a one-time HTTP(S) URL snapshot
+  add   Add a local text/PDF file or take a one-time HTTP(S) URL snapshot
   help  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -307,7 +307,7 @@ Options:
 ## `turtle resource add`
 
 ```text
-Add a local file or take a one-time HTTP(S) URL snapshot
+Add a local text/PDF file or take a one-time HTTP(S) URL snapshot
 
 Usage: turtle resource add [OPTIONS] <INPUT>
 
@@ -320,6 +320,10 @@ Options:
       --trust <TRUST>      [default: untrusted] [possible values: trusted, internal, untrusted]
   -h, --help               Print help
 ```
+
+Text resources are limited to 8 MiB. PDFs are parsed in a time-limited child process; extracted
+text is limited to 4 MiB, redacted, and stored as text for search and context. Image-only PDFs
+without extractable text are rejected. Encrypted, malformed, or over-limit PDFs are rejected.
 
 ## `turtle search`
 
