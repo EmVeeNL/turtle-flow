@@ -120,14 +120,22 @@ async function handler(request: Request) {
         .where(and(eq(cliDeviceAuthorization.userCodeHash, await keyedUserCode(userCode)), eq(cliDeviceAuthorization.status, 'pending'))).limit(1)
       if (!authorization || authorization.expiresAt <= now || authorization.attempts >= 8) return json({ error: 'invalid_or_expired_code' }, 404)
       if (path.endsWith('/deny')) {
-        await context.db.update(cliDeviceAuthorization).set({ status: 'denied', userId: session.user.id }).where(eq(cliDeviceAuthorization.id, authorization.id))
+        const [denied] = await context.db.update(cliDeviceAuthorization)
+          .set({ status: 'denied', userId: session.user.id })
+          .where(and(eq(cliDeviceAuthorization.id, authorization.id), eq(cliDeviceAuthorization.status, 'pending'), gt(cliDeviceAuthorization.expiresAt, now)))
+          .returning({ id: cliDeviceAuthorization.id })
+        if (!denied) return json({ error: 'invalid_or_expired_code' }, 409)
         return json({ status: 'denied' })
       }
 
       const outcome = await context.db.transaction(async (tx) => {
         // Lock the account row so simultaneous approvals cannot exceed the two-installation cap.
         await tx.select({ id: user.id }).from(user).where(eq(user.id, session.user.id)).for('update')
-        const [current] = await tx.select().from(cliDeviceAuthorization).where(and(eq(cliDeviceAuthorization.id, authorization.id), eq(cliDeviceAuthorization.status, 'pending'))).limit(1)
+        // Serialize competing approvals across accounts, not just simultaneous approvals within one account.
+        const [current] = await tx.select().from(cliDeviceAuthorization)
+          .where(and(eq(cliDeviceAuthorization.id, authorization.id), eq(cliDeviceAuthorization.status, 'pending')))
+          .limit(1)
+          .for('update')
         if (!current || current.expiresAt <= now) return { error: 'invalid_or_expired_code' as const }
         const [existing] = await tx.select().from(cliInstallation).where(and(eq(cliInstallation.userId, session.user.id), eq(cliInstallation.thumbprint, current.thumbprint))).limit(1)
         const [entitlement] = await tx.select().from(license).where(eq(license.userId, session.user.id)).limit(1)
