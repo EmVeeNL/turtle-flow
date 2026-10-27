@@ -46,8 +46,8 @@ Content addressing gives dedup, integrity checks and natural immutability — ex
 
 ## Mitigations
 
-- Out-of-process extraction with memory/time limits; no execution of embedded content.
-- Size limits per resource (default 50 MB), quotas per project, retention for transcripts.
+- Current PDF extraction runs out of process with an 8 MiB input cap, 4 MiB extracted-text cap, and 20 second timeout; extracted content is redacted before storage and embedded content is never executed. The parser has no hard resident-memory limit, so large or pathological inputs remain a risk to review.
+- Current text/resource ingestion is capped at 8 MiB; per-project quotas and transcript retention remain separate work.
 
 ## Implementation notes (2026-10-24)
 

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Document | ROADMAP.md |
-| Status | Proposal; dates are not committed — durations are ranges under stated assumptions. As of 2026-10-26, the feature stack through PR #26 is integrated into `main` by PR #27, with CI passing. Beta acceptance gaps are listed in [BETA-READINESS.md](BETA-READINESS.md) and the milestone snapshot in [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26). PR merge polling is implemented by commit `5140996` and awaits integration. |
+| Status | Proposal; dates are not committed — durations are ranges under stated assumptions. As of 2026-10-27, PRs #33–#37 are open as a stacked series with CI passing; #33 targets `main`, and #34–#37 build on the preceding PR. They cover strict task gates and plan approval, PDF extraction, remote-base fetching, and security/recovery fixtures. Merge them in order before treating those changes as integrated. Beta acceptance gaps are listed in [BETA-READINESS.md](BETA-READINESS.md) and the milestone snapshot in [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26). PR merge polling is integrated in `main`. |
 | Related | [MVP.md](MVP.md), [PRD.md §28](PRD.md#28-release-roadmap-product-view), [ADR-015](adr/ADR-015-future-server-deployment.md), [LICENSING.md](LICENSING.md) |
 
 ---
