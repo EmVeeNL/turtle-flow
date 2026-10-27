@@ -76,5 +76,12 @@ export const cliInstallation = pgTable('cli_installation', {
   uniqueIndex('cli_installation_user_thumbprint_unique').on(table.userId, table.thumbprint),
 ])
 
+/** Atomic per-account throttle for protected device-code entry attempts. */
+export const cliUserCodeAttempt = pgTable('cli_user_code_attempt', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+})
+
 export const licenseRelations = relations(license, ({ many }) => ({ events: many(licenseAuditEvent) }))
 export const licenseAuditRelations = relations(licenseAuditEvent, ({ one }) => ({ license: one(license, { fields: [licenseAuditEvent.licenseId], references: [license.id] }) }))

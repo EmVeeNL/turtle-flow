@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { env } from 'cloudflare:workers'
 import { and, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm'
 import { createAuthContext, hasAccountProtection } from '../../../server/auth'
-import { cliDeviceAuthorization, cliInstallation, license, licenseAuditEvent, user } from '../../../server/schema'
+import { cliDeviceAuthorization, cliInstallation, cliUserCodeAttempt, license, licenseAuditEvent, user } from '../../../server/schema'
 import { signFreeLicense } from '../../../server/license-issuing'
 
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -18,6 +18,19 @@ async function rateLimited(request: Request, bucket: string, maximum: number, se
   if (current >= maximum) return true
   await env.LICENSE_CACHE.put(key, String(current + 1), { expirationTtl: seconds })
   return false
+}
+
+async function accountCodeRateLimited(context: Awaited<ReturnType<typeof createAuthContext>>, userId: string, now: Date) {
+  const windowStartedAt = new Date(Math.floor(now.getTime() / 600_000) * 600_000)
+  const [counter] = await context.db.insert(cliUserCodeAttempt).values({ userId, windowStartedAt, attempts: 1 })
+    .onConflictDoUpdate({
+      target: cliUserCodeAttempt.userId,
+      set: {
+        windowStartedAt,
+        attempts: sql`CASE WHEN ${cliUserCodeAttempt.windowStartedAt} = ${windowStartedAt} THEN ${cliUserCodeAttempt.attempts} + 1 ELSE 1 END`,
+      },
+    }).returning({ attempts: cliUserCodeAttempt.attempts })
+  return (counter?.attempts ?? 0) > 20
 }
 
 async function keyedUserCode(value: string) {
@@ -99,6 +112,7 @@ async function handler(request: Request) {
     try {
       const session = await context.auth.api.getSession({ headers: request.headers })
       if (!session || !(await hasAccountProtection(context, session.user))) return json({ error: 'protected_account_required' }, 403)
+      if (await accountCodeRateLimited(context, session.user.id, now)) return json({ error: 'slow_down' }, 429)
       const input = await body(request)
       const userCode = input && typeof input.user_code === 'string' ? normalizeUserCode(input.user_code) : null
       if (!userCode) return json({ error: 'invalid_request' }, 400)
@@ -157,6 +171,7 @@ async function handler(request: Request) {
     try {
       const session = await context.auth.api.getSession({ headers: request.headers })
       if (!session || !(await hasAccountProtection(context, session.user))) return json({ error: 'protected_account_required' }, 403)
+      if (await accountCodeRateLimited(context, session.user.id, now)) return json({ error: 'slow_down' }, 429)
       const input = await body(request)
       const userCode = input && typeof input.user_code === 'string' ? normalizeUserCode(input.user_code) : null
       if (!userCode) return json({ error: 'invalid_request' }, 400)
