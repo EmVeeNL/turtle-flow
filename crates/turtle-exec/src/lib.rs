@@ -312,6 +312,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unbounded_stream_is_capped_and_terminated_by_timeout() {
+        let out = run(CommandSpec::new("sh")
+            .args(["-c", "yes"])
+            .timeout(Duration::from_millis(300))
+            .max_output_bytes(1024))
+        .await
+        .expect("runs");
+        assert_eq!(out.outcome, ExitOutcome::TimedOut);
+        assert_eq!(out.stdout.len(), 1024);
+        assert!(out.truncated);
+    }
+
+    #[tokio::test]
     async fn missing_program_is_not_found() {
         let err = run(CommandSpec::new("turtle-definitely-missing-binary"))
             .await
