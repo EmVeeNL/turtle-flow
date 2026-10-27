@@ -1,6 +1,7 @@
 //! `turtle`: the Turtle Flow CLI. CLI commands use the local database directly; the M4 daemon
 //! also hosts the dashboard API (`docs/MVP.md` §6).
 
+mod account_license;
 mod cmd;
 mod doctor;
 mod paths;
@@ -32,6 +33,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Link this CLI to your Turtle Flow account license.
+    Login,
     /// Check the environment: Git, provider CLIs and the data directory.
     Doctor {
         /// Print machine-readable JSON instead of a table.
@@ -165,8 +168,12 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         return Ok(doctor::run(json).await);
     }
     let home = Home::locate()?;
+    if !matches!(&command, Command::Login) {
+        account_license::report_status(&home);
+    }
     let ok = ExitCode::SUCCESS;
     match command {
+        Command::Login => account_license::login(&home).await?,
         Command::Doctor { .. } => unreachable!("handled above"),
         Command::Providers(ProvidersCommand::List) => {
             providers_list(&home).await?;

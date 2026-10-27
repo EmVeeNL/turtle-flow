@@ -1,0 +1,43 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "turtle-flow-account",
+	"compatibility_date": "2026-10-27",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"main": "@tanstack/react-start/server-entry",
+	"routes": [
+		{
+			"pattern": "dash.turtle-flow.com",
+			"custom_domain": true
+		}
+	],
+	"vars": {
+		"APP_ORIGIN": "https://dash.turtle-flow.com",
+		"EMAIL_FROM": "accounts@turtle-flow.com"
+	},
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "1936bd22b7d34eb3b5cdb972bd48a6c3"
+		}
+	],
+	"observability": {
+		"enabled": true,
+		"traces": {
+			"enabled": true
+		}
+	},
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"remote": true
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "LICENSE_CACHE",
+			"id": "ac57095a6f1044b397323dee7d482a4e"
+		}
+	]
+}

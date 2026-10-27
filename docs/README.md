@@ -15,7 +15,7 @@ Turtle Flow is a local-first, CLI-first, Rust-based orchestrator that drives loc
 
 | If you are… | Start with | Then read |
 |---|---|---|
-| Product / business stakeholder | [PRD.md](PRD.md) | [MVP.md](MVP.md), [LICENSING.md](LICENSING.md), [ROADMAP.md](ROADMAP.md) |
+| Product / business stakeholder | [PRD.md](PRD.md) | [MVP.md](MVP.md), [LICENSING.md](LICENSING.md), [ROADMAP.md](ROADMAP.md), [RFC-001](rfcs/RFC-001-cli-account-linking.md) |
 | Rust engineer starting implementation | [MVP.md](MVP.md) | [ARCHITECTURE.md](ARCHITECTURE.md), [DOMAIN-MODEL.md](DOMAIN-MODEL.md), [DATA-MODEL.md](DATA-MODEL.md), [WORKFLOW.md](WORKFLOW.md) |
 | Agent / provider integrator | [AGENT-PROTOCOL.md](AGENT-PROTOCOL.md) | [TOKEN-INTELLIGENCE.md](TOKEN-INTELLIGENCE.md), [ADR-007](adr/ADR-007-provider-adapter-architecture.md), [ADR-018](adr/ADR-018-model-routing-and-evaluation.md) |
 | Security reviewer | [SECURITY.md](SECURITY.md) | [ADR-012](adr/ADR-012-agent-execution-security.md), [ADR-006](adr/ADR-006-supervised-autonomy-approvals.md), [GIT-STRATEGY.md](GIT-STRATEGY.md) |
@@ -39,6 +39,9 @@ docs/
 ├── GIT-STRATEGY.md               ← worktrees, branches, commits, merges, recovery
 ├── LICENSING.md                  ← tiers, feature matrix, pricing hypotheses, enforcement
 ├── ROADMAP.md                    ← MVP → post-MVP → server → enterprise
+├── rfcs/                         ← proposed cross-component protocols
+│   ├── README.md
+│   └── RFC-001-cli-account-linking.md
 ├── DASHBOARD-UX.md               ← screens, journeys, visual design system
 ├── DATA-MODEL.md                 ← SQLite schema, indexes, ERD, migrations
 ├── TESTING-STRATEGY.md           ← test pyramid, harnesses, fixtures, security tests
