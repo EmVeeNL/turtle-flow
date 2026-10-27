@@ -86,7 +86,7 @@
 - The in-process harness is implemented (`turtle-scheduler/tests/crash.rs`) with an explicit `CrashPlan` instead of the `fail` crate: every boundary is a named `point()` call, the harness crashes at the Nth, restarts on the same database file and compares the result with a baseline run, including double crashes.
 - Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a seeded SIGKILL/restart loop through demo-agent delivery. The loop compares final state and delivered tree with an uninterrupted run, checks one delivery commit and record, no open reservations, and audit-chain integrity. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
 - The pseudo-terminal approval flow and the real Claude Code run were exercised by hand and are not in CI.
-- Planned and not yet written: power-loss simulation and a subprocess fixture that sleeps/streams during agent execution. The current SIGKILL loop uses the immediate demo agent, so kill timing is concentrated around scheduler and Git effects.
+- A sleeping/streaming Claude subprocess fixture now verifies timeout termination and preservation of partial usage/transcript data. Power-loss simulation is still planned but not implemented. The current seeded SIGKILL loop uses the immediate demo agent, so kill timing is concentrated around scheduler and Git effects.
 
 ## 7. Security Tests (TST-13)
 
