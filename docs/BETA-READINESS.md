@@ -9,11 +9,11 @@ This checklist records the remaining release evidence for Turtle Flow 0.3. Featu
 
 ## M5 completeness and safety
 
-- [ ] Merge and validate per-task strict build/test/lint, secret-scan and scope gates with bounded fixer retries, and the plan-estimate threshold against the configured job token limit.
-- [ ] Add PDF resource extraction with content limits, redaction, and negative/security tests.
-- [ ] Add remote-base fetching with retry/recovery coverage.
-- [ ] Complete the remaining security fixture matrix in [TESTING-STRATEGY.md §7](TESTING-STRATEGY.md#7-security-tests-tst-13). PR #29 added prompt-injection, unauthorized-commit/push, and context-budget regressions; broader injection and resource-limit coverage remains.
-- [ ] Close the remaining recovery gaps: a sleeping/streaming provider subprocess fixture and power-loss simulation, or document explicitly approved exclusions.
+- [ ] Merge and validate per-task strict build/test/lint, secret-scan and scope gates with bounded fixer retries, and the plan-estimate threshold against the configured job token limit. Implemented in [PR #33](https://github.com/EmVeeNL/turtle-flow/pull/33); ready for review, CI passing.
+- [ ] Add PDF resource extraction with content limits, redaction, and negative/security tests. Implemented in [PR #34](https://github.com/EmVeeNL/turtle-flow/pull/34); CI passing.
+- [ ] Add remote-base fetching with retry/recovery coverage. Implemented in [PR #35](https://github.com/EmVeeNL/turtle-flow/pull/35); CI passing.
+- [ ] Complete the remaining security fixture matrix in [TESTING-STRATEGY.md §7](TESTING-STRATEGY.md#7-security-tests-tst-13). PR #29 added prompt-injection, unauthorized-commit/push, and context-budget regressions; [PR #36](https://github.com/EmVeeNL/turtle-flow/pull/36) adds categorized injection cases and unbounded-stream limits. Broader matrix work remains; CI is passing.
+- [ ] Close the remaining recovery gaps. [PR #37](https://github.com/EmVeeNL/turtle-flow/pull/37) adds the sleeping/streaming provider fixture and has passing CI; power-loss simulation or an explicitly approved exclusion remains.
 
 PR merge polling (`turtle job sync --wait` with a bounded polling interval) and the focused PR #29 security regressions are integrated into `main`.
 
