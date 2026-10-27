@@ -53,6 +53,13 @@ impl GitFactsProvider for RepoGitFacts {
             });
         let mut paths: Vec<String> = changed.iter().map(|c| c.path.clone()).collect();
         paths.extend(changed.iter().filter_map(|c| c.old_path.clone()));
+        let mut required_flags = flags_for_changes(&paths, &protected);
+        if !project.settings.static_gates.protected_paths {
+            required_flags.retain(|flag| !flag.starts_with("protected_path:"));
+        }
+        if !project.settings.static_gates.dependency_changes {
+            required_flags.retain(|flag| !flag.starts_with("dependency_manifest:"));
+        }
         Some(GitFacts {
             binding: GitBinding {
                 base_commit: base,
@@ -60,7 +67,7 @@ impl GitFactsProvider for RepoGitFacts {
                 diff_sha256,
                 target_branch: layout.target_branch,
             },
-            required_flags: flags_for_changes(&paths, &protected),
+            required_flags,
         })
     }
 }

@@ -30,6 +30,18 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         sql: include_str!("../migrations/0004_dashboard_login.sql"),
     },
+    Migration {
+        version: 5,
+        sql: include_str!("../migrations/0005_dashboard_scope.sql"),
+    },
+    Migration {
+        version: 6,
+        sql: include_str!("../migrations/0006_resources_fts.sql"),
+    },
+    Migration {
+        version: 7,
+        sql: include_str!("../migrations/0007_approval_integrity.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -145,17 +157,25 @@ mod tests {
     }
 
     #[test]
-    fn upgrading_v3_adds_one_use_dashboard_codes() {
+    fn upgrading_v3_adds_one_use_dashboard_codes_with_scopes() {
         let mut conn = Connection::open_in_memory().expect("open");
         migrate_with(&mut conn, &MIGRATIONS[..3], None, "t").expect("v3");
         assert_eq!(current_version(&conn).expect("version"), 3);
-        migrate(&mut conn, None, "t").expect("v4");
+        migrate(&mut conn, None, "t").expect("latest dashboard schema");
         let tables: i64=conn.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('dashboard_login_codes','api_command_keys')",
             [], |r|r.get(0)
         ).expect("tables");
         assert_eq!(tables, 2);
-        assert_eq!(current_version(&conn).expect("version"), 4);
+        let scope_column: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('dashboard_login_codes') WHERE name='scope'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("scope column");
+        assert_eq!(scope_column, 1);
+        assert_eq!(current_version(&conn).expect("version"), latest_version());
     }
 
     #[test]

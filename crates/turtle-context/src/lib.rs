@@ -38,6 +38,17 @@ pub struct ContextManifest {
     pub content_sha256: String,
     pub included: Vec<ManifestItem>,
     pub excluded: Vec<ExcludedItem>,
+    #[serde(default)]
+    pub resources: Vec<ManifestResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestResource {
+    pub id: String,
+    pub title: String,
+    pub trust: String,
+    pub estimated_tokens: usize,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +77,12 @@ fn sha256_hex(text: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// SHA-256 hex digest for a completed prompt context package.
+#[must_use]
+pub fn content_sha256(text: &str) -> String {
+    sha256_hex(text)
 }
 
 /// Replace with a provider tokenizer later; v1 deliberately uses the documented chars/4 proxy.
@@ -365,6 +382,7 @@ pub fn build_with_estimator(
             content_sha256: digest,
             included,
             excluded,
+            resources: Vec::new(),
         },
     })
 }
@@ -697,6 +715,45 @@ mod tests {
                 .any(|item| item.path == "untracked.txt")
         );
         assert!(p.manifest.excluded.iter().any(|i| i.path == ".env.local"));
+    }
+
+    #[test]
+    fn repository_context_enforces_file_and_token_budgets() {
+        let dir = repo();
+        fs::write(dir.path().join("README.md"), "x".repeat(65 * 1024))
+            .expect("write oversized README");
+        fs::write(dir.path().join("src.rs"), "y".repeat(4 * 1024))
+            .expect("write context-budget fixture");
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["add", "README.md", "src.rs"])
+                .output()
+                .expect("git add")
+                .status
+                .success()
+        );
+
+        let package = build(dir.path(), &[], &["src.rs".into()], 128).expect("package");
+        assert!(
+            package.text.len() < 256,
+            "context escaped its budget: {}",
+            package.text.len()
+        );
+        assert!(package.manifest.estimated_tokens <= 128);
+        assert!(package.text.contains("# Repository map"));
+        assert!(!package.text.contains(&"x".repeat(256)));
+        assert!(package.manifest.excluded.iter().any(|item| {
+            item.path == "README.md" && item.reason == "file exceeds 64 KiB limit"
+        }));
+        assert!(
+            package
+                .manifest
+                .excluded
+                .iter()
+                .any(|item| { item.path == "src.rs" && item.reason == "token budget" })
+        );
     }
 
     #[test]

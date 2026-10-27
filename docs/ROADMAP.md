@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Document | ROADMAP.md |
-| Status | Proposal; dates are not committed — durations are ranges under stated assumptions. Progress: M1 complete, M2 in progress ([MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-25)) |
+| Status | Proposal; dates are not committed — durations are ranges under stated assumptions. As of 2026-10-26, the feature stack through PR #26 is integrated into `main` by PR #27, with CI passing. Beta acceptance gaps are listed in [BETA-READINESS.md](BETA-READINESS.md) and the milestone snapshot in [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26). PR merge polling is implemented by commit `5140996` and awaits integration. |
 | Related | [MVP.md](MVP.md), [PRD.md §28](PRD.md#28-release-roadmap-product-view), [ADR-015](adr/ADR-015-future-server-deployment.md), [LICENSING.md](LICENSING.md) |
 
 ---

@@ -4,6 +4,8 @@
 |---|---|
 | Document | WORKFLOW.md |
 | Status | Proposed baseline; core decisions in [ADR-005](adr/ADR-005-workflow-state-machine.md), [ADR-006](adr/ADR-006-supervised-autonomy-approvals.md), [ADR-017](adr/ADR-017-recovery-idempotency-crash-safety.md) |
+
+**Implementation status (2026-10-26).** The `strict` profile now exercises discovery, a requested and hash-bound plan approval, required cross-provider review, and a human block for findings above its autonomous fix severity. Standard plans over eight tasks request plan approval. CLI and API decisions use the same approval service, which rechecks the current binding and invalidates a stale decision; duplicate requests reuse the pending row. A clean local base refresh invalidates acceptance and repeats gates, review and verification. The plan's estimate-envelope threshold is still unavailable because the plan artifact has no estimate field. The profile table's per-task gates and static gate additions are still design targets. Standard retains its existing autonomous major-finding fix behavior; the table's tighter standard severity is not implemented. Local squash remains the default for all profiles; PR delivery is an explicit project setting.
 | Related | [DOMAIN-MODEL.md](DOMAIN-MODEL.md), [examples/example-workflow.yaml](examples/example-workflow.yaml) |
 
 ---
@@ -215,7 +217,7 @@ Profiles are TOML/YAML documents with a `base` of `fast`, `standard`, or `strict
 | `auto_fix_max_severity` | major | minor | nit |
 | `max_fix_iterations` | 2 | 3 | 3 |
 | `diff_size_limit` (changed lines) | 400 | 1500 | 1500 |
-| `delivery.mode` | merge \| pr | merge \| pr | pr |
+| `delivery.mode` | local squash \| pr | local squash \| pr | local squash \| pr |
 | `timeouts.job` | 2 h | 8 h | 24 h |
 | `timeouts.run_default` | 20 min | 30 min | 45 min |
 

@@ -9,8 +9,11 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use tempfile::TempDir;
 use turtle_artifacts::BlobStore;
-use turtle_domain::{Actor, ArtifactKind, JobKey, Role, RunId, TokenUsage, UsageValue};
-use turtle_store::{NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
+use turtle_domain::{
+    Actor, ArtifactKind, GateKind, JobKey, JobType, Role, RunId, Sha256, TokenUsage, UsageValue,
+};
+use turtle_policy::ApprovalBinding;
+use turtle_store::{DeliveryStatus, NewEvent, NewRevision, NewRun, RunEnd, Store, SystemClock};
 
 struct World {
     _dir: TempDir,
@@ -28,6 +31,8 @@ impl World {
         std::fs::write(repo.join("README.md"), "# payments\n").expect("write");
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-q", "-m", "init"]);
+        git(&repo, &["config", "user.name", "Turtle Flow Test"]);
+        git(&repo, &["config", "user.email", "turtle-test@fake.invalid"]);
         Self {
             home: root.join("home"),
             repo,
@@ -83,6 +88,191 @@ fn dashboard_refuses_without_tty() {
     let world = World::new();
     let error = world.fails(&["dashboard"]);
     assert!(error.contains("interactive terminal"), "{error}");
+}
+
+#[test]
+fn init_refuses_non_interactive_without_creating_turtle_home() {
+    let w = World::new();
+    let error = w.fails(&["init"]);
+    assert!(
+        error.contains("interactive") && error.contains("will not guess"),
+        "{error}"
+    );
+    assert!(
+        !w.home.exists(),
+        "init must not create its data directory before confirmation"
+    );
+}
+
+#[test]
+fn job_sync_wait_has_bounded_polling_options() {
+    let w = World::new();
+    let help = w.turtle(&["job", "sync", "--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("--wait"), "{help}");
+    assert!(help.contains("--interval"), "{help}");
+
+    let invalid = w.turtle(&["job", "sync", "PAY-1", "--wait", "--interval", "4"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("5"));
+}
+
+#[test]
+fn job_export_is_repeatable_and_worktree_path_is_printed_without_creation() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Export this job"]);
+    let mut store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("open store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job record");
+    let secrets: Vec<_> = (0..60)
+        .map(|i| format!("ghp_synthetic{i:03}abcdefghijklmnop"))
+        .collect();
+    let bytes = serde_json::to_vec(&serde_json::json!({"summary":"approved scope", "note":"password=hunter2", "tokens":secrets})).expect("fixture JSON");
+    let blobs = BlobStore::open(w.home.join("blobs")).expect("blob store");
+    let artifact_hash = blobs.put(&bytes).expect("store artifact");
+    let binding = ApprovalBinding::new(GateKind::Scope, job.job.id, Sha256::from_bytes([7; 32]), 1);
+    let subject_hash = binding.subject_hash();
+    store
+        .transaction(|tx| {
+            tx.add_revision(&NewRevision {
+                job_id: job.job.id,
+                kind: ArtifactKind::Specification,
+                sha256: artifact_hash,
+                size_bytes: bytes.len() as u64,
+                media_type: "application/json".into(),
+                schema_id: None,
+                author: Actor::local_user(),
+            })?;
+            tx.request_approval(&binding)?;
+            Ok(())
+        })
+        .expect("store export fixtures");
+    drop(store);
+    let first = w.ok(&["export", "job", "PAY-1", "--format", "json"]);
+    let second = w.ok(&["export", "job", "PAY-1", "--format", "json"]);
+    assert_eq!(first, second);
+    let exported: serde_json::Value = serde_json::from_str(&first).expect("valid export JSON");
+    assert_eq!(exported["job"]["key"], "PAY-1");
+    assert_eq!(exported["job"]["title"], "Export this job");
+    assert_eq!(
+        exported["artifacts"][0]["content"]["summary"],
+        "approved scope"
+    );
+    assert_eq!(
+        exported["artifacts"][0]["content"]["note"],
+        "password=[REDACTED:password]"
+    );
+    assert_eq!(exported["artifacts"][0]["content_redacted"], true);
+    for secret in &secrets {
+        assert!(!first.contains(secret), "export leaked {secret}");
+    }
+    assert_eq!(
+        exported["artifacts"][0]["sha256"],
+        artifact_hash.to_string()
+    );
+    assert_eq!(
+        exported["approvals"][0]["subject_hash"],
+        subject_hash.to_string()
+    );
+    let path = w.ok(&["job", "worktree", "PAY-1"]);
+    assert!(path.trim().ends_with("PAY-1"), "{path}");
+    assert!(
+        !Path::new(path.trim()).exists(),
+        "printing the path must not create the worktree"
+    );
+}
+
+#[test]
+fn cancel_can_delete_a_job_branch() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Cancel this job"]);
+    git(&w.repo, &["branch", "turtle/PAY-1-cancel-this-job"]);
+    let output = w.ok(&["job", "cancel", "PAY-1", "--delete-branch"]);
+    assert!(
+        output.contains("Cancelled PAY-1") && output.contains("deletion are queued"),
+        "{output}"
+    );
+    let _daemon = Daemon(
+        w.command(&["daemon", "--agent", "demo"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
+    wait_for("job branch deletion", || {
+        !Command::new("git")
+            .arg("-C")
+            .arg(&w.repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/turtle/PAY-1-cancel-this-job",
+            ])
+            .status()
+            .expect("check branch ref")
+            .success()
+    });
+    assert!(w.ok(&["audit", "verify"]).starts_with("OK:"));
+}
+
+#[test]
+fn revert_creates_a_chore_job_bound_to_the_recorded_delivery_commit() {
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Original delivered job"]);
+    let mut store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("open store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job record");
+    let binding = ApprovalBinding::new(
+        GateKind::Acceptance,
+        job.job.id,
+        Sha256::from_bytes([9; 32]),
+        1,
+    );
+    let commit = "a".repeat(40);
+    store
+        .transaction(|tx| {
+            let (approval, _) = tx.request_approval(&binding)?;
+            tx.record_delivery(
+                job.job.id,
+                "local_squash",
+                "main",
+                &commit,
+                DeliveryStatus::Delivered,
+                approval.id,
+            )
+        })
+        .expect("record fixture delivery");
+    store
+        .raw_connection()
+        .execute(
+            "UPDATE jobs SET state='done' WHERE id=?1",
+            [job.job.id.to_string()],
+        )
+        .expect("mark fixture job delivered");
+    drop(store);
+
+    let output = w.ok(&["job", "revert", "PAY-1"]);
+    assert!(
+        output.contains("PAY-2") && output.contains(&commit),
+        "{output}"
+    );
+    let store =
+        Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("reopen store");
+    let revert_key: JobKey = "PAY-2".parse().expect("revert key");
+    let revert = store.find_job(&revert_key).expect("revert job");
+    assert_eq!(revert.job_type, JobType::Chore);
+    assert!(
+        revert
+            .description
+            .starts_with(&format!("Turtle-Revert-Commit: {commit}"))
+    );
 }
 
 fn http(port: u16, method: &str, path: &str, headers: &str, body: &str) -> String {
@@ -150,7 +340,7 @@ fn daemon_serves_authenticated_api_and_static_dashboard() {
         .collect();
     let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
     store
-        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z")
+        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z", "full")
         .expect("code");
     drop(store);
     let session = http(
@@ -342,6 +532,10 @@ fn project_add_accepts_a_repository_and_rejects_the_rest() {
     );
     let show = w.ok(&["project", "show", "payments-api"]);
     assert!(show.contains("gate build"), "{show}");
+    assert!(show.contains("delivery     local-squash"), "{show}");
+    w.ok(&["project", "delivery", "payments-api", "pr"]);
+    let show = w.ok(&["project", "show", "payments-api"]);
+    assert!(show.contains("delivery     pr"), "{show}");
 
     let again = w.fails(&["project", "add", w.repo.to_str().expect("utf8")]);
     assert!(again.contains("already exists"), "{again}");
@@ -600,4 +794,199 @@ fn a_job_that_runs_out_of_budget_waits_and_resumes_when_the_budget_is_raised() {
     );
     let audit = w.ok(&["audit", "verify"]);
     assert!(audit.contains("ledger consistent"), "{audit}");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct KillOutcome {
+    state: turtle_domain::JobState,
+    tree: String,
+    deliveries: i64,
+    open_reservations: i64,
+    commit_count: usize,
+}
+
+fn kill_scenario(delay_ms: Option<u64>) -> KillOutcome {
+    use sha2::Digest;
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Add a greeting", "--start"]);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve API port");
+    let port = listener.local_addr().expect("address").port();
+    drop(listener);
+    let port_text = port.to_string();
+    let spawn = || {
+        Daemon(
+            w.command(&["daemon", "--agent", "demo", "--api-port", &port_text])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("daemon"),
+        )
+    };
+    let mut daemon = spawn();
+    if let Some(delay) = delay_ms {
+        std::thread::sleep(Duration::from_millis(delay));
+        daemon.0.kill().expect("SIGKILL daemon");
+        daemon.0.wait().expect("reap killed daemon");
+        drop(daemon);
+        daemon = spawn();
+    }
+    wait_for("restarted API", || {
+        TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    let code = "0123456789abcdef0123456789abcdef";
+    let hash: String = sha2::Sha256::digest(code.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    store
+        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z", "full")
+        .expect("login code");
+    let session = http(
+        port,
+        "POST",
+        "/api/v1/session",
+        &format!(
+            "Origin: http://127.0.0.1:{port}\r\nX-Turtle-Request: 1\r\nContent-Type: application/json\r\n"
+        ),
+        &format!("{{\"code\":\"{code}\"}}"),
+    );
+    assert!(session.contains("200 OK"), "{session}");
+    let cookie = session
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|line| line.split(';').next())
+        .expect("cookie")
+        .to_owned();
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job");
+    let start = Instant::now();
+    loop {
+        let state = store.load_job(job.job.id).expect("job state").job.state;
+        if state == turtle_domain::JobState::Done {
+            break;
+        }
+        assert!(
+            state != turtle_domain::JobState::Failed && state != turtle_domain::JobState::Blocked,
+            "job stopped in {state:?}"
+        );
+        if let Some(status) = daemon.0.try_wait().expect("check daemon status") {
+            panic!("daemon exited with {status} while the job was in {state:?}");
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(45),
+            "job stuck in {state:?}; runs={:?}; events={:?}",
+            store.runs_for_job(job.job.id).expect("job runs"),
+            store
+                .list_events(Some(job.job.id))
+                .expect("job events")
+                .into_iter()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
+        );
+        for approval in store.pending_approvals().expect("pending approvals") {
+            if approval.job_id != job.job.id {
+                continue;
+            }
+            let body = serde_json::json!({"decision":"approve", "subject_hash":approval.subject_hash.to_hex(),
+                "comment":"", "acknowledged_flags":approval.binding.acknowledged_flags}).to_string();
+            let response = http(
+                port,
+                "POST",
+                &format!("/api/v1/approvals/{}/decisions", approval.id),
+                &format!(
+                    "Origin: http://127.0.0.1:{port}\r\nX-Turtle-Request: 1\r\nContent-Type: application/json\r\nCookie: {cookie}\r\n"
+                ),
+                &body,
+            );
+            assert!(response.contains("200 OK"), "approval failed: {response}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(daemon);
+    assert!(matches!(
+        store.verify_chain().expect("audit"),
+        turtle_store::ChainVerdict::Intact { .. }
+    ));
+    let delivery = store
+        .delivery(job.job.id)
+        .expect("delivery read")
+        .expect("delivery");
+    let conn = store.raw_connection();
+    let deliveries: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM delivery_records WHERE job_id=?1",
+            [job.job.id.to_string()],
+            |r| r.get(0),
+        )
+        .expect("delivery count");
+    let open_reservations: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM reservations WHERE status='open'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("reservations");
+    let commit = delivery.result_commit.expect("local delivery commit");
+    let git_out = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&w.repo)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .expect("UTF-8")
+            .trim()
+            .to_owned()
+    };
+    let tree = git_out(&["rev-parse", &format!("{commit}^{{tree}}")]);
+    let message = git_out(&["log", "-1", "--format=%B", &commit]);
+    assert!(
+        message.contains("Turtle-Job: PAY-1"),
+        "missing delivery trailer"
+    );
+    let commit_count = git_out(&["rev-list", "--count", &commit, "^main"])
+        .parse()
+        .expect("delivery commit count");
+    KillOutcome {
+        state: store.load_job(job.job.id).expect("job").job.state,
+        tree,
+        deliveries,
+        open_reservations,
+        commit_count,
+    }
+}
+
+#[test]
+fn seeded_sigkill_recovery_matches_uninterrupted_demo_delivery() {
+    let baseline = kill_scenario(None);
+    assert_eq!(baseline.deliveries, 1);
+    assert_eq!(baseline.open_reservations, 0);
+    assert_eq!(baseline.commit_count, 1);
+    let iterations = std::env::var("TURTLE_KILL_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(20);
+    let mut seed = 0x51a7_2026_u64;
+    for index in 0..iterations {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        let delay = 1 + seed % 250;
+        assert_eq!(
+            kill_scenario(Some(delay)),
+            baseline,
+            "iteration {index}, delay {delay} ms"
+        );
+    }
 }

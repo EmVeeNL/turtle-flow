@@ -537,6 +537,7 @@ fn effect_kind_matches_serialized_tag_and_control_kinds_are_known() {
         Effect::RunVerification,
         Effect::Deliver,
         Effect::CleanupWorktree,
+        Effect::DeleteJobBranch,
         Effect::TerminateRuns,
         Effect::ReleaseReservations,
         Effect::SupersedePendingApprovals,

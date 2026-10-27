@@ -2,7 +2,9 @@
 //! an exclusive lock on `daemon.lock` that the operating system drops if the process dies.
 
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read, Write};
+use std::net::TcpStream;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,11 +45,67 @@ fn running(home: &Home) -> bool {
     matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock))
 }
 
+fn tailscale_binary() -> Command {
+    Command::new("tailscale")
+}
+
+fn resolve_tailnet_host(explicit: Option<&str>) -> Result<Option<String>> {
+    resolve_tailnet_host_with(explicit, std::ffi::OsStr::new("tailscale"))
+}
+
+fn resolve_tailnet_host_with(
+    explicit: Option<&str>,
+    program: &std::ffi::OsStr,
+) -> Result<Option<String>> {
+    if let Some(host) = explicit {
+        return turtle_api::validate_tailnet_host(host)
+            .map(Some)
+            .map_err(anyhow::Error::msg);
+    }
+    let output = match Command::new(program).args(["status", "--json"]).output() {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("running tailscale status --json"),
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let Ok(status) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Ok(None);
+    };
+    let Some(dns_name) = status
+        .pointer("/Self/DNSName")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    turtle_api::validate_tailnet_host(dns_name)
+        .map(Some)
+        .map_err(anyhow::Error::msg)
+}
+
+fn serve_command_args(port: u16) -> Vec<String> {
+    vec![
+        "serve".into(),
+        "--bg".into(),
+        "--https=443".into(),
+        format!("http://127.0.0.1:{port}"),
+    ]
+}
+
+fn configure_tailscale_serve(program: &std::ffi::OsStr, port: u16) -> Result<std::process::Output> {
+    Command::new(program)
+        .args(serve_command_args(port))
+        .output()
+        .context("configuring Tailscale Serve")
+}
+
 /// Daemon provider selection and per-provider settings.
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
     pub no_api: bool,
     pub api_port: Option<u16>,
+    pub tailnet_host: Option<String>,
     pub agent: Option<String>,
     pub role_agent: Vec<String>,
     pub claude_model: Option<String>,
@@ -294,13 +352,16 @@ async fn serve<R: AgentRunner>(
             store: rt.store.clone(),
             engine: rt.engine.clone(),
             approvals: rt.approvals.clone(),
+            projects: turtle_scheduler::ProjectService::new(rt.store.clone()),
             blobs: Arc::clone(&rt.blobs),
         };
+        let tailnet_host = resolve_tailnet_host(options.tailnet_host.as_deref())?;
         let api = ApiServer::bind(
             services,
             &home.root.join("run"),
             dashboard_dir,
             options.api_port.unwrap_or(0),
+            tailnet_host,
         )
         .await
         .map_err(|e| anyhow::anyhow!("starting local API: {e}"))?;
@@ -343,6 +404,9 @@ pub async fn up(home: &Home, options: &DaemonOptions) -> Result<()> {
     }
     if let Some(port) = options.api_port {
         cmd.args(["--api-port", &port.to_string()]);
+    }
+    if let Some(host) = &options.tailnet_host {
+        cmd.args(["--tailnet-host", host]);
     }
     if let Some(agent) = &options.agent {
         cmd.args(["--agent", agent]);
@@ -444,7 +508,7 @@ pub async fn status(home: &Home) -> Result<()> {
     Ok(())
 }
 
-pub async fn dashboard(home: &Home) -> Result<()> {
+pub async fn dashboard(home: &Home, phone: bool) -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         bail!("turtle dashboard requires an interactive terminal");
     }
@@ -458,6 +522,9 @@ pub async fn dashboard(home: &Home) -> Result<()> {
         .parse()
         .context("the API port file is invalid")?;
     let rt = Runtime::open(home.clone())?;
+    if phone {
+        return dashboard_phone(port, &rt).await;
+    }
     let code = turtle_api::issue_login_code(&rt.store)
         .await
         .map_err(|e| anyhow::anyhow!("creating dashboard login code: {e}"))?;
@@ -472,4 +539,175 @@ pub async fn dashboard(home: &Home) -> Result<()> {
         _ => println!("Open this URL within 60 seconds: {url}"),
     }
     Ok(())
+}
+
+async fn dashboard_phone(port: u16, rt: &Runtime) -> Result<()> {
+    let host = resolve_tailnet_host(None)?.context(
+        "Tailscale is not connected or its DNS name could not be detected; connect Tailscale and retry, or start the daemon with --tailnet-host <name>",
+    )?;
+    if !daemon_allows_tailnet(port, &host)? {
+        bail!(
+            "the running daemon does not allow {host}; stop it and restart with `turtle up --agent <agent> --tailnet-host {host}` (or connect Tailscale before restarting to enable auto-detection)"
+        );
+    }
+    let mut tailscale = tailscale_binary();
+    let help = tailscale
+        .args(["serve", "--help"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    if let Some(help) = &help
+        && (!help.contains("--bg") || !help.contains("--https"))
+    {
+        bail!(
+            "installed `tailscale serve --help` does not document the required --bg and --https flags"
+        );
+    }
+    let status = tailscale_binary()
+        .args(["serve", "status"])
+        .output()
+        .context("running `tailscale serve status`")?;
+    if !status.status.success() {
+        bail!(
+            "`tailscale serve status` failed: {}",
+            String::from_utf8_lossy(&status.stderr).trim()
+        );
+    }
+    let mapping = format!("http://127.0.0.1:{port}");
+    let status_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let root_mapping = format!("|-- / proxy {mapping}");
+    if !status_text.contains(&format!("https://{host}")) || !status_text.contains(&root_mapping) {
+        eprintln!("No Tailscale Serve mapping to {mapping} was found.");
+        eprint!("Add the private HTTPS mapping on this device? [y/N] ");
+        std::io::stderr().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            bail!("Tailscale configuration was not changed");
+        }
+        let result = configure_tailscale_serve(std::ffi::OsStr::new("tailscale"), port)?;
+        if !result.status.success() {
+            bail!(
+                "Tailscale Serve setup failed: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            );
+        }
+        let configured = tailscale_binary()
+            .args(["serve", "status"])
+            .output()
+            .context("verifying Tailscale Serve setup")?;
+        let configured_text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&configured.stdout),
+            String::from_utf8_lossy(&configured.stderr)
+        );
+        if !configured.status.success()
+            || !configured_text.contains(&format!("https://{host}"))
+            || !configured_text.contains(&root_mapping)
+        {
+            bail!("Tailscale Serve did not report the expected HTTPS root mapping to {mapping}");
+        }
+    }
+    let code = turtle_api::issue_read_only_login_code(&rt.store)
+        .await
+        .map_err(|e| anyhow::anyhow!("creating read-only dashboard login code: {e}"))?;
+    let url = format!("https://{host}/login#code={code}");
+    let qr = qrcode::QrCode::new(url.as_bytes()).context("generating phone QR code")?;
+    println!(
+        "{}",
+        qr.render::<qrcode::render::unicode::Dense1x2>()
+            .quiet_zone(true)
+            .build()
+    );
+    println!("{url}");
+    println!("Login code expires in 60 seconds. This phone session is read-only.");
+    Ok(())
+}
+
+fn daemon_allows_tailnet(port: u16, host: &str) -> Result<bool> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .context("connecting to the loopback dashboard API")?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write!(
+        stream,
+        "GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
+    let json: serde_json::Value =
+        serde_json::from_str(body).context("daemon returned invalid API health JSON")?;
+    Ok(json.get("tailnet_host").and_then(serde_json::Value::as_str) == Some(host))
+}
+
+#[cfg(test)]
+mod phone_tests {
+    use super::*;
+
+    #[test]
+    fn phone_setup_uses_only_private_serve_with_loopback_proxy() {
+        let args = serve_command_args(4321);
+        assert_eq!(
+            args,
+            ["serve", "--bg", "--https=443", "http://127.0.0.1:4321"]
+        );
+        assert!(!args.iter().any(|arg| arg.contains("funnel")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn serve_command_is_testable_with_a_stand_in_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let log = dir.path().join("args.log");
+        let script = dir.path().join("tailscale");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", log.display()),
+        )
+        .expect("write stand-in");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("make executable");
+        let result = configure_tailscale_serve(script.as_os_str(), 4321).expect("serve call");
+        assert!(result.status.success());
+        assert_eq!(
+            std::fs::read_to_string(log).expect("arguments"),
+            "serve\n--bg\n--https=443\nhttp://127.0.0.1:4321\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tailnet_dns_detection_is_testable_with_a_stand_in_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let script = dir.path().join("tailscale");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s' '{\"Self\":{\"DNSName\":\"node.team.ts.net.\"}}'\n",
+        )
+        .expect("write stand-in");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("make executable");
+        assert_eq!(
+            resolve_tailnet_host_with(None, script.as_os_str())
+                .expect("DNS name")
+                .as_deref(),
+            Some("node.team.ts.net")
+        );
+    }
 }

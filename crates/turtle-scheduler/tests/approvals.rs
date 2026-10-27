@@ -267,6 +267,56 @@ async fn scope_approval_moves_the_job_only_after_a_valid_human_decision() {
 }
 
 #[tokio::test]
+async fn a_tampered_approved_binding_is_rejected() {
+    let e = env(Profile::standard()).await;
+    e.to_scope_approval(0).await;
+    e.service
+        .request(e.job, GateKind::Scope)
+        .await
+        .expect("request");
+    e.approve(GateKind::Scope, vec![]).await.expect("approve");
+    let id = e.job;
+    let approval = e
+        .store
+        .with(move |s| s.latest_approved(id, GateKind::Scope))
+        .await
+        .expect("query")
+        .expect("approved");
+    let mut binding = approval.binding.clone();
+    binding.schema = "tampered".into();
+    let altered = serde_json::to_string(&binding).expect("binding JSON");
+    e.store
+        .with(move |s| {
+            s.raw_connection().execute(
+                "UPDATE approvals SET binding_json=?1 WHERE id=?2",
+                [altered, approval.id.to_string()],
+            )
+        })
+        .await
+        .expect("tamper");
+    let job = e.store.with(move |s| s.load_job(id)).await.expect("job");
+    let err = e
+        .service
+        .current_approved(&job, GateKind::Scope)
+        .await
+        .expect_err("tampered binding");
+    assert!(matches!(
+        err,
+        ApprovalError::Store(StoreError::ApprovalIntegrity { .. })
+    ));
+    let events = e
+        .store
+        .with(move |s| s.list_events(Some(id)))
+        .await
+        .expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == "security.approval_integrity_failed")
+    );
+}
+
+#[tokio::test]
 async fn approving_with_a_different_hash_than_the_one_shown_is_refused() {
     let e = env(Profile::standard()).await;
     e.to_scope_approval(1).await;
@@ -560,6 +610,95 @@ async fn large_plans_need_a_plan_approval_even_in_standard() {
     );
 }
 
+#[tokio::test]
+async fn strict_plan_approval_is_bound_to_the_exact_plan_revision() {
+    let e = env(Profile::strict()).await;
+    e.submit(C::Start, Actor::local_user())
+        .await
+        .expect("start");
+    e.submit(
+        C::DiscoveryCompleted { report_valid: true },
+        Actor::Scheduler,
+    )
+    .await
+    .expect("discovery");
+    e.put(ArtifactKind::Specification, &spec(0), Actor::Scheduler)
+        .await;
+    e.submit(
+        C::SpecProduced {
+            valid: true,
+            criteria_count: 1,
+        },
+        Actor::Scheduler,
+    )
+    .await
+    .expect("spec");
+    e.service
+        .request(e.job, GateKind::Scope)
+        .await
+        .expect("scope request");
+    e.approve(GateKind::Scope, vec![])
+        .await
+        .expect("scope approval");
+    e.put(ArtifactKind::Plan, &plan(1), Actor::Scheduler).await;
+    e.submit(
+        C::PlanProduced {
+            valid: true,
+            within_scope: true,
+        },
+        Actor::Scheduler,
+    )
+    .await
+    .expect("plan");
+    assert_eq!(e.state().await, JobState::PlanApproval);
+    let (old, created) = e
+        .service
+        .request(e.job, GateKind::Plan)
+        .await
+        .expect("request");
+    assert!(created);
+    let (same, created) = e
+        .service
+        .request(e.job, GateKind::Plan)
+        .await
+        .expect("retry request");
+    assert!(!created);
+    assert_eq!(same.id, old.id);
+
+    e.put(ArtifactKind::Plan, &plan(2), Actor::Scheduler).await;
+    let err = e
+        .service
+        .decide(
+            old.id,
+            Decision::Approve,
+            old.subject_hash,
+            Actor::local_user(),
+            "cli_tty",
+            None,
+            vec![],
+        )
+        .await
+        .expect_err("stale plan");
+    assert!(matches!(err, ApprovalError::Stale));
+    let invalidated = e
+        .store
+        .with(move |s| s.approval(old.id))
+        .await
+        .expect("old approval");
+    assert_eq!(invalidated.status, ApprovalStatus::Invalidated);
+    let (new, created) = e
+        .service
+        .request(e.job, GateKind::Plan)
+        .await
+        .expect("new request");
+    assert!(created);
+    assert_ne!(new.subject_hash, old.subject_hash);
+    e.approve(GateKind::Plan, vec![])
+        .await
+        .expect("approve new plan");
+    assert_eq!(e.state().await, JobState::Implementation);
+}
+
 /// Drives a standard job to `acceptance_approval` with real artifacts.
 async fn to_acceptance(e: &Env) {
     e.to_scope_approval(1).await;
@@ -654,6 +793,35 @@ async fn acceptance_binds_to_the_commit_and_requires_acknowledging_flags() {
         .await
         .expect("approve with all flags");
     assert_eq!(job.job.state, JobState::Delivery);
+}
+
+#[tokio::test]
+async fn delivery_guard_rejects_a_broken_job_audit_chain() {
+    let e = env(Profile::standard()).await;
+    to_acceptance(&e).await;
+    e.git.set("head-1", &[]);
+    e.service
+        .request(e.job, GateKind::Acceptance)
+        .await
+        .expect("request");
+    e.approve(GateKind::Acceptance, vec![])
+        .await
+        .expect("approve");
+    let id = e.job;
+    e.store.with(move |s| {
+        s.raw_connection().execute_batch("DROP TRIGGER trg_events_no_update").expect("disable append-only trigger for tamper fixture");
+        s.raw_connection().execute("UPDATE events SET payload='{}' WHERE seq=(SELECT min(seq) FROM events WHERE job_id=?1)", [id.to_string()]).expect("tamper event");
+    }).await;
+    let job = e.store.with(move |s| s.load_job(id)).await.expect("job");
+    let err = e
+        .service
+        .current_approved(&job, GateKind::Acceptance)
+        .await
+        .expect_err("broken chain must block delivery");
+    assert!(
+        matches!(err, ApprovalError::Store(StoreError::Corrupt(_))),
+        "{err}"
+    );
 }
 
 #[tokio::test]

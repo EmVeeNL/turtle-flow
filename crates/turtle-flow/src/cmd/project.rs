@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use turtle_domain::{ProjectCommands, ProjectSettings};
+use turtle_domain::{DeliveryMode, ProjectCommands, ProjectSettings};
 use turtle_git::Repo;
 use turtle_store::NewProject;
 
@@ -43,6 +43,31 @@ pub enum ProjectCommand {
         /// Command run once after a job worktree is created (install dependencies).
         #[arg(long)]
         worktree_setup: Option<String>,
+        /// Delivery mode: local-squash (default) or pr.
+        #[arg(long, default_value = "local-squash", value_parser = ["local-squash", "pr"])]
+        delivery: String,
+    },
+    /// Change how future deliveries for this project are made.
+    Delivery {
+        slug: String,
+        #[arg(value_parser = ["local-squash", "pr"])]
+        mode: String,
+    },
+    /// Configure deterministic gates for one project.
+    StaticGates {
+        slug: String,
+        #[arg(long)]
+        secret_scan: Option<bool>,
+        #[arg(long)]
+        protected_paths: Option<bool>,
+        #[arg(long)]
+        max_diff_lines: Option<u64>,
+        #[arg(long)]
+        disable_diff_size: bool,
+        #[arg(long)]
+        scope_conformance: Option<bool>,
+        #[arg(long)]
+        dependency_changes: Option<bool>,
     },
     /// List registered projects.
     List,
@@ -63,6 +88,7 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             test,
             lint,
             worktree_setup,
+            delivery,
         } => {
             let repo = inspect_repo(&path).await?;
             let branch = match branch {
@@ -88,6 +114,7 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
                     ..ProjectCommands::default()
                 },
                 target_branch: Some(branch.clone()),
+                delivery: parse_delivery(&delivery)?,
                 ..ProjectSettings::default()
             };
             let new = NewProject {
@@ -126,6 +153,53 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             println!("Next: turtle job create -p {slug} \"what you want built\" --start");
             Ok(())
         }
+        ProjectCommand::Delivery { slug, mode } => {
+            let project = rt.store.with(move |s| s.project_by_slug(&slug)).await?;
+            let mut settings = project.settings;
+            settings.delivery = parse_delivery(&mode)?;
+            let id = project.id;
+            rt.store
+                .with(move |s| s.transaction(|tx| tx.update_project_settings(id, &settings)))
+                .await?;
+            println!("Delivery mode set to {mode}.");
+            Ok(())
+        }
+        ProjectCommand::StaticGates {
+            slug,
+            secret_scan,
+            protected_paths,
+            max_diff_lines,
+            disable_diff_size,
+            scope_conformance,
+            dependency_changes,
+        } => {
+            let project = rt.store.with(move |s| s.project_by_slug(&slug)).await?;
+            let mut settings = project.settings;
+            if let Some(value) = secret_scan {
+                settings.static_gates.secret_scan = value;
+            }
+            if let Some(value) = protected_paths {
+                settings.static_gates.protected_paths = value;
+            }
+            if let Some(value) = max_diff_lines {
+                settings.static_gates.max_diff_lines = Some(value);
+            }
+            if disable_diff_size {
+                settings.static_gates.max_diff_lines = None;
+            }
+            if let Some(value) = scope_conformance {
+                settings.static_gates.scope_conformance = value;
+            }
+            if let Some(value) = dependency_changes {
+                settings.static_gates.dependency_changes = value;
+            }
+            let id = project.id;
+            rt.store
+                .with(move |s| s.transaction(|tx| tx.update_project_settings(id, &settings)))
+                .await?;
+            println!("Static gate settings updated.");
+            Ok(())
+        }
         ProjectCommand::List => {
             let projects = rt.store.with(|s| s.list_projects()).await?;
             if projects.is_empty() {
@@ -146,6 +220,13 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             println!("  key prefix   {}", p.key_prefix);
             println!("  repository   {}", p.repo_path);
             println!(
+                "  delivery     {}",
+                match p.settings.delivery {
+                    DeliveryMode::LocalSquash => "local-squash",
+                    DeliveryMode::Pr => "pr",
+                }
+            );
+            println!(
                 "  target       {}",
                 p.settings
                     .target_branch
@@ -161,6 +242,14 @@ pub async fn run(rt: &Runtime, command: ProjectCommand) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+fn parse_delivery(value: &str) -> Result<DeliveryMode> {
+    match value {
+        "local-squash" => Ok(DeliveryMode::LocalSquash),
+        "pr" => Ok(DeliveryMode::Pr),
+        _ => bail!("delivery must be local-squash or pr"),
     }
 }
 

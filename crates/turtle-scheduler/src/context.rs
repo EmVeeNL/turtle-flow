@@ -129,7 +129,12 @@ impl<G: GitFactsProvider> ContextProvider for StoreContext<G> {
                         git.as_ref(),
                         self.config.policy_version,
                     ) {
-                        Ok(expected) if expected.subject_hash() == approved.subject_hash => {
+                        Ok(expected)
+                            if approved.binding.subject_hash() == approved.subject_hash
+                                && approved.binding.gate_kind == gate
+                                && approved.binding.job_id == job.job.id
+                                && expected.subject_hash() == approved.subject_hash =>
+                        {
                             ApprovalValidity::Valid
                         }
                         _ => ApprovalValidity::Invalid,

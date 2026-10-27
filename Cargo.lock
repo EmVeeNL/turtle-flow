@@ -532,6 +532,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "037e2a1a92236d0aff7e845093f64661d6df4c02c9fcc61a60e9e1d736fa392f"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1783,6 +1792,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2845,9 +2860,11 @@ dependencies = [
  "anyhow",
  "base64",
  "clap",
+ "clap_complete",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "keyring",
+ "qrcode",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2859,6 +2876,7 @@ dependencies = [
  "turtle-agents",
  "turtle-api",
  "turtle-artifacts",
+ "turtle-context",
  "turtle-domain",
  "turtle-git",
  "turtle-policy",

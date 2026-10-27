@@ -147,7 +147,9 @@ impl Profile {
             return Err(ProfileError::AutoScopeNotFast);
         }
         if self.base == ProfileBase::Strict
-            && (self.discovery != StageMode::On || self.plan_approval != PlanApprovalMode::On)
+            && (self.discovery != StageMode::On
+                || self.plan_approval != PlanApprovalMode::On
+                || self.review_independence != ReviewIndependence::Required)
         {
             return Err(ProfileError::StrictRelaxed);
         }

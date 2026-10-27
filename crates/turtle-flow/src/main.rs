@@ -4,6 +4,8 @@
 mod account_license;
 mod cmd;
 mod doctor;
+mod export;
+mod init;
 mod paths;
 mod runs;
 mod runtime;
@@ -17,6 +19,7 @@ use crate::cmd::budget::BudgetCommand;
 use crate::cmd::daemon::DaemonOptions;
 use crate::cmd::job::JobCommandLine;
 use crate::cmd::project::ProjectCommand;
+use crate::cmd::resource::ResourceCommand;
 use crate::paths::Home;
 use crate::runtime::Runtime;
 
@@ -41,6 +44,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Set up Turtle Flow for the current repository (interactive terminal required).
+    Init,
+    /// Export a job's audit package.
+    Export {
+        #[command(subcommand)]
+        command: ExportCommand,
+    },
+    /// Generate shell completion scripts.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Inspect available provider CLIs and verified capabilities.
     #[command(subcommand)]
     Providers(ProvidersCommand),
@@ -54,7 +69,11 @@ enum Command {
     /// Say whether the daemon is running.
     Status,
     /// Open the local dashboard using a one-time interactive login code.
-    Dashboard,
+    Dashboard {
+        /// Print a read-only QR login link for a Tailscale device.
+        #[arg(long)]
+        phone: bool,
+    },
     /// Run the daemon in the foreground (what `up` starts).
     Daemon {
         #[command(flatten)]
@@ -63,6 +82,15 @@ enum Command {
     /// Register and inspect projects.
     #[command(subcommand)]
     Project(ProjectCommand),
+    /// Attach versioned resources and search them with full-text retrieval.
+    #[command(subcommand)]
+    Resource(ResourceCommand),
+    /// Search project resources with SQLite FTS5.
+    Search {
+        #[arg(short, long)]
+        project: String,
+        query: String,
+    },
     /// Create and follow jobs.
     #[command(subcommand)]
     Job(JobCommandLine),
@@ -100,6 +128,9 @@ struct AgentArgs {
     /// Fixed loopback API port (default: random available port).
     #[arg(long)]
     api_port: Option<u16>,
+    /// Allow the API through Tailscale Serve at this MagicDNS name.
+    #[arg(long)]
+    tailnet_host: Option<String>,
     /// Ordered provider list: claude, codex, or both (demo runs alone).
     #[arg(long)]
     agent: Option<String>,
@@ -128,6 +159,7 @@ impl AgentArgs {
         DaemonOptions {
             no_api: self.no_api,
             api_port: self.api_port,
+            tailnet_host: self.tailnet_host.clone(),
             agent: self.agent.clone(),
             role_agent: self.role_agent.clone(),
             claude_model: self.claude_model.clone(),
@@ -151,6 +183,16 @@ enum AuditCommand {
     Verify,
 }
 
+#[derive(Debug, Subcommand)]
+enum ExportCommand {
+    /// Export specification, plan, approvals, runs, reports and delivery.
+    Job {
+        key: String,
+        #[arg(long, value_enum, default_value = "md")]
+        format: export::Format,
+    },
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -167,6 +209,16 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     if let Command::Doctor { json } = command {
         return Ok(doctor::run(json).await);
     }
+    if matches!(&command, Command::Init) {
+        init::run().await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Command::Completions { shell } = &command {
+        use clap::CommandFactory;
+        let mut cli = Cli::command();
+        clap_complete::generate(*shell, &mut cli, "turtle", &mut std::io::stdout());
+        return Ok(ExitCode::SUCCESS);
+    }
     let home = Home::locate()?;
     if !matches!(&command, Command::Login) {
         account_license::report_status(&home);
@@ -175,18 +227,42 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
     match command {
         Command::Login => account_license::login(&home).await?,
         Command::Doctor { .. } => unreachable!("handled above"),
+        Command::Init | Command::Completions { .. } => unreachable!("handled above"),
+        Command::Export {
+            command: ExportCommand::Job { key, format },
+        } => {
+            export::run(&Runtime::open(home)?, &key, format).await?;
+        }
         Command::Providers(ProvidersCommand::List) => {
             providers_list(&home).await?;
         }
         Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home).await?,
-        Command::Dashboard => cmd::daemon::dashboard(&home).await?,
+        Command::Dashboard { phone } => cmd::daemon::dashboard(&home, phone).await?,
         Command::Daemon { agent } => {
             let options = agent.options();
             cmd::daemon::run(home, options).await?;
         }
         Command::Project(c) => cmd::project::run(&Runtime::open(home)?, c).await?,
+        Command::Resource(ResourceCommand::Add {
+            input,
+            project,
+            job,
+            trust,
+        }) => {
+            cmd::resource::add(
+                &Runtime::open(home)?,
+                &input,
+                project.as_deref(),
+                job.as_deref(),
+                &trust,
+            )
+            .await?
+        }
+        Command::Search { project, query } => {
+            cmd::resource::search(&Runtime::open(home)?, &project, &query).await?
+        }
         Command::Job(c) => cmd::job::run(&Runtime::open(home)?, c).await?,
         Command::Budget(c) => cmd::budget::run(&Runtime::open(home)?, c).await?,
         Command::Runs(c) => runs::run(&Runtime::open(home)?, c).await?,

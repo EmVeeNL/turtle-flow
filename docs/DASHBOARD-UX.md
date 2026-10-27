@@ -6,6 +6,12 @@
 | Status | Proposal; technology decision in [ADR-003](adr/ADR-003-embedded-webserver-dashboard.md) |
 | Related | [PRD.md §12, §20](PRD.md#20-dashboard-requirements) (UX-xxx), [images/README.md](images/README.md) |
 
+### Implementation status (2026-10-26)
+
+The live adapter now uses these screen structures for the data available from the daemon: overview, projects/detail, jobs/detail, runs/detail, approvals/review, token analytics, and providers. Project creation, job creation/start, and budget updates are available in full sessions; the server rejects writes from read-only sessions. Resources display the designed empty state; settings and license are read-only. Currency analytics, time-series charts, provider configuration/discovery, resource ingestion, policy provenance, and license entitlements remain unavailable and are shown as unknown or unavailable rather than inferred. The mock adapter remains the visual reference and retains its illustrative data.
+
+Journey 1's terminal onboarding path is implemented by `turtle init`: environment checks reuse `doctor`, commands are proposed for common stacks, and project registration happens only after confirmation. See [QUICKSTART.md](QUICKSTART.md).
+
 ---
 
 ## 1. UX Principles
@@ -336,7 +342,7 @@ User viewing acceptance; base branch moves; Turtle Flow refreshes and reruns gat
 ## 6. Accessibility and Responsiveness
 
 - WCAG 2.2 AA: contrast tokens verified; focus ring 2 px `--accent`; all actions keyboard-reachable; skip links; ARIA live regions throttled for streams; reduced-motion support (no pulsing).
-- Breakpoints: ≥ 1440 (three columns), 1280 (default), 1024 (right column collapses to tabs), 768 (sidebar overlay), ≥ 375 (approvals and job status only; Phase 2 remote approvals).
+- Breakpoints: ≥ 1440 (three columns), 1280 (default), 1024 (right column collapses to tabs), 768 (sidebar overlay), ≥ 375 (single-column job and approval evidence). The mobile preview remains read-only below 550 px. A `turtle dashboard --phone` session is read-only at every viewport, enforced by the API session scope; its live screen hides all decision and command controls. Approval hashes and bound documents must wrap within a 390 px viewport.
 
 ## 7. Dashboard Mockup Images
 

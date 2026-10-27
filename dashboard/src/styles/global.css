@@ -21,6 +21,7 @@
 .sort-button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0;white-space:nowrap}.sort-button:hover{color:var(--accent)}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pill.unknown{color:var(--text-muted)}
+.content,.stack,.card,.card-body,.list-row{min-width:0}.list-row code,.list-row pre,.stack code{max-width:100%;overflow-wrap:anywhere;word-break:break-word}.stack pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;overflow-x:auto}.stack code{white-space:pre-wrap}
 .approval-queue small{display:block;color:var(--text-muted);margin-top:5px}
 .diff-split-line{display:grid;grid-template-columns:1fr 1fr;min-width:800px;border-bottom:1px solid var(--border)}.diff-split-line>div{display:grid;grid-template-columns:40px minmax(360px,1fr)}.diff-split-line>div:first-child{border-right:1px solid var(--border)}.diff-split-line span{color:var(--text-muted);text-align:right;padding-right:8px;user-select:none}.diff-split-line code{white-space:pre;padding-left:8px}.diff-split-line.add>div:last-child{background:color-mix(in srgb,var(--success) 10%,transparent)}.diff-split-line.remove>div:first-child{background:color-mix(in srgb,var(--danger) 10%,transparent)}
 .search-trigger svg{display:none}@media(max-width:550px){.search-trigger svg{display:block;width:17px;height:17px}.page-title .btn.primary{display:none}}

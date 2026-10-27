@@ -6,7 +6,7 @@
 //!
 //! | effect | probe |
 //! |---|---|
-//! | `create_worktree` | worktree exists on the expected branch at the recorded base |
+//! | `create_worktree` | worktree exists at the recorded base; a revert job also probes its factory revert commit |
 //! | `dispatch_ready_tasks` | a commit with the task's `Turtle-Task` trailer exists |
 //! | `run_gates`, `run_verification` | none needed: re-running is harmless |
 //! | `request_approval` | an identical pending approval exists |
@@ -26,12 +26,13 @@ use turtle_agents::{
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
-    Actor, ApprovalStatus, ArtifactKind, GateKind, Plan, QuotaStatus, ReviewOutcome, ReviewReport,
-    Role, RunId, Specification, UsageValue, VerificationDecision, VerificationReport,
+    Actor, ApprovalStatus, ArtifactKind, DeliveryMode, GateKind, Plan, QuotaStatus, ReviewReport,
+    Role, RunId, Severity, Specification, UsageValue, VerificationDecision, VerificationReport,
 };
 use turtle_exec::{CommandSpec, ExitOutcome};
 use turtle_git::commit::Trailers;
 use turtle_git::delivery::{DeliveryOutcome, SquashRequest};
+use turtle_git::refresh::RefreshOutcome;
 use turtle_git::worktree::WorktreeOutcome;
 use turtle_git::{GitError, Repo};
 use turtle_store::{
@@ -41,14 +42,19 @@ use turtle_store::{
 use turtle_tokens::{
     BucketPath, cold_start_estimate, estimate, reservation_size, score_complexity,
 };
-use turtle_workflow::{Effect, JobCommand, ReviewIndependence, ReviewVerdict, VerificationOutcome};
+use turtle_workflow::{
+    BlockReason, Effect, JobCommand, ProfileBase, ReviewIndependence, ReviewVerdict,
+    VerificationOutcome,
+};
 
 use crate::approvals::ApprovalService;
 use crate::binding::GitFactsProvider;
 use crate::dispatcher::{ExecError, ExecOutcome, Executor};
 use crate::engine::ContextProvider;
 use crate::layout::{ExecConfig, Layout};
+use crate::pr::{PrClient, approved_body};
 use crate::shared::SharedStore;
+use crate::static_gates::evaluate as evaluate_static_gates;
 
 /// Largest slice of gate output kept in the gate result artifact.
 const OUTPUT_TAIL_CHARS: usize = 4_000;
@@ -76,6 +82,14 @@ fn redacted_transcript(raw: &str) -> String {
 
 fn redact_gate_output(raw: &str) -> String {
     turtle_context::redact(raw).0
+}
+
+fn revert_commit(description: &str) -> Option<String> {
+    let commit = description
+        .lines()
+        .find_map(|line| line.strip_prefix("Turtle-Revert-Commit: "))?;
+    (matches!(commit.len(), 40 | 64) && commit.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| commit.to_ascii_lowercase())
 }
 
 pub struct FactoryExecutor<R, C, G> {
@@ -270,7 +284,7 @@ where
                 .collect();
             // Walking and reading the checkout is blocking file IO; keep it off the async threads.
             let root = workdir.to_path_buf();
-            let package = tokio::task::spawn_blocking(move || {
+            let mut package = tokio::task::spawn_blocking(move || {
                 turtle_context::build(
                     &root,
                     &areas,
@@ -281,6 +295,55 @@ where
             .await
             .map_err(retryable)?
             .map_err(fatal)?;
+            let terms: Vec<String> = format!("{} {}", job.title, job.description)
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|term| term.len() >= 3)
+                .take(12)
+                .map(str::to_owned)
+                .collect();
+            if !terms.is_empty() {
+                let query = terms.join(" OR ");
+                let project_id = job.project_id;
+                let job_id = job.job.id;
+                let hits = self
+                    .store
+                    .with(move |store| store.search_resources(project_id, Some(job_id), &query, 12))
+                    .await
+                    .map_err(retryable)?;
+                for hit in hits {
+                    let encoded = serde_json::to_string(&hit.text)
+                        .map_err(fatal)?
+                        .replace('<', "\\u003c");
+                    let title = hit
+                        .title
+                        .replace('&', "&amp;")
+                        .replace('"', "&quot;")
+                        .replace('<', "&lt;");
+                    let block = format!(
+                        "\n\n<resource trust=\"{}\" id=\"{}\" title=\"{}\">\n{}\n</resource>",
+                        hit.trust, hit.resource_id, title, encoded
+                    );
+                    let candidate = format!("{}{block}", package.text);
+                    let candidate_tokens = turtle_context::estimate_tokens(&candidate);
+                    if candidate_tokens > turtle_context::DEFAULT_TOKEN_BUDGET {
+                        continue;
+                    }
+                    package.text = candidate;
+                    let resource_tokens = turtle_context::estimate_tokens(&block);
+                    package.manifest.estimated_tokens = candidate_tokens;
+                    package
+                        .manifest
+                        .resources
+                        .push(turtle_context::ManifestResource {
+                            id: hit.resource_id,
+                            title: hit.title,
+                            trust: hit.trust,
+                            estimated_tokens: resource_tokens,
+                            reason: "fts_ranked".into(),
+                        });
+                }
+            }
+            package.manifest.content_sha256 = turtle_context::content_sha256(&package.text);
             req.context = Some(AgentContext {
                 text: package.text,
                 manifest_json: serde_json::to_string(&package.manifest).map_err(fatal)?,
@@ -826,11 +889,29 @@ where
                         report
                     }
                 };
-                let verdict = match report.outcome() {
-                    ReviewOutcome::Pass => ReviewVerdict::Pass,
-                    ReviewOutcome::Fixable => ReviewVerdict::Fixable,
-                    ReviewOutcome::Replan => ReviewVerdict::Replan,
-                    ReviewOutcome::ScopeCreep => ReviewVerdict::ScopeCreep,
+                let (min_fix, max_auto_fix) = match job.job.profile.base {
+                    ProfileBase::Fast => (Severity::Major, Severity::Major),
+                    ProfileBase::Standard => (Severity::Major, Severity::Major),
+                    ProfileBase::Strict => (Severity::Nit, Severity::Nit),
+                };
+                if !report.scope_creep
+                    && !report.replan
+                    && report.findings.iter().any(|f| f.severity > max_auto_fix)
+                {
+                    return Ok(ExecOutcome::done(json!({"findings": report.findings.len(),
+                        "decision": "human_review_required"}))
+                    .with_command(JobCommand::Halt {
+                        reason: BlockReason::ReviewDecisionRequired,
+                    }));
+                }
+                let verdict = if report.scope_creep {
+                    ReviewVerdict::ScopeCreep
+                } else if report.replan {
+                    ReviewVerdict::Replan
+                } else if report.findings.iter().any(|f| f.severity >= min_fix) {
+                    ReviewVerdict::Fixable
+                } else {
+                    ReviewVerdict::Pass
                 };
                 Ok(
                     ExecOutcome::done(json!({"findings": report.findings.len()}))
@@ -997,6 +1078,35 @@ where
             }
         }
         std::fs::write(&marker, b"").map_err(retryable)?;
+        if job
+            .description
+            .lines()
+            .any(|line| line.starts_with("Turtle-Revert-Commit:"))
+        {
+            let commit = revert_commit(&job.description)
+                .ok_or_else(|| fatal("revert job is missing a valid Turtle-Revert-Commit hash"))?;
+            if !repo.is_ancestor(&commit, &base).await.map_err(git_error)? {
+                return Err(fatal(format!(
+                    "revert commit {commit} is not part of the recorded base {base}"
+                )));
+            }
+            let revert_marker = format!("This reverts commit {commit}.");
+            let existing = wt
+                .run(&[
+                    "log",
+                    "--format=%B",
+                    "--fixed-strings",
+                    "--grep",
+                    &revert_marker,
+                ])
+                .await
+                .map_err(git_error)?;
+            if existing.trim().is_empty() {
+                wt.run(&["revert", "--no-edit", &commit])
+                    .await
+                    .map_err(git_error)?;
+            }
+        }
         Ok(ExecOutcome::done(json!({
             "path": layout.path,
             "branch": layout.spec.branch,
@@ -1103,8 +1213,26 @@ where
         let head = wt.head().await.map_err(git_error)?;
         let tree = wt.tree_of("HEAD").await.map_err(git_error)?;
 
-        let mut results = Vec::new();
-        let mut passed = true;
+        let (spec, _): (Specification, _) = self
+            .need_doc(&job, ArtifactKind::Specification, "specification")
+            .await?;
+        let changes = wt
+            .changed_files(job.base_commit.as_deref().unwrap_or(&head), &head)
+            .await
+            .map_err(git_error)?;
+        let diff = wt
+            .diff_bytes(job.base_commit.as_deref().unwrap_or(&head), &head)
+            .await
+            .map_err(git_error)?;
+        let static_report = evaluate_static_gates(
+            &project.settings.static_gates,
+            project.settings.protected_paths.as_deref(),
+            &spec,
+            &changes,
+            &diff,
+        );
+        let mut results = static_report.results;
+        let mut passed = static_report.passed;
         for (name, command) in project.settings.commands.gates() {
             let run = self.run_shell(&project, &layout.path, command).await?;
             passed &= run.outcome == "passed";
@@ -1116,7 +1244,7 @@ where
         }
         let doc = json!({
             "head_commit": head, "tree_hash": tree, "passed": passed,
-            "configured": !results.is_empty(), "results": results,
+            "configured": !results.is_empty(), "results": results, "acknowledgement_flags": static_report.acknowledgement_flags,
         });
         self.store_doc(&job, ArtifactKind::GateResult, &doc, Actor::Scheduler)
             .await?;
@@ -1195,17 +1323,131 @@ where
 
     async fn deliver(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
         let (job, project) = self.load(effect).await?;
-        let (layout, _base) = self.layout(&project, &job)?;
+        let (layout, base) = self.layout(&project, &job)?;
         let repo = self.cfg.repo(&project);
         let key = job.key.to_string();
         let target = layout.target_branch.clone();
         let id = job.job.id;
-        let approval = self
+        if project.settings.delivery == DeliveryMode::Pr
+            && let Some(existing) = self
+                .store
+                .with(move |s| s.delivery(id))
+                .await
+                .map_err(retryable)?
+            && existing.mode == "pr"
+            && existing.status == "pending"
+        {
+            return Ok(ExecOutcome::done(
+                json!({"pr_url": existing.pr_url, "status": "pending"}),
+            ));
+        }
+        if project.settings.delivery == DeliveryMode::LocalSquash {
+            let parked = format!("refs/turtle/delivery/{key}");
+            let recovered = if let Some(commit) = repo
+                .find_delivery_commit(&target, &key)
+                .await
+                .map_err(git_error)?
+            {
+                Some(DeliveryOutcome::Delivered { commit })
+            } else if let Ok(commit) = repo.rev(&parked).await {
+                Some(DeliveryOutcome::PendingIntegration {
+                    commit,
+                    reference: parked,
+                })
+            } else {
+                None
+            };
+            if let Some(outcome) = recovered {
+                let approval = self
+                    .approvals
+                    .current_approved(&job, GateKind::Acceptance)
+                    .await
+                    .map_err(fatal)?;
+                let (commit, status) = match &outcome {
+                    DeliveryOutcome::Delivered { commit } => {
+                        (commit.clone(), DeliveryStatus::Delivered)
+                    }
+                    DeliveryOutcome::PendingIntegration { commit, .. } => {
+                        (commit.clone(), DeliveryStatus::PendingIntegration)
+                    }
+                };
+                let (c, t, aid) = (commit.clone(), target.clone(), approval.id);
+                self.store
+                    .with(move |s| {
+                        s.transaction(|tx| {
+                            tx.record_delivery(id, "local_squash", &t, &c, status, aid)
+                        })
+                    })
+                    .await
+                    .map_err(retryable)?;
+                return Ok(
+                    ExecOutcome::done(json!({"commit": commit, "status": "recovered"}))
+                        .with_command(JobCommand::Delivered),
+                );
+            }
+        }
+        let tip = repo
+            .branch_tip(&target)
+            .await
+            .map_err(git_error)?
+            .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
+        if tip != base {
+            let wt = repo.at(&layout.path);
+            let head = wt.head().await.map_err(git_error)?;
+            if !repo.is_ancestor(&tip, &head).await.map_err(git_error)? {
+                self.approvals
+                    .current_approved(&job, GateKind::Acceptance)
+                    .await
+                    .map_err(fatal)?;
+            }
+            match repo
+                .refresh_job(&wt, &base, &tip, &key)
+                .await
+                .map_err(git_error)?
+            {
+                RefreshOutcome::Conflicts { files } => {
+                    return Ok(ExecOutcome::done(json!({"conflicts": files,
+                        "resolution": format!("resolve the conflicts on {}, incorporate {}, then run `turtle job resolve {key}`", layout.spec.branch, target)}))
+                        .with_command(JobCommand::ConflictDetected));
+                }
+                RefreshOutcome::Refreshed { head } => {
+                    let old = base.clone();
+                    let new = tip.clone();
+                    self.store
+                        .with(move |s| s.transaction(|tx| tx.refresh_base_commit(id, &old, &new)))
+                        .await
+                        .map_err(retryable)?;
+                    return Ok(ExecOutcome::done(json!({"base": tip, "head": head}))
+                        .with_command(JobCommand::BaseRefreshed));
+                }
+            }
+        }
+        let approved = self
             .store
             .with(move |s| s.latest_approved(id, GateKind::Acceptance))
             .await
             .map_err(retryable)?
             .ok_or_else(|| fatal("delivery needs an approved acceptance"))?;
+        if approved
+            .binding
+            .git
+            .as_ref()
+            .is_some_and(|g| g.base_commit != base)
+        {
+            // A crash may have occurred after persisting a refreshed base but before the
+            // BaseRefreshed command invalidated acceptance and scheduled fresh gates.
+            return Ok(ExecOutcome::done(json!({"base": base, "recovered": true}))
+                .with_command(JobCommand::BaseRefreshed));
+        }
+        let approval = self
+            .approvals
+            .current_approved(&job, GateKind::Acceptance)
+            .await
+            .map_err(fatal)?;
+
+        if project.settings.delivery == DeliveryMode::Pr {
+            return self.deliver_pr(&job, &project, &layout, &approval).await;
+        }
 
         // Probes: an earlier attempt may already have delivered or parked the result.
         let parked = format!("refs/turtle/delivery/{key}");
@@ -1221,11 +1463,6 @@ where
                 reference: parked,
             }
         } else {
-            let tip = repo
-                .branch_tip(&target)
-                .await
-                .map_err(git_error)?
-                .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
             let (spec, _): (Specification, _) = self
                 .need_doc(&job, ArtifactKind::Specification, "specification")
                 .await?;
@@ -1273,6 +1510,110 @@ where
             .with_command(JobCommand::Delivered))
     }
 
+    async fn deliver_pr(
+        &self,
+        job: &JobRecord,
+        project: &ProjectRecord,
+        layout: &Layout,
+        approval: &turtle_store::ApprovalRecord,
+    ) -> Result<ExecOutcome, ExecError> {
+        let id = job.job.id;
+        let repo = self.cfg.repo(project);
+        let head = repo
+            .branch_tip(&layout.spec.branch)
+            .await
+            .map_err(git_error)?
+            .ok_or_else(|| fatal("job branch is missing"))?;
+        let spec_ref = approval
+            .binding
+            .artifacts
+            .get("specification")
+            .ok_or_else(|| fatal("acceptance approval has no specification"))?;
+        let bytes = self.blobs.get(&spec_ref.sha256).map_err(fatal)?;
+        let spec: Specification = serde_json::from_slice(&bytes).map_err(fatal)?;
+        let scope = self
+            .approvals
+            .current_approved(job, GateKind::Scope)
+            .await
+            .map_err(fatal)?;
+        let plan = self
+            .store
+            .with(move |s| s.latest_approved(id, GateKind::Plan))
+            .await
+            .map_err(retryable)?;
+        let plan_hash = if plan.is_some() {
+            Some(
+                self.approvals
+                    .current_approved(job, GateKind::Plan)
+                    .await
+                    .map_err(fatal)?
+                    .subject_hash
+                    .to_hex(),
+            )
+        } else {
+            None
+        };
+        if job.job.profile.plan_approval_required(false) && plan_hash.is_none() {
+            return Err(fatal(
+                "this profile requires an approved plan before PR delivery",
+            ));
+        }
+        let body = approved_body(
+            &spec,
+            &scope.subject_hash.to_hex(),
+            plan_hash.as_deref(),
+            &approval.subject_hash.to_hex(),
+        );
+        let client = PrClient::new(self.cfg.gh_program.clone());
+        let existing = client
+            .find(Path::new(&project.repo_path), &layout.spec.branch)
+            .await
+            .map_err(retryable)?;
+        let url = if let Some(pr) = existing {
+            if pr.head_ref_oid.as_deref() != Some(head.as_str()) {
+                return Err(fatal(
+                    "the existing PR has a different head; inspect it before delivery",
+                ));
+            }
+            if pr.body.as_deref() != Some(body.as_str()) || pr.state == "CLOSED" {
+                return Err(fatal(
+                    "the existing PR body or state differs from the approved delivery",
+                ));
+            }
+            pr.url
+        } else {
+            // The acceptance check above precedes this first remote mutation.
+            repo.run(&[
+                "push",
+                "origin",
+                &format!("refs/heads/{0}:refs/heads/{0}", layout.spec.branch),
+            ])
+            .await
+            .map_err(git_error)?;
+            client
+                .create(
+                    Path::new(&project.repo_path),
+                    &layout.target_branch,
+                    &layout.spec.branch,
+                    &format!("{}: {}", job.key, job.title),
+                    &body,
+                )
+                .await
+                .map_err(retryable)?
+        };
+        let target = layout.target_branch.clone();
+        let a = approval.id;
+        let h = head.clone();
+        let u = url.clone();
+        self.store
+            .with(move |s| s.transaction(|tx| tx.record_pr(id, &target, &h, &u, a)))
+            .await
+            .map_err(retryable)?;
+        Ok(ExecOutcome::done(
+            json!({"pr_url": url, "status": "pending"}),
+        ))
+    }
+
     async fn cleanup_worktree(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
         let (job, project) = self.load(effect).await?;
         let Ok((layout, _)) = self.layout(&project, &job) else {
@@ -1286,6 +1627,41 @@ where
             .await
             .map_err(git_error)?;
         Ok(ExecOutcome::done(json!({"removed": layout.path})))
+    }
+
+    async fn delete_job_branch(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
+        let (job, project) = self.load(effect).await?;
+        let branch = {
+            let prefix = project
+                .settings
+                .branch_prefix
+                .as_deref()
+                .unwrap_or(&self.cfg.default_branch_prefix);
+            turtle_git::names::job_branch_name(prefix, &job.key.to_string(), &job.title)
+                .map_err(git_error)?
+        };
+        let repo = self.cfg.repo(&project);
+        if repo.branch_tip(&branch).await.map_err(git_error)?.is_none() {
+            return Ok(ExecOutcome::done(
+                json!({"deleted": false, "branch": branch}),
+            ));
+        }
+        if repo
+            .checked_out_branches()
+            .await
+            .map_err(git_error)?
+            .contains(&branch)
+        {
+            return Err(fatal(format!(
+                "refusing to delete checked-out job branch `{branch}`"
+            )));
+        }
+        repo.run(&["branch", "-D", &branch])
+            .await
+            .map_err(git_error)?;
+        Ok(ExecOutcome::done(
+            json!({"deleted": true, "branch": branch}),
+        ))
     }
 }
 
@@ -1314,6 +1690,7 @@ where
             Effect::RunVerification => self.run_verification(effect).await,
             Effect::Deliver => self.deliver(effect).await,
             Effect::CleanupWorktree => self.cleanup_worktree(effect).await,
+            Effect::DeleteJobBranch => self.delete_job_branch(effect).await,
             Effect::SupersedePendingApprovals => {
                 let id = effect.job_id.ok_or_else(|| fatal("effect without a job"))?;
                 let n = self
@@ -1337,11 +1714,29 @@ mod transcript_tests {
 
     #[test]
     fn transcript_and_gate_redaction_remove_corpus_secrets() {
-        let secret = "api_key = ghp_123456789012345678901234567890123456";
-        let stored = redacted_transcript(&format!("{{\"message\":\"{secret}\"}}\n"));
-        assert!(!stored.contains("ghp_123456789012345678901234567890123456"));
+        let secrets: Vec<_> = (0..60)
+            .map(|i| format!("ghp_synthetic{i:03}abcdefghijklmnop"))
+            .collect();
+        let input = secrets
+            .iter()
+            .map(|secret| format!("api_key = {secret}\n"))
+            .collect::<String>();
+        let stored = redacted_transcript(&input);
         assert!(stored.contains("[REDACTED:"));
-        let gate = redact_gate_output(&format!("test output: {secret}"));
-        assert!(!gate.contains("ghp_123456789012345678901234567890123456"));
+        let gate = redact_gate_output(&input);
+        for secret in secrets {
+            assert!(!stored.contains(&secret), "transcript leaked {secret}");
+            assert!(!gate.contains(&secret), "gate output leaked {secret}");
+        }
+    }
+
+    #[test]
+    fn revert_metadata_accepts_only_a_full_git_object_id() {
+        assert_eq!(
+            revert_commit(&format!("Turtle-Revert-Commit: {}", "A".repeat(40))),
+            Some("a".repeat(40))
+        );
+        assert_eq!(revert_commit("Turtle-Revert-Commit: abc123"), None);
+        assert_eq!(revert_commit("Turtle-Revert-Commit: --help"), None);
     }
 }

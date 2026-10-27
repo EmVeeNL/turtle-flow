@@ -16,7 +16,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The static bundle is in `dist/`. For live use, run `PUBLIC_API_ADAPTER=real npm run build`, start `turtle up --agent demo` (or a real provider), then run `turtle dashboard` in an interactive terminal. The daemon serves the bundle on its loopback port; `/login#code=…` exchanges the one-use code for a session cookie. The implemented endpoint contract is in [API-ASSUMPTIONS.md](API-ASSUMPTIONS.md).
+The static bundle is in `dist/`. For live use, run `PUBLIC_API_ADAPTER=real npm run build`, start `turtle up --agent demo` (or a real provider), then run `turtle dashboard` in an interactive terminal. The daemon serves the bundle on its loopback port; `/login#code=…` exchanges the one-use code for a session cookie. For a Tailscale phone session, run `turtle dashboard --phone`; it asks before adding a Serve mapping and prints a QR code containing a read-only, one-time login link. Build with the real adapter. The daemon continues to listen on loopback; Tailscale terminates HTTPS and forwards to the local API. The implemented endpoint contract is in [API-ASSUMPTIONS.md](API-ASSUMPTIONS.md).
 
 ## Structure and decisions
 
@@ -34,8 +34,8 @@ Astro's built-in CSP support emits hashes for its own scripts and styles. The po
 - Dynamic details use `/projects/view?slug=…`, `/jobs/view?id=…`, `/runs/view?id=…`, `/approvals/view?id=…`, and `/artifacts/view?id=…`, because static output cannot prerender unknown IDs and the Rust server must serve plain files.
 - Mock-only mutations, including job creation, provider edits, resource upload, policy saves, and license import, are displayed as controls or CLI guidance but have no persistence. Only approval decisions update the in-memory mock adapter.
 - Charts use compact native SVG bars and tables; full stacked area and scatter interactions await backend analytics endpoints. Values remain labeled by provenance.
-- Mobile shows job status and approval evidence; decision buttons are hidden below 550px as a read-only preview, following the spec's Phase 2 mobile approval note.
+- Phone sessions are read-only in the API and UI at every viewport; the live dashboard hides command and decision controls when `/api/v1/me` reports `readonly: true`. The mock preview keeps its existing below-550px read-only behavior. Bound JSON documents are pretty-printed and wrapped for phone widths.
 
 ## Known integration gaps
 
-The live client view covers the core operational records and approval workflow, but does not yet reproduce every interaction in the mock design preview. Resources, licensing, settings, full review/diff display, provider configuration, and currency analytics still need server workflows. The core API exposes bound document content for approvals; complete diff presentation remains later work. The CLI still reads SQLite directly. Browser Playwright verification needs an environment that can launch Chromium; Rust HTTP integration, TypeScript unit, type check, lint and both static builds pass.
+The live client uses the mock screen structure for overview, project and job details, runs, approvals, analytics, and provider observations. Full sessions can add a validated Git project, create and optionally start jobs, and set job/project/global token budgets. Read-only sessions hide those controls and the API guard rejects writes. Approval documents are rendered from bound content; stored patch artifacts open in a line-oriented diff view when available. Resources remain an explicit empty state; settings and licensing are read-only. Currency costs, usage time series, provider discovery/configuration, repository settings provenance, and licensing data remain unknown or unavailable because the API does not provide those values. The CLI still reads SQLite directly. No working Tailscale status/Serve environment was available; Serve command syntax follows current Tailscale docs, and stand-in CLI tests cover the invocation.

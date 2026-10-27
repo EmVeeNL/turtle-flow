@@ -77,16 +77,16 @@
   - job reaches the same final state as an uninterrupted run;
   - no duplicate commits (commit count and trailers), no duplicate ledger settlements, no open reservations, no orphan processes, no orphan worktrees;
   - event chain verifies (`audit verify`).
-- **Real kill tests:** a separate harness runs the daemon as a subprocess and sends `SIGKILL` at random times (seeded) during scripted jobs with a FakeAdapter that sleeps/streams; 200 iterations nightly.
+- **Real kill tests:** a separate harness runs the daemon as a subprocess and sends `SIGKILL` at seeded random times during scripted demo-agent jobs; 20 iterations in CI, adjustable with `TURTLE_KILL_ITERATIONS`.
 - **Power-loss simulation (Linux nightly):** run on a filesystem with `fsync` interception (e.g. LazyFS or `dm-flakey`) to validate WAL + `synchronous=FULL` assumptions for ledger/approval writes.
 - **Git interruption:** kill during `git worktree add`, `git commit`, rebase; assert recovery probes act correctly (stale lock removal only when safe).
 
 ### 6.1 Implementation status
 
 - The in-process harness is implemented (`turtle-scheduler/tests/crash.rs`) with an explicit `CrashPlan` instead of the `fail` crate: every boundary is a named `point()` call, the harness crashes at the Nth, restarts on the same database file and compares the result with a baseline run, including double crashes.
-- Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a real daemon process reaching the first approval. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
+- Black-box CLI tests (`turtle-flow/tests/cli.rs`) run the real binary against a throwaway repository and data directory: repository validation, job lifecycle, approval refusals, audit tamper detection and a seeded SIGKILL/restart loop through demo-agent delivery. The loop compares final state and delivered tree with an uninterrupted run, checks one delivery commit and record, no open reservations, and audit-chain integrity. The Claude adapter is tested against a stand-in `claude` script (`turtle-agents/tests/claude_process.rs`), including environment scrubbing, and against recorded real transcripts.
 - The pseudo-terminal approval flow and the real Claude Code run were exercised by hand and are not in CI.
-- Planned and not yet written: the `kill -9` subprocess harness (random times), and power-loss simulation.
+- Planned and not yet written: power-loss simulation and a subprocess fixture that sleeps/streams during agent execution. The current SIGKILL loop uses the immediate demo agent, so kill timing is concentrated around scheduler and Git effects.
 
 ## 7. Security Tests (TST-13)
 
@@ -104,7 +104,9 @@
 | SEC-014 Git hooks | Malicious repo fixture with `post-checkout`, `pre-commit` hooks, `core.fsmonitor` script, filter driver → none execute (marker files absent) |
 | SEC-015 Tighten-only | Repo config disabling secret scan → ignored + warning event |
 | SEC-013 Permissions | Data dir/file modes verified |
-| SEC-020 Supply chain | `cargo deny check` and `cargo audit` CI gates |
+| SEC-020 Supply chain | `cargo deny check` CI gate includes RustSec advisories (the `cargo audit` equivalent); full-SHA GitHub Actions pins |
+
+**Implementation status:** the environment-printing agent fixture, 200-plus synthetic-secret redaction unit corpus, 60-secret checks through each transcript, gate-output, export and final-prompt surface, hooks/fsmonitor and escaping-symlink fixtures, protected workflow-path flag, hash-bound approval tests, direct SQLite HMAC-tamper tests, delivery audit-chain test, and concurrent API decision test run in the Rust workspace. Prompt tests place override, secret-disclosure, approval-forgery and context-escape instructions inside an untrusted resource; an end-to-end `FakeRunner` that attempts an unauthorized commit against a repository containing malicious instructions is blocked before delivery or PR push. Context tests check the 64 KiB per-file limit and total token budget; process-runner tests cover bounded output and process-group timeout. An authenticated request to a would-be agent approval endpoint is tested as `404`; decisions still require a user session. The agent-process-tree request test depends on the unimplemented Unix socket. Broader prompt-injection and resource-limit fixture matrices remain open.
 
 ## 8. Integration Tests (TST-06, TST-07, TST-08, TST-14)
 
@@ -136,7 +138,7 @@ The FakeAdapter reads a scenario script that defines, per role and attempt, what
 
 ### 9.2 Live E2E (reference repositories)
 
-Three small reference repos maintained in the project (`fixtures/ref-rust-cli`, `fixtures/ref-ts-api`, `fixtures/ref-py-lib`) each with ~5 benchmark jobs and hidden acceptance tests. Pre-release requirement (AC-01): each repo completes at least one `standard` job with Claude Code and one with Codex. Results also feed the evaluation suite.
+Three small reference project templates are maintained in `fixtures/reference-sources/` (Rust CLI, TypeScript API utilities, Python library), with five prompts per repo in `fixtures/benchmarks/`. `scripts/prepare-live-e2e.sh` creates disposable Git repositories outside the checkout; the benchmark prompts and hidden checks in `fixtures/acceptance/` are not copied into those repositories. Run a check after delivery with `scripts/check-live-e2e-acceptance.py <benchmark-id> <delivered-repo-path>`. Pre-release requirement (AC-01): each repo completes at least one `standard` job with Claude Code and one with Codex. Use distinct clean fixture clones and `TURTLE_HOME` values for each provider. See [the live E2E checklist](LIVE-E2E-CHECKLIST.md). Results also feed the evaluation suite.
 
 ## 10. Dashboard Tests (TST-17, TST-18)
 
@@ -175,7 +177,8 @@ Coverage targets (NFR-013): `turtle-workflow`, `turtle-policy`, `turtle-tokens` 
 
 ## 14. Test Data and Fixtures
 
-- `fixtures/repos/` — scripted generators (not committed repos) for: simple Rust/TS/Python projects, malicious repo (hooks, fsmonitor, filters, injection text), large repo generator, LFS repo, submodule repo.
+- `fixtures/reference-sources/`, `fixtures/benchmarks/`, `fixtures/acceptance/` — source templates, job prompts, and acceptance scripts for the live reference-repository suite. Acceptance files stay outside the generated project repositories.
+- `fixtures/repos/` — scripted generators (not committed repos) for: malicious repo (hooks, fsmonitor, filters, injection text), large repo generator, LFS repo, submodule repo.
 - `fixtures/transcripts/<provider>/<cli-version>/` — recorded CLI outputs with secrets removed.
 - `fixtures/secrets-corpus/` — synthetic secrets only (never real credentials).
 - `fixtures/injection-corpus/` — prompt-injection strings by category.

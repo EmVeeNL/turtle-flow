@@ -40,6 +40,7 @@ pub enum BlockReason {
     BackTransitionLimitReached,
     PreflightDenied,
     ConflictDetected,
+    ReviewDecisionRequired,
     Timeout,
     Unrecoverable { code: String },
 }
@@ -187,6 +188,7 @@ pub enum JobCommand {
     },
     MarkFailed,
     Cancel,
+    CancelAndDeleteBranch,
     Pause {
         mode: PauseMode,
     },
@@ -229,6 +231,7 @@ impl JobCommand {
             Self::ResolveBlock { .. } => "resolve_block",
             Self::MarkFailed => "mark_failed",
             Self::Cancel => "cancel",
+            Self::CancelAndDeleteBranch => "cancel_and_delete_branch",
             Self::Pause { .. } => "pause",
             Self::Resume => "resume",
             Self::BudgetExhausted => "budget_exhausted",
@@ -300,6 +303,7 @@ pub enum Effect {
     RunVerification,
     Deliver,
     CleanupWorktree,
+    DeleteJobBranch,
     TerminateRuns,
     ReleaseReservations,
     SupersedePendingApprovals,
@@ -316,6 +320,7 @@ impl Effect {
         "supersede_pending_approvals",
         "notify_user",
         "cleanup_worktree",
+        "delete_job_branch",
     ];
 
     /// Stable name, identical to the `effect` tag in the serialized form.
@@ -330,6 +335,7 @@ impl Effect {
             Self::RunVerification => "run_verification",
             Self::Deliver => "deliver",
             Self::CleanupWorktree => "cleanup_worktree",
+            Self::DeleteJobBranch => "delete_job_branch",
             Self::TerminateRuns => "terminate_runs",
             Self::ReleaseReservations => "release_reservations",
             Self::SupersedePendingApprovals => "supersede_pending_approvals",
