@@ -360,6 +360,12 @@ fn settings(test_cmd: Option<&str>, target: Option<&str>) -> ProjectSettings {
     }
 }
 
+fn strict_settings(test_cmd: Option<&str>, target: Option<&str>) -> ProjectSettings {
+    let mut project = settings(test_cmd, target);
+    project.commands.lint = Some("true".into());
+    project
+}
+
 /// Runs the job until it is Done or Blocked (and all effects finished). Returns the final job.
 async fn drive<R: AgentRunner>(env: &Env<R>, b: &Booted<R>, approve: &ApprovalPolicy) -> JobRecord {
     for _ in 0..600 {
@@ -926,7 +932,7 @@ async fn strict_job_uses_discovery_three_approvals_and_independent_review() {
     );
     let env = Env::new_with_profile(
         router,
-        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+        strict_settings(Some(NEEDS_FEATURE_FILE), Some("release")),
         Profile::strict(),
     )
     .await;
@@ -982,7 +988,7 @@ async fn strict_review_requires_human_decision_for_minor_findings() {
     );
     let env = Env::new_with_profile(
         router,
-        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+        strict_settings(Some(NEEDS_FEATURE_FILE), Some("release")),
         Profile::strict(),
     )
     .await;
@@ -1030,7 +1036,7 @@ async fn plan_approval_survives_restart_without_a_duplicate_request() {
     );
     let env = Env::new_with_profile(
         router,
-        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+        strict_settings(Some(NEEDS_FEATURE_FILE), Some("release")),
         Profile::strict(),
     )
     .await;
