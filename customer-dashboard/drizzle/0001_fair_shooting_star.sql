@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "license_user_id_unique" ON "license" USING btree ("user_id");

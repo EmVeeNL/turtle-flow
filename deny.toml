@@ -2,6 +2,14 @@
 
 [graph]
 all-features = true
+# Check the targets shipped by the project. This avoids accepting licenses
+# for target-only dependencies that are not part of any supported release.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
 
 [advisories]
 # The CI `cargo deny check` advisory pass scans RustSec like `cargo audit`.

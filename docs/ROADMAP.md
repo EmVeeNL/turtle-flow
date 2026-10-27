@@ -51,6 +51,22 @@ Detailed epics, milestones and acceptance: [MVP.md](MVP.md).
 | 0.6 | Extensibility | Additional adapters (e.g. Gemini CLI, Aider), parallel tasks via sub-worktrees, GitLab push/PR support, optional embeddings (sqlite-vec) behind flag |
 | 1.0 GA | Commercial launch | License files & Licensing screen, signed releases, docs site, stability guarantees for CLI JSON and API v1 |
 
+### Priority before the next broad feature work: finish the CLI and link account licenses
+
+The next licensing increment spans the local CLI and `customer-dashboard/`. Keep project state, source content, runs, and usage history in the local SQLite database. Account linking sends only the minimum licensing and installation metadata needed to issue and revoke a license.
+
+1. **CLI license check and login guidance:** verify a cached signed license locally. If it is missing or expired, explain that the user can run `turtle login` to link the CLI to their Turtle Flow account. Preserve the Free local workflow when no valid account license is present; license expiry must not block access to local projects, history, exports, or the existing Free entitlement.
+2. **CLI-to-dashboard authorization:** follow [RFC-001](rfcs/RFC-001-cli-account-linking.md), using the [OAuth 2.0 Device Authorization flow (RFC 8628)](https://www.rfc-editor.org/rfc/rfc8628): an HTTP API handles the protocol, while a browser page handles sign-in and explicit device approval. The CLI receives a short-lived `device_code` and a human-entered `user_code`, opens `https://dash.turtle-flow.com/device`, and polls the API. Never put a bearer or device secret in a URL. Require the account’s existing sign-in protection before approving.
+3. **Two installation slots per account:** model linked CLI installations separately from the account’s single license. Enforce a maximum of two active installations transactionally in the database and API. Show device name, link/renewal time, and revoke controls in the customer dashboard. Use random installation IDs or public-key binding; do not fingerprint hardware.
+4. **Expiring license and reauthentication:** cache a signed Ed25519 license lease locally and verify it offline in the CLI. Proposed default: a 30-day lease, after which the CLI asks the user to run `turtle login` and approve renewal. The initial design issues no persistent API access or refresh token; it uses only the short-lived device code while linking. Support server-side revocation, following [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://www.rfc-editor.org/rfc/rfc9700). Treat the 30-day lease as a proposal to confirm before implementation.
+5. **Dashboard work:** add device authorization/token endpoints, approval and denial UI, transactional installation-slot enforcement, and a linked-device management view. Store only hashed one-time/polling credentials and the minimum license/install metadata; never store CLI project data. See [RFC-001](rfcs/RFC-001-cli-account-linking.md) for the protocol proposal.
+
+### Later: show local dashboard data in the customer dashboard
+
+For Free accounts, the browser may display selected data by connecting directly to the local daemon’s loopback API while the user is on the same computer. The browser should render read-only summaries from the daemon; do not proxy that payload through the Cloudflare Worker or persist it in the account database. Scope the initial view to user-approved project names, job states, activity, and usage summaries. Keep transcripts, prompts, diffs, and file contents local by default. Validate browser Local Network Access permissions and provide an export/import fallback. Viewing data from another device requires a separate, explicit sync or user-managed network feature and is outside this local-only design.
+
+This account-linking proposal adds an optional account license to the local Free workflow. It should not remove the no-account, no-license Free mode in [ADR-014](adr/ADR-014-licensing-architecture.md) unless that product decision is explicitly revised.
+
 ## 5. Phase 2: Turtle Flow Server Architecture
 
 **Decision ([ADR-015](adr/ADR-015-future-server-deployment.md)):** a separate `turtle-server` distribution built from the same core crates. The local `turtle` remains a first-class product (and can act as a client of a server).

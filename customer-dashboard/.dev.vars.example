@@ -1,0 +1,7 @@
+# Copy to .dev.vars and replace every placeholder before local development.
+BETTER_AUTH_SECRET=replace-with-a-cryptographically-random-secret
+LICENSE_SIGNING_KEY_PKCS8=base64-encoded-ed25519-pkcs8-private-key
+APP_ORIGIN=http://localhost:3000
+EMAIL_FROM=accounts@turtle-flow.com
+# Direct connection string for the migration role only. Never use the Neon owner role.
+DATABASE_URL=postgresql://migration-role:replace-me@your-neon-host/your-db?sslmode=require
