@@ -1071,11 +1071,19 @@ where
         let base = match job.base_commit.clone() {
             Some(b) => b,
             None => {
-                let tip = repo
-                    .branch_tip(&target)
-                    .await
-                    .map_err(git_error)?
-                    .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
+                let remote_tip = if project.settings.delivery == DeliveryMode::Pr {
+                    repo.fetch_origin_branch(&target).await.map_err(git_error)?
+                } else {
+                    None
+                };
+                let tip = match remote_tip {
+                    Some(tip) => tip,
+                    None => repo
+                        .branch_tip(&target)
+                        .await
+                        .map_err(git_error)?
+                        .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?,
+                };
                 let (id, c) = (job.job.id, tip.clone());
                 self.store
                     .with(move |s| s.transaction(|tx| tx.set_base_commit(id, &c)))
@@ -1568,11 +1576,19 @@ where
                 );
             }
         }
-        let tip = repo
-            .branch_tip(&target)
-            .await
-            .map_err(git_error)?
-            .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?;
+        let remote_tip = if project.settings.delivery == DeliveryMode::Pr {
+            repo.fetch_origin_branch(&target).await.map_err(git_error)?
+        } else {
+            None
+        };
+        let tip = match remote_tip {
+            Some(tip) => tip,
+            None => repo
+                .branch_tip(&target)
+                .await
+                .map_err(git_error)?
+                .ok_or_else(|| fatal(format!("target branch `{target}` does not exist")))?,
+        };
         if tip != base {
             let wt = repo.at(&layout.path);
             let head = wt.head().await.map_err(git_error)?;

@@ -2,6 +2,7 @@
 //! through [`turtle_exec`] with the hardened configuration from `docs/GIT-STRATEGY.md` §9.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use turtle_exec::{CommandSpec, ExitOutcome, Output};
 
@@ -212,6 +213,70 @@ impl Repo {
             ])
             .await?;
         Ok(out.success().then(|| out.stdout_lossy().trim().to_owned()))
+    }
+
+    /// Fetches an `origin` branch into its remote-tracking ref. Repeating the operation is safe:
+    /// Git updates the ref atomically, and callers can recover by reading the resulting tip.
+    /// Returns `None` when there is no origin or that branch has not been published remotely.
+    pub async fn fetch_origin_branch(&self, branch: &str) -> Result<Option<String>> {
+        let branch_ref = format!("refs/heads/{branch}");
+        if self.run(&["check-ref-format", &branch_ref]).await.is_err() {
+            return Err(GitError::Invalid(format!(
+                "invalid target branch `{branch}`"
+            )));
+        }
+        let remotes = self.run(&["remote"]).await?;
+        if !remotes.lines().any(|remote| remote == "origin") {
+            return Ok(None);
+        }
+
+        let source = format!("refs/heads/{branch}");
+        let destination = format!("refs/remotes/origin/{branch}");
+        let refspec = format!("+{source}:{destination}");
+        let args = [
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--",
+            "origin",
+            refspec.as_str(),
+        ];
+        for attempt in 0..3 {
+            let output = self
+                .raw_spec(
+                    self.spec(args.iter().copied())
+                        .timeout(Duration::from_secs(30))
+                        .max_output_bytes(64 * 1024),
+                )
+                .await?;
+            if output.success() {
+                return self
+                    .run(&[
+                        "rev-parse",
+                        "--verify",
+                        "-q",
+                        &format!("{destination}^{{commit}}"),
+                    ])
+                    .await
+                    .map(Some);
+            }
+
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if detail.contains("couldn't find remote ref")
+                || detail.contains("could not find remote ref")
+            {
+                return Ok(None);
+            }
+            if attempt < 2 {
+                tokio::time::sleep(Duration::from_millis(250 * (attempt + 1))).await;
+            } else {
+                return Err(GitError::RemoteFetch {
+                    branch: branch.to_owned(),
+                    attempts: 3,
+                });
+            }
+        }
+        unreachable!("all fetch outcomes return inside the bounded retry loop")
     }
 
     /// The default branch: `origin/HEAD` when set, else the current branch.
