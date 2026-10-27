@@ -54,7 +54,7 @@ Mainstream, well-maintained crates with large user bases reduce long-term risk. 
 
 - Runtime dependency on Git ≥ 2.38.
 - SQLx compile-time checks require committed `.sqlx` metadata in CI.
-- Tokio everywhere: blocking work (PDF extraction, hashing large files) must use `spawn_blocking`.
+- Synchronous CPU-bound work on Tokio must use `spawn_blocking`. PDF parsing runs in a child process instead, so malformed or pathological input can be terminated independently of the daemon task.
 
 ## Risks
 
