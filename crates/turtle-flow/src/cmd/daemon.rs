@@ -45,14 +45,52 @@ fn running(home: &Home) -> bool {
     matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock))
 }
 
-fn tailscale_binary() -> Command {
-    Command::new("tailscale")
+fn tailscale_program() -> Result<std::path::PathBuf> {
+    let mut candidates = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("tailscale"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        candidates.push(std::path::PathBuf::from(
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ));
+    }
+    tailscale_program_from_candidates(candidates.iter().map(std::path::PathBuf::as_path))
+        .ok_or_else(|| {
+            anyhow::anyhow!("Tailscale CLI not found; install Tailscale or put `tailscale` on PATH")
+        })
+}
+
+fn tailscale_program_from_candidates<'a>(
+    candidates: impl IntoIterator<Item = &'a std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .map(std::path::Path::to_path_buf)
+}
+
+fn tailscale_binary() -> Result<Command> {
+    Ok(Command::new(tailscale_program()?))
 }
 
 fn resolve_tailnet_host(explicit: Option<&str>) -> Result<Option<String>> {
-    resolve_tailnet_host_with(explicit, std::ffi::OsStr::new("tailscale"))
+    if let Some(host) = explicit {
+        return turtle_api::validate_tailnet_host(host)
+            .map(Some)
+            .map_err(anyhow::Error::msg);
+    }
+    // Startup must not fail on machines without Tailscale; only `--phone` needs the CLI.
+    let Ok(program) = tailscale_program() else {
+        return Ok(None);
+    };
+    resolve_tailnet_host_with_program(&program)
 }
 
+#[cfg(test)]
 fn resolve_tailnet_host_with(
     explicit: Option<&str>,
     program: &std::ffi::OsStr,
@@ -62,6 +100,10 @@ fn resolve_tailnet_host_with(
             .map(Some)
             .map_err(anyhow::Error::msg);
     }
+    resolve_tailnet_host_with_program(std::path::Path::new(program))
+}
+
+fn resolve_tailnet_host_with_program(program: &std::path::Path) -> Result<Option<String>> {
     let output = match Command::new(program).args(["status", "--json"]).output() {
         Ok(output) => output,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -82,6 +124,16 @@ fn resolve_tailnet_host_with(
     turtle_api::validate_tailnet_host(dns_name)
         .map(Some)
         .map_err(anyhow::Error::msg)
+}
+
+fn serve_root_proxy<'a>(status: &'a serde_json::Value, host_port: &str) -> Option<&'a str> {
+    status
+        .get("Web")?
+        .get(host_port)?
+        .get("Handlers")?
+        .get("/")?
+        .get("Proxy")?
+        .as_str()
 }
 
 fn serve_command_args(port: u16) -> Vec<String> {
@@ -542,6 +594,7 @@ pub async fn dashboard(home: &Home, phone: bool) -> Result<()> {
 }
 
 async fn dashboard_phone(port: u16, rt: &Runtime) -> Result<()> {
+    tailscale_program()?;
     let host = resolve_tailnet_host(None)?.context(
         "Tailscale is not connected or its DNS name could not be detected; connect Tailscale and retry, or start the daemon with --tailnet-host <name>",
     )?;
@@ -550,7 +603,7 @@ async fn dashboard_phone(port: u16, rt: &Runtime) -> Result<()> {
             "the running daemon does not allow {host}; stop it and restart with `turtle up --agent <agent> --tailnet-host {host}` (or connect Tailscale before restarting to enable auto-detection)"
         );
     }
-    let mut tailscale = tailscale_binary();
+    let mut tailscale = tailscale_binary()?;
     let help = tailscale
         .args(["serve", "--help"])
         .output()
@@ -570,51 +623,52 @@ async fn dashboard_phone(port: u16, rt: &Runtime) -> Result<()> {
             "installed `tailscale serve --help` does not document the required --bg and --https flags"
         );
     }
-    let status = tailscale_binary()
-        .args(["serve", "status"])
-        .output()
-        .context("running `tailscale serve status`")?;
-    if !status.status.success() {
-        bail!(
-            "`tailscale serve status` failed: {}",
-            String::from_utf8_lossy(&status.stderr).trim()
-        );
-    }
+    let program = tailscale_program()?;
     let mapping = format!("http://127.0.0.1:{port}");
-    let status_text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&status.stdout),
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let root_mapping = format!("|-- / proxy {mapping}");
-    if !status_text.contains(&format!("https://{host}")) || !status_text.contains(&root_mapping) {
-        eprintln!("No Tailscale Serve mapping to {mapping} was found.");
-        eprint!("Add the private HTTPS mapping on this device? [y/N] ");
+    let host_port = format!("{host}:443");
+    let status = Command::new(&program)
+        .args(["serve", "status", "--json"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
+    let existing_proxy = status
+        .as_ref()
+        .and_then(|status| serve_root_proxy(status, &host_port));
+    if existing_proxy != Some(mapping.as_str()) {
+        if let Some(existing) = existing_proxy {
+            eprintln!("https://{host}/ currently maps / to {existing}.");
+            eprintln!("Confirming will replace that / mapping.");
+        } else {
+            eprintln!("No Tailscale Serve mapping to {mapping} was found.");
+        }
+        eprint!(
+            "Add the private HTTPS mapping on this device? This replaces any existing / handler on :443. [y/N] "
+        );
         std::io::stderr().flush()?;
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
         if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
             bail!("Tailscale configuration was not changed");
         }
-        let result = configure_tailscale_serve(std::ffi::OsStr::new("tailscale"), port)?;
+        let result = configure_tailscale_serve(program.as_os_str(), port)?;
         if !result.status.success() {
             bail!(
                 "Tailscale Serve setup failed: {}",
                 String::from_utf8_lossy(&result.stderr).trim()
             );
         }
-        let configured = tailscale_binary()
-            .args(["serve", "status"])
+        let configured = Command::new(&program)
+            .args(["serve", "status", "--json"])
             .output()
             .context("verifying Tailscale Serve setup")?;
-        let configured_text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&configured.stdout),
-            String::from_utf8_lossy(&configured.stderr)
-        );
+        let configured_json = serde_json::from_slice::<serde_json::Value>(&configured.stdout);
         if !configured.status.success()
-            || !configured_text.contains(&format!("https://{host}"))
-            || !configured_text.contains(&root_mapping)
+            || configured_json
+                .ok()
+                .as_ref()
+                .and_then(|status| serve_root_proxy(status, &host_port))
+                != Some(mapping.as_str())
         {
             bail!("Tailscale Serve did not report the expected HTTPS root mapping to {mapping}");
         }
@@ -632,6 +686,9 @@ async fn dashboard_phone(port: u16, rt: &Runtime) -> Result<()> {
     );
     println!("{url}");
     println!("Login code expires in 60 seconds. This phone session is read-only.");
+    println!(
+        "Anyone on your tailnet who sees this QR/link within 60 seconds can open a read-only session."
+    );
     Ok(())
 }
 
@@ -657,6 +714,20 @@ fn daemon_allows_tailnet(port: u16, host: &str) -> Result<bool> {
 #[cfg(test)]
 mod phone_tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static STAND_IN_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(unix)]
+    fn write_executable_stand_in(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = File::create(path).expect("create stand-in");
+        file.write_all(body.as_bytes()).expect("write stand-in");
+        file.sync_all().expect("sync stand-in");
+        drop(file);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .expect("make executable");
+    }
 
     #[test]
     fn phone_setup_uses_only_private_serve_with_loopback_proxy() {
@@ -671,17 +742,14 @@ mod phone_tests {
     #[cfg(unix)]
     #[test]
     fn serve_command_is_testable_with_a_stand_in_cli() {
-        use std::os::unix::fs::PermissionsExt;
+        let _guard = STAND_IN_LOCK.lock().expect("stand-in lock");
         let dir = tempfile::tempdir().expect("temporary directory");
         let log = dir.path().join("args.log");
         let script = dir.path().join("tailscale");
-        std::fs::write(
+        write_executable_stand_in(
             &script,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", log.display()),
-        )
-        .expect("write stand-in");
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
-            .expect("make executable");
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", log.display()),
+        );
         let result = configure_tailscale_serve(script.as_os_str(), 4321).expect("serve call");
         assert!(result.status.success());
         assert_eq!(
@@ -693,21 +761,59 @@ mod phone_tests {
     #[cfg(unix)]
     #[test]
     fn tailnet_dns_detection_is_testable_with_a_stand_in_cli() {
-        use std::os::unix::fs::PermissionsExt;
+        let _guard = STAND_IN_LOCK.lock().expect("stand-in lock");
         let dir = tempfile::tempdir().expect("temporary directory");
         let script = dir.path().join("tailscale");
-        std::fs::write(
+        write_executable_stand_in(
             &script,
             "#!/bin/sh\nprintf '%s' '{\"Self\":{\"DNSName\":\"node.team.ts.net.\"}}'\n",
-        )
-        .expect("write stand-in");
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
-            .expect("make executable");
+        );
         assert_eq!(
             resolve_tailnet_host_with(None, script.as_os_str())
                 .expect("DNS name")
                 .as_deref(),
             Some("node.team.ts.net")
         );
+    }
+
+    #[test]
+    fn serve_status_json_finds_matching_and_different_root_mappings() {
+        let matching = serde_json::json!({"Web":{"node.team.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:4321"}}}}});
+        let different = serde_json::json!({"Web":{"node.team.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:9999"}}}}});
+        assert_eq!(
+            serve_root_proxy(&matching, "node.team.ts.net:443"),
+            Some("http://127.0.0.1:4321")
+        );
+        assert_eq!(
+            serve_root_proxy(&different, "node.team.ts.net:443"),
+            Some("http://127.0.0.1:9999")
+        );
+        assert_eq!(
+            serve_root_proxy(&serde_json::json!({}), "node.team.ts.net:443"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_missing_tailscale_cli_means_no_tailnet_host() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let missing = dir.path().join("tailscale");
+        assert_eq!(
+            resolve_tailnet_host_with_program(&missing).expect("missing CLI is not an error"),
+            None
+        );
+    }
+
+    #[test]
+    fn tailscale_lookup_uses_first_existing_candidate() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let first = dir.path().join("path-tailscale");
+        let second = dir.path().join("app-tailscale");
+        File::create(&second).expect("candidate file");
+        assert_eq!(
+            tailscale_program_from_candidates([first.as_path(), second.as_path()]),
+            Some(second)
+        );
+        assert_eq!(tailscale_program_from_candidates([first.as_path()]), None);
     }
 }

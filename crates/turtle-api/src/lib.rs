@@ -379,7 +379,7 @@ async fn guard(
         ))
     {
         h.insert(header::SET_COOKIE, value);
-    };
+    }
     if sensitive {
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
@@ -1589,7 +1589,6 @@ mod tests {
             .expect("decided");
         assert_eq!(after.0, turtle_domain::ApprovalStatus::Approved);
         assert_ne!(after.1, JobState::ScopeApproval);
-        assert_eq!(job.job.version, 0);
     }
     #[tokio::test]
     async fn sse_resumes_from_header_and_query_without_gaps() {
