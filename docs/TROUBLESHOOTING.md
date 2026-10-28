@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Run `turtle doctor` first. It checks Git, provider CLI compatibility/auth state, and the Turtle Flow data directory. `turtle providers list` shows detected provider capabilities and current recorded limit observations.
+Run `turtle doctor` first. It checks Git, provider CLI compatibility/auth state, capability snapshots (what changed since the previous snapshot, for example after a provider CLI upgrade), and the Turtle Flow data directory. `turtle providers list` shows detected provider capabilities and current recorded limit observations.
 
 | Symptom | What to check |
 |---|---|

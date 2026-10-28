@@ -49,6 +49,8 @@ erDiagram
     AGENT_RUNS ||--o| ROUTING_DECISIONS : routed_by
     AGENT_RUNS ||--o{ USAGE_RECORDS : consumes
     AGENT_RUNS ||--o| RESERVATIONS : holds
+    AGENT_RUNS ||--o| RUN_CAPABILITY_SNAPSHOTS : started_with
+    RUN_CAPABILITY_SNAPSHOTS }o--|| CAPABILITY_SNAPSHOTS : links
     ARTIFACTS ||--o{ ARTIFACT_REVISIONS : versions
     ARTIFACT_REVISIONS }o--|| BLOBS : stored_as
     APPROVALS }o--o{ ARTIFACT_REVISIONS : binds
@@ -205,6 +207,8 @@ CREATE TABLE agent_runs (
 CREATE INDEX ix_runs_job ON agent_runs(job_id, created_at);
 CREATE INDEX ix_runs_live ON agent_runs(status) WHERE status IN ('queued','starting','running');
 CREATE INDEX ix_runs_bucket ON agent_runs(role, provider, model, status);
+-- `begin_run` links the run to its provider's latest capability snapshot
+-- (`run_capability_snapshots`, §3.7) and copies that snapshot's `cli_version`.
 
 CREATE TABLE routing_decisions (
   id          TEXT PRIMARY KEY,
@@ -478,10 +482,24 @@ CREATE TABLE delivery_records (
   status TEXT NOT NULL CHECK (status IN ('pending','pending_integration','delivered','failed')),
   approval_id TEXT NOT NULL REFERENCES approvals(id), created_at TEXT NOT NULL, completed_at TEXT
 );
-CREATE TABLE provider_capabilities (
-  id TEXT PRIMARY KEY, provider TEXT NOT NULL, cli_version TEXT, capabilities TEXT NOT NULL CHECK (json_valid(capabilities)),
-  discovered_at TEXT NOT NULL
+-- v8 (0008_capability_snapshots.sql) replaces v1's never-written provider_capabilities.
+CREATE TABLE capability_snapshots (
+  id            TEXT PRIMARY KEY,
+  provider      TEXT NOT NULL,                      -- 'claude-code' | 'codex'
+  version       INTEGER NOT NULL CHECK (version >= 1),  -- per-provider sequence
+  cli_version   TEXT,
+  capabilities  TEXT NOT NULL CHECK (json_valid(capabilities)),
+  content_hash  TEXT NOT NULL,                      -- SHA-256 of canonical {provider, cli_version, capabilities}
+  discovered_at TEXT NOT NULL,
+  UNIQUE (provider, version)
 );
+CREATE TABLE run_capability_snapshots (             -- the snapshot a run started with
+  run_id      TEXT PRIMARY KEY REFERENCES agent_runs(id),
+  snapshot_id TEXT NOT NULL REFERENCES capability_snapshots(id)
+);
+-- A snapshot identical (by content_hash) to the provider's latest one is not stored again.
+-- `capabilities` holds adapter_version, compat, native_json_schema, quota_visibility,
+-- sandbox_modes and effort_levels; login status is checked live and never snapshotted.
 CREATE TABLE provider_limits_observed (
   id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT, run_id TEXT REFERENCES agent_runs(id),
   observed_at TEXT NOT NULL, retry_after_s INTEGER, raw_message TEXT, resolved_at TEXT,
