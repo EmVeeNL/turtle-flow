@@ -374,7 +374,10 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             return Ok(());
         }
         C::BudgetRestored => return tx.remove_hold(|h| *h == Hold::AwaitingBudget),
-        C::BudgetIncreaseApproved => return tx.remove_hold(|h| *h == Hold::AwaitingBudget),
+        C::BudgetIncreaseApproved => {
+            tx.require_approval(GateKind::BudgetIncrease)?;
+            return tx.remove_hold(|h| *h == Hold::AwaitingBudget);
+        }
         C::RateLimited { provider } => {
             return tx.add_hold(Hold::RateLimited {
                 provider: provider.clone(),

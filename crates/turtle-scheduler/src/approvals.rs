@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use turtle_domain::{Actor, ApprovalId, GateKind, Sha256};
+use turtle_domain::{Actor, ApprovalId, ApprovalValidity, GateKind, Sha256};
 use turtle_store::{ApprovalRecord, BudgetRecord, BudgetScope, Decision, JobRecord, StoreError};
 use turtle_workflow::{DecisionContext, JobCommand, decide};
 
@@ -320,9 +320,12 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
                             return Err(StoreError::Forbidden("stale budget approval".into()));
                         }
                         let command = JobCommand::BudgetIncreaseApproved;
-                        let transition =
-                            decide(&job.job, &command, &who, &DecisionContext::default())
-                                .map_err(|e| StoreError::Forbidden(e.to_string()))?;
+                        let mut context = DecisionContext::default();
+                        context
+                            .approvals
+                            .insert(GateKind::BudgetIncrease, ApprovalValidity::Valid);
+                        let transition = decide(&job.job, &command, &who, &context)
+                            .map_err(|e| StoreError::Forbidden(e.to_string()))?;
                         tx.decide_approval(
                             id,
                             Decision::Approve,
