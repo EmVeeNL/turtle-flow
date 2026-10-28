@@ -38,8 +38,8 @@ jobs:
         with:
           node-version: lts/*
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter @turtle-flow/dashboard...
-      - run: pnpm --filter @turtle-flow/dashboard run build
+      - run: corepack pnpm install --frozen-lockfile --filter @turtle-flow/dashboard...
+      - run: corepack pnpm --filter @turtle-flow/dashboard run build
         env:
           PUBLIC_API_ADAPTER: real
       - run: cargo build --locked --release -p turtle-flow --features embedded-dashboard --target ${{ matrix.target }}
