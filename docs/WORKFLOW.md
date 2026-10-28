@@ -97,7 +97,7 @@ stateDiagram-v2
 |---|---|---|---|
 | `paused{soft}` | User | No new runs/gates start; current run finishes | `resume` |
 | `paused{hard}` | User | Current run/gate terminated (recorded `cancelled`), reservation released | `resume` (stage step restarts) |
-| `awaiting_budget` | Engine (preflight/reservation failure on hard budget) | No new runs; budget-increase approval requested | Approval granted (budget raised) or user lowers scope |
+| `awaiting_budget` | Engine (preflight/reservation failure on hard budget) | No new runs; user chooses a new total job budget for approval | Hash-bound increase approved, direct budget edit, or user lowers scope |
 | `rate_limited{provider, until}` | Run supervisor on rate-limit error | Runs needing that provider wait; scheduler may fail over if allowed | Time passes / probe succeeds |
 
 Holds never change `state` and are recorded as events. A job may have multiple holds; it is runnable only with none.
@@ -268,6 +268,8 @@ An approval binds to a **binding document** whose canonical JSON (RFC 8785) is h
 ```
 
 `diff_sha256` is the SHA-256 of `git diff --binary --full-index <base>..<head>` output (normalized). Including both commits and the diff hash makes the binding robust against history rewriting.
+
+A `budget_increase` binding contains the job ID and profile hash plus `budget_increase: {budget_id, current_tokens, requested_tokens, stage}`. The user selects the new total limit before the pending approval is created. A changed limit, budget row, profile or held stage changes the hash. The approval decision, limit change and hold removal commit together; the scheduler then resumes the pending effect at the same stage without rerunning completed stages or charging their usage again. A job budget increase cannot exceed a configured hard project or global limit.
 
 ### 6.3 Invalidation rules
 
