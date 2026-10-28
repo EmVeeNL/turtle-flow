@@ -7,7 +7,7 @@ binary=target/debug/turtle
 {
   printf '# CLI reference\n\nGenerated from the current Clap command tree. Regenerate with `scripts/generate-cli-reference.sh`.\n'
   for command in \
-    "" "doctor" "init" "completions" "providers" "providers list" \
+    "" "doctor" "init" "completions" "providers" "providers list" "providers refresh" \
     "up" "down" "status" "dashboard" "daemon" \
     "project" "project add" "project delivery" "project static-gates" "project list" "project show" \
     "resource" "resource add" "search" \

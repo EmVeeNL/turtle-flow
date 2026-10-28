@@ -10,7 +10,8 @@ Supervised AI software delivery, orchestrated locally.
 Usage: turtle <COMMAND>
 
 Commands:
-  doctor       Check the environment: Git, provider CLIs and the data directory
+  login        Link this CLI to your Turtle Flow account license
+  doctor       Check the environment: Git, provider CLIs, capability snapshots and the data directory
   init         Set up Turtle Flow for the current repository (interactive terminal required)
   export       Export a job's audit package
   completions  Generate shell completion scripts
@@ -39,7 +40,7 @@ Options:
 ## `turtle doctor`
 
 ```text
-Check the environment: Git, provider CLIs and the data directory
+Check the environment: Git, provider CLIs, capability snapshots and the data directory
 
 Usage: turtle doctor [OPTIONS]
 
@@ -47,6 +48,13 @@ Options:
       --json  Print machine-readable JSON instead of a table
   -h, --help  Print help
 ```
+
+Each `capabilities:<provider>` check shows the provider's current capability snapshot and its
+difference from the previous one: CLI version change and added, removed or changed capabilities.
+After a provider CLI upgrade that is not recorded yet, the check warns and compares the live set
+with the latest stored snapshot; `turtle providers refresh` or a daemon start records it. With
+`--json`, these checks carry a `snapshot` object with `current`, `previous` and `diff`. Doctor
+reads the database read-only and never creates it.
 
 ## `turtle init`
 
@@ -81,8 +89,9 @@ Inspect available provider CLIs and verified capabilities
 Usage: turtle providers <COMMAND>
 
 Commands:
-  list  Show installation, login, compatibility and verified capabilities
-  help  Print this message or the help of the given subcommand(s)
+  list     Show installation, login, compatibility and verified capabilities
+  refresh  Re-discover every provider and record a capability snapshot when it changed
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
@@ -94,6 +103,17 @@ Options:
 Show installation, login, compatibility and verified capabilities
 
 Usage: turtle providers list
+
+Options:
+  -h, --help  Print help
+```
+
+## `turtle providers refresh`
+
+```text
+Re-discover every provider and record a capability snapshot when it changed
+
+Usage: turtle providers refresh
 
 Options:
   -h, --help  Print help

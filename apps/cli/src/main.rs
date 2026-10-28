@@ -42,7 +42,7 @@ enum Command {
     /// Internal subprocess used to extract text from an attached PDF.
     #[command(name = "__extract-pdf", hide = true)]
     ExtractPdf,
-    /// Check the environment: Git, provider CLIs and the data directory.
+    /// Check the environment: Git, provider CLIs, capability snapshots and the data directory.
     Doctor {
         /// Print machine-readable JSON instead of a table.
         #[arg(long)]
