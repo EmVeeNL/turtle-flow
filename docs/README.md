@@ -39,6 +39,11 @@ docs/
 ├── GIT-STRATEGY.md               ← worktrees, branches, commits, merges, recovery
 ├── LICENSING.md                  ← tiers, feature matrix, pricing hypotheses, enforcement
 ├── ROADMAP.md                    ← MVP → post-MVP → server → enterprise
+├── MONOREPO.md                   ← repo layout (apps/, crates/), pnpm + Turborepo + Cargo
+├── PRODUCT.md                    ← brand and product context for design work
+├── LICENSE-KEYS.md               ← licence signing key handling (portal)
+├── spikes/                       ← provider CLI spike report, fixtures and raw captures
+├── dashboard/API-ASSUMPTIONS.md  ← dashboard API assumptions
 ├── rfcs/                         ← proposed cross-component protocols
 │   ├── README.md
 │   └── RFC-001-cli-account-linking.md
