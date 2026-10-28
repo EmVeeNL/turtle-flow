@@ -81,7 +81,7 @@ cargo run -p turtle-flow -- doctor                      # check Git and provider
 cargo deny check                                        # licenses, advisories, sources
 ```
 
-The toolchain is pinned in `rust-toolchain.toml`. Rust libraries live in `crates/turtle-*`, the `turtle` binary in `apps/cli` (see [docs/ARCHITECTURE.md §4.1](docs/ARCHITECTURE.md#41-crate-responsibilities-and-boundaries)). Provider CLI fixtures are in `spikes/fixtures/`.
+The toolchain is pinned in `rust-toolchain.toml`. Rust libraries live in `crates/turtle-*`, the `turtle` binary in `apps/cli` (see [docs/ARCHITECTURE.md §4.1](docs/ARCHITECTURE.md#41-crate-responsibilities-and-boundaries)). Provider CLI fixtures are in `docs/spikes/fixtures/`.
 
 ### Documentation
 
