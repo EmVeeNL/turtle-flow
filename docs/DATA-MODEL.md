@@ -412,6 +412,8 @@ CREATE TABLE gate_results (
 CREATE INDEX ix_gates_job_tree ON gate_results(job_id, tree_hash, gate);
 ```
 
+For `budget_increase`, `binding_json` includes `budget_increase` with the job budget ID, current and requested total token limits, and held stage. These fields are covered by `subject_hash` and the row HMAC. Approval, the `ledger.limit_changed` event and ledger entry, and the job's `job.hold_removed` transition are written in one SQLite transaction. No schema change is needed.
+
 ### 3.6 Resources, knowledge, search
 
 ```sql

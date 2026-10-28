@@ -12,7 +12,7 @@ binary=target/debug/turtle
     "project" "project add" "project delivery" "project static-gates" "project list" "project show" \
     "resource" "resource add" "search" \
     "job" "job create" "job list" "job show" "job events" "job watch" "job start" \
-    "job pause" "job resume" "job resolve" "job sync" "job worktree" "job revert" "job cancel" \
+    "job pause" "job resume" "job approve-budget" "job resolve" "job sync" "job worktree" "job revert" "job cancel" \
     "budget" "budget show" "budget estimate" "budget set" \
     "runs" "runs list" "runs transcript" "approvals" "approve" "audit" "audit verify" \
     "export" "export job"; do

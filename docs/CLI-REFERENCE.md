@@ -368,20 +368,21 @@ Create and follow jobs
 Usage: turtle job <COMMAND>
 
 Commands:
-  create    Create a job in the backlog
-  list      List jobs, newest first
-  show      Show one job
-  events    Print the job's event history
-  watch     Follow a job until it finishes or needs you
-  start     Start a job from the backlog
-  pause     Pause a job
+  create          Create a job in the backlog
+  list            List jobs, newest first
+  show            Show one job
+  events          Print the job's event history
+  watch           Follow a job until it finishes or needs you
+  start           Start a job from the backlog
+  pause           Pause a job
   resume
-  resolve   Continue a blocked conflict or authorize a fix after review findings
-  sync      Check whether a pending pull request has merged and finish delivery
-  worktree  Print the deterministic worktree path for a job
-  revert    Create an approval-gated follow-up job for a delivered change's revert
+  approve-budget  Approve a higher hard token budget and continue a held job
+  resolve         Continue a blocked conflict or authorize a fix after review findings
+  sync            Check whether a pending pull request has merged and finish delivery
+  worktree        Print the deterministic worktree path for a job
+  revert          Create an approval-gated follow-up job for a delivered change's revert
   cancel
-  help      Print this message or the help of the given subcommand(s)
+  help            Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
@@ -504,6 +505,21 @@ Arguments:
 
 Options:
   -h, --help  Print help
+```
+
+## `turtle job approve-budget`
+
+```text
+Approve a higher hard token budget and continue a held job
+
+Usage: turtle job approve-budget --budget <BUDGET> <KEY>
+
+Arguments:
+  <KEY>
+
+Options:
+      --budget <BUDGET>  New total token limit, e.g. 1.5M
+  -h, --help             Print help
 ```
 
 ## `turtle job resolve`
