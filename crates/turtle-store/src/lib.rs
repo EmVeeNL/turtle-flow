@@ -18,11 +18,12 @@ pub mod providers;
 pub mod queue;
 pub mod resources;
 pub mod store;
+pub mod tasks;
 
 pub use approvals::{ApprovalRecord, Decision};
 pub use artifacts::{NewRevision, RevisionRecord};
 pub use clock::{Clock, ManualClock, StepClock, SystemClock};
-pub use dashboard_reads::{DashboardEstimate, ProjectStats, TaskRow};
+pub use dashboard_reads::{DashboardEstimate, ProjectStats};
 pub use error::{Result, StoreError};
 pub use ledger::{
     BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRoutingDecision, NewRun,
@@ -37,4 +38,7 @@ pub use resources::{NewResource, ResourceHit, ResourceRecord};
 pub use store::{
     Applied, ChainVerdict, EffectRow, EventRow, JobRecord, NewEvent, NewJob, NewProject,
     RebuiltJob, Store, Tx,
+};
+pub use tasks::{
+    NewGateResult, NewTask, TaskRecord, TaskState, TaskSummary, TrailerCommit, task_id,
 };

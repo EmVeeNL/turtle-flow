@@ -626,6 +626,17 @@ impl Tx<'_> {
 
     /// Appends one event to the hash chain and returns its sequence number.
     pub fn append_event(&mut self, e: &NewEvent) -> Result<i64> {
+        self.append_scoped_event(e, None, None)
+    }
+
+    /// Appends an event that also names a task and/or run. Both ids are part of the hashed
+    /// content, so `audit verify` covers them like every other column.
+    pub fn append_scoped_event(
+        &mut self,
+        e: &NewEvent,
+        task_id: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Result<i64> {
         let prev: String = match self
             .tx
             .query_row(
@@ -650,8 +661,8 @@ impl Tx<'_> {
                 occurred_at: &occurred_at,
                 project_id: project.as_deref(),
                 job_id: job.as_deref(),
-                task_id: None,
-                run_id: None,
+                task_id,
+                run_id,
                 kind: &e.kind,
                 payload: &e.payload,
                 actor_kind,
@@ -659,14 +670,16 @@ impl Tx<'_> {
             },
         );
         self.tx.execute(
-            "INSERT INTO events(id, occurred_at, project_id, job_id, type, payload, actor_kind,
-                                actor_id, prev_hash, hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO events(id, occurred_at, project_id, job_id, task_id, run_id, type, payload,
+                                actor_kind, actor_id, prev_hash, hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id,
                 occurred_at,
                 project,
                 job,
+                task_id,
+                run_id,
                 e.kind,
                 e.payload.to_string(),
                 actor_kind,

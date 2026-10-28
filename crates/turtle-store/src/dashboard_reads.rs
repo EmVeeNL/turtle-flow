@@ -1,17 +1,7 @@
 //! Dashboard projections backed by the existing normalized tables.
 use crate::{JobUsage, Result, Store};
-use rusqlite::{OptionalExtension, params};
+use rusqlite::OptionalExtension;
 use turtle_domain::{JobId, ProjectId};
-
-#[derive(Debug, Clone)]
-pub struct TaskRow {
-    pub id: String,
-    pub job_id: String,
-    pub ordinal: i64,
-    pub title: String,
-    pub state: String,
-    pub commit_sha: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ProjectStats {
@@ -70,25 +60,6 @@ impl Store {
             last_delivery,
         })
     }
-    pub fn dashboard_tasks(&self, job: Option<JobId>) -> Result<Vec<TaskRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, job_id, ordinal, title, state, commit_sha FROM tasks
-             WHERE (?1 IS NULL OR job_id=?1) ORDER BY job_id, ordinal",
-        )?;
-        let rows = stmt.query_map(params![job.map(|j| j.to_string())], |r| {
-            Ok(TaskRow {
-                id: r.get(0)?,
-                job_id: r.get(1)?,
-                ordinal: r.get(2)?,
-                title: r.get(3)?,
-                state: r.get(4)?,
-                commit_sha: r.get(5)?,
-            })
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    }
-
     pub fn recent_events(&self, limit: usize) -> Result<Vec<crate::EventRow>> {
         let latest: Option<i64> = self
             .conn

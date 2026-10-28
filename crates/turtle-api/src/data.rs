@@ -15,7 +15,7 @@ use std::{convert::Infallible, time::Duration};
 use turtle_domain::{ApprovalId, ArtifactKind, JobKey};
 use turtle_store::{
     ApprovalRecord, BudgetRecord, BudgetScope, DashboardEstimate, EventRow, JobRecord,
-    ProjectRecord, ProjectStats, RevisionRecord, RunRecord, TaskRow,
+    ProjectRecord, ProjectStats, RevisionRecord, RunRecord, TaskSummary,
 };
 
 fn budget(b: &BudgetRecord) -> Value {
@@ -124,8 +124,23 @@ fn run_value(r: &RunRecord) -> Value {
 fn event_value(e: &EventRow) -> Value {
     json!({"id":e.seq.to_string(),"seq":e.seq,"occurred_at":e.occurred_at,"type":e.kind,"actor_kind":e.actor_kind,"actor_id":e.actor_id,"job_id":e.job_id,"payload":{"summary":e.kind,"detail":e.payload.to_string()},"raw_payload":e.payload})
 }
-fn task_value(t: &TaskRow) -> Value {
-    json!({"id":t.id,"job_id":t.job_id,"ordinal":t.ordinal,"title":t.title,"state":t.state,"commit_sha":t.commit_sha,"gate_summary":null})
+/// One task from the `tasks` table with its run count and the latest outcome of each gate.
+/// `gate_summary` stays null until a gate has run for the task.
+fn task_value(s: &TaskSummary) -> Value {
+    let t = &s.task;
+    let gates: Vec<_> = s
+        .gates
+        .iter()
+        .map(|(gate, outcome)| json!({"gate":gate,"outcome":outcome}))
+        .collect();
+    let gate_summary = (!s.gates.is_empty()).then(|| {
+        s.gates
+            .iter()
+            .map(|(gate, outcome)| format!("{gate} {outcome}"))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    });
+    json!({"id":t.id,"job_id":t.job_id.to_string(),"plan_revision_id":t.plan_revision_id,"plan_task_id":t.plan_task_id,"ordinal":t.ordinal,"title":t.title,"state":t.state,"depends_on":t.depends_on,"fix_iterations":t.fix_iterations,"runs":s.runs,"commit_sha":t.commit_sha,"gates":gates,"gate_summary":gate_summary,"updated_at":t.updated_at})
 }
 
 pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -160,7 +175,7 @@ pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiE
                 .collect::<turtle_store::Result<Vec<_>>>()?;
             let limits = s.current_limited_providers()?;
             let quotas = s.latest_quota_snapshots()?;
-            let tasks = s.dashboard_tasks(None)?;
+            let tasks = s.task_summaries(None)?;
             let stats = projects
                 .iter()
                 .map(|p| s.dashboard_project_stats(p.id))
@@ -333,7 +348,7 @@ pub async fn job(
                     .into_iter()
                     .filter(|r| r.job_id == id)
                     .collect::<Vec<_>>(),
-                s.dashboard_tasks(Some(id))?,
+                s.task_summaries(Some(id))?,
                 s.dashboard_latest_provider(id)?,
                 s.dashboard_estimate(id)?,
                 s.list_budgets()?,

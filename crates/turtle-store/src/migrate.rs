@@ -46,6 +46,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 8,
         sql: include_str!("../migrations/0008_capability_snapshots.sql"),
     },
+    // Version 9 is reserved for another in-flight change; versions only need to increase.
+    Migration {
+        version: 10,
+        sql: include_str!("../migrations/0010_task_links.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -208,6 +213,27 @@ mod tests {
         migrate(&mut conn, None, "t").expect("resume");
         assert_eq!(current_version(&conn).expect("version"), latest_version());
         assert_eq!(tables(&conn).len(), 2);
+    }
+
+    #[test]
+    fn upgrading_v8_adds_task_indexes_and_can_resume() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        migrate_with(&mut conn, &MIGRATIONS[..8], None, "t").expect("v8");
+        migrate(&mut conn, None, "t").expect("latest");
+        let indexes = |conn: &Connection| -> i64 {
+            conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN
+                 ('ix_tasks_job_revision','ix_runs_task','ix_gates_task','ix_commit_records_job_task')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count")
+        };
+        assert_eq!(indexes(&conn), 4);
+        conn.pragma_update(None, "user_version", 8).expect("marker");
+        migrate(&mut conn, None, "t").expect("resume");
+        assert_eq!(current_version(&conn).expect("version"), latest_version());
+        assert_eq!(indexes(&conn), 4);
     }
 
     #[test]
