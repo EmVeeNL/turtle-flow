@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -17,8 +18,42 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'apps/cli/**'
+              - 'crates/**'
+              - 'fixtures/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'apps/dashboard/**'
+              - 'apps/portal/**'
+              - 'apps/website/**'
+              - 'apps/cli/package.json'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - '.github/workflows/ci.yml'
+
   lint:
     name: fmt + clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -30,6 +65,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +87,67 @@ jobs:
 
   deny:
     name: cargo-deny (licenses, advisories, sources)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: corepack pnpm install --frozen-lockfile
+      - run: |
+          if [ -z "$TURBO_TOKEN" ] || [ -z "$TURBO_TEAM" ]; then
+            unset TURBO_TOKEN TURBO_TEAM
+          fi
+          corepack pnpm turbo run check lint test build --filter='!@turtle-flow/cli'
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+      - run: corepack pnpm --filter @turtle-flow/dashboard exec playwright install --with-deps chromium
+      - run: corepack pnpm --filter @turtle-flow/dashboard run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: dashboard-screenshots
+          path: apps/dashboard/screenshots/
+
+  links:
+    name: docs links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 scripts/check_links.py
+
+  all-green:
+    name: all-green
+    needs: [changes, lint, test, deny, web, links]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          jobs = json.loads(os.environ['NEEDS'])
+          for name, job in jobs.items():
+              print(f"{name}: {job['result']}")
+          failed = [name for name, job in jobs.items() if job['result'] in ('failure', 'cancelled')]
+          if failed:
+              sys.exit(f"Failed or cancelled jobs: {', '.join(failed)}")
+          PY
