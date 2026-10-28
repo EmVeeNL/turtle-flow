@@ -252,6 +252,13 @@ fn v6_unsigned_approvals_are_signed_once_during_upgrade() {
 
     // A database opened by this migration but left with its old schema marker resumes safely.
     let db = rusqlite::Connection::open(&path).expect("open migrated database");
+    // SQLite cannot add a column twice, so undo 0011 before replaying from the old marker.
+    db.execute_batch(
+        "DROP INDEX ux_usage_run;
+         ALTER TABLE agent_runs DROP COLUMN transcript_spool_path;
+         ALTER TABLE agent_runs DROP COLUMN cancel_requested;",
+    )
+    .expect("undo 0011");
     db.pragma_update(None, "user_version", 6)
         .expect("simulate an interrupted migration marker");
     drop(db);

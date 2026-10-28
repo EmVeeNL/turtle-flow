@@ -156,15 +156,15 @@ pub struct Invocation {
 
 ### 3.1 Run supervisor responsibilities (outside the adapter)
 
-1. Persist run `starting`, write PID file to scratch dir, spawn via `turtle-exec` (own process group, env allowlist, rlimits).
-2. Capture stdout/stderr for the transcript and feed stdout into the parser. Persist the redacted stream as one content-addressed blob capped at 2 MiB; this initial implementation stores after process completion rather than fsyncing a streaming blob every second.
+1. Persist a `running` run and reservation, spawn a waiting wrapper in its own process group, then record its PID before releasing the provider CLI. If the daemon dies before PID registration, the wrapper exits without starting the provider.
+2. Capture capped stdout/stderr and fsync the raw stdout spool as it arrives. On exit or startup recovery, parse the available stream for usage, redact the transcript and store it as a content-addressed blob capped at 2 MiB. The raw spool is mode 0600 and removed after settlement.
 3. Forward normalized events to the event broadcaster (throttled: text deltas coalesced to ≤ 10 msgs/s).
 4. Enforce limits: wall clock, output size, token hard limit (if cumulative usage known), cancellation requests.
 5. On exit: compute `changed_files` (`git status --porcelain=v2 -z`, `git diff --stat`), run git policy check, extract & validate structured output, submit `RunCompleted` command.
 
 ### 3.2 Cancellation semantics
 
-`cancel(run)` → SIGTERM to process group → wait 5 s → SIGKILL to process group → mark `cancelled` → transcript finalized → usage settled with best available data. A final reported usage payload is charged even when the provider marks the result as an error; failed runs are not used for estimator observations. Usage not reported for a failed run remains unavailable and its reservation is released.
+`pause --hard` → persisted hard pause hold → supervisor signal → SIGTERM to the process group → SIGKILL for any remaining group members after at most 5 s → mark `cancelled` → redact transcript → settle reported partial usage. A final reported usage payload is charged even when the provider marks the result as an error; failed and cancelled runs are not used for estimator observations. Usage not reported remains unavailable and its reservation is released. Soft pause leaves the current run running.
 
 ## 4. Capability Registry
 

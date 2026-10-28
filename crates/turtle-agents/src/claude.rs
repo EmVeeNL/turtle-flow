@@ -1,5 +1,7 @@
 //! Claude Code adapter pieces verified in spike S-1 (Claude Code 2.1.310).
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde_json::Value;
 use turtle_domain::{QuotaStatus, QuotaWindow, TokenUsage, WindowStatus};
@@ -97,6 +99,7 @@ struct OutputDetails {
 #[derive(Debug, Default)]
 pub struct StreamParser {
     summary: RunSummary,
+    messages: HashMap<String, TokenUsage>,
 }
 
 impl StreamParser {
@@ -140,7 +143,7 @@ impl StreamParser {
                 s.result_text = v["result"].as_str().map(Into::into);
                 s.structured_output = v.get("structured_output").filter(|o| !o.is_null()).cloned();
                 if let Ok(u) = serde_json::from_value::<Usage>(v["usage"].clone()) {
-                    s.usage = Some(TokenUsage {
+                    let reported = TokenUsage {
                         input: u.input_tokens,
                         cached_input_read: u.cache_read_input_tokens,
                         cached_input_write: u.cache_creation_input_tokens,
@@ -149,7 +152,10 @@ impl StreamParser {
                             .output_tokens_details
                             .and_then(|d| d.thinking_tokens)
                             .filter(|&t| t > 0),
-                    });
+                    };
+                    if s.usage.is_none_or(|old| reported.total() > old.total()) {
+                        s.usage = Some(reported);
+                    }
                 }
                 // When the run is cut off (for example `error_max_budget_usd`) the top-level
                 // `usage` can be all zeros while `modelUsage` still holds what was really spent
@@ -171,7 +177,32 @@ impl StreamParser {
                     })
                     .unwrap_or_default();
             }
-            (Some("system" | "assistant" | "user"), _) => {}
+            (Some("assistant"), _) => {
+                if let (Some(id), Ok(u)) = (
+                    v["message"]["id"].as_str(),
+                    serde_json::from_value::<Usage>(v["message"]["usage"].clone()),
+                ) {
+                    self.messages.insert(
+                        id.to_owned(),
+                        TokenUsage {
+                            input: u.input_tokens,
+                            cached_input_read: u.cache_read_input_tokens,
+                            cached_input_write: u.cache_creation_input_tokens,
+                            output: u.output_tokens,
+                            reasoning: u.output_tokens_details.and_then(|d| d.thinking_tokens),
+                        },
+                    );
+                    let partial = self
+                        .messages
+                        .values()
+                        .copied()
+                        .fold(TokenUsage::default(), |a, b| a + b);
+                    if s.usage.is_none_or(|old| partial.total() > old.total()) {
+                        s.usage = Some(partial);
+                    }
+                }
+            }
+            (Some("system" | "user"), _) => {}
             _ => s.unknown_lines += 1,
         }
     }

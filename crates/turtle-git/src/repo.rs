@@ -86,6 +86,7 @@ impl Repo {
                 ExitOutcome::Exited(c) => c.to_string(),
                 ExitOutcome::Signaled => "signal".into(),
                 ExitOutcome::TimedOut => "timeout".into(),
+                ExitOutcome::Cancelled => "cancelled".into(),
             },
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
         }

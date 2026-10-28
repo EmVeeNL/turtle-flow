@@ -141,7 +141,7 @@ M4 dashboard simplifications: analytics only aggregates token amounts with their
 
 **Known M1 simplifications**, all deliberate and listed so they are not forgotten:
 - gates run per job, not per task; tasks are tracked by commit trailers rather than the `tasks` table; the token ledger counts tokens processed (cache reads and writes included) and has no currency budgets yet;
-- a local squash delivery parked for a checked-out branch still completes the job (the result waits at `refs/turtle/delivery/<key>`); hard pause cannot yet stop a running agent; automatic scope approval is off;
+- a local squash delivery parked for a checked-out branch still completes the job (the result waits at `refs/turtle/delivery/<key>`); automatic scope approval is off;
 - no `turtle init`, job-file front matter or interactive approval queue (`turtle approvals` lists, `turtle approve <id>` decides); `job cancel` has no `--delete-branch`;
 - the CLI still opens the database directly despite the M4 dashboard API; the daemon is exclusive per data directory through an OS file lock rather than a socket;
 - the seeded `kill -9` subprocess harness covers demo-agent delivery; PR #37 added a sleeping/streaming provider fixture. Power-loss simulation remains open.

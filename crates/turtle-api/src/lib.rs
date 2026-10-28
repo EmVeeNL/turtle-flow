@@ -837,6 +837,9 @@ async fn job_command(
         "pause" => JobCommand::Pause {
             mode: PauseMode::Soft,
         },
+        "pause_hard" => JobCommand::Pause {
+            mode: PauseMode::Hard,
+        },
         "resume" => JobCommand::Resume,
         "cancel" => JobCommand::Cancel,
         _ => return Err(ApiError::bad("invalid command")),

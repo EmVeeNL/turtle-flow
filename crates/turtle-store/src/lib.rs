@@ -26,7 +26,7 @@ pub use clock::{Clock, ManualClock, StepClock, SystemClock};
 pub use dashboard_reads::{DashboardEstimate, ProjectStats};
 pub use error::{Result, StoreError};
 pub use ledger::{
-    BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRoutingDecision, NewRun,
+    BudgetRecord, BudgetScope, JobUsage, LedgerVerdict, NewRoutingDecision, NewRun, OpenRun,
     ReservationOutcome, RunEnd, RunRecord,
 };
 pub use projects::{DeliveryRecord, DeliveryStatus, ProjectRecord};

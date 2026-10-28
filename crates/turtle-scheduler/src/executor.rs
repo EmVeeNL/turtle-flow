@@ -24,6 +24,7 @@ use sha2::Digest;
 use turtle_agents::{
     AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, Independence, RouteContext,
 };
+use turtle_agents::{claude_runner, codex_runner};
 use turtle_artifacts::BlobStore;
 use turtle_domain::paths::within_areas;
 use turtle_domain::{
@@ -31,7 +32,7 @@ use turtle_domain::{
     Role, RunId, Severity, Specification, StaticGateSettings, UsageValue, VerificationDecision,
     VerificationReport,
 };
-use turtle_exec::{CommandSpec, ExitOutcome};
+use turtle_exec::{CommandSpec, ExitOutcome, Output};
 use turtle_git::commit::Trailers;
 use turtle_git::delivery::{DeliveryOutcome, SquashRequest};
 use turtle_git::refresh::RefreshOutcome;
@@ -266,6 +267,25 @@ where
         mut req: AgentRequest,
         job: &JobRecord,
     ) -> Result<AgentOutput, ExecError> {
+        let previous = self
+            .store
+            .with({
+                let id = job.job.id;
+                move |s| s.runs_for_job(id)
+            })
+            .await
+            .map_err(retryable)?;
+        let role_name = serde_json::to_value(req.role).map_err(fatal)?;
+        if previous
+            .iter()
+            .any(|run| run.status == "cancelled" && Some(run.role.as_str()) == role_name.as_str())
+        {
+            let note = "The previous attempt of this step was interrupted by a hard pause. Continue from the current worktree; inspect any partial changes before editing.";
+            req.feedback = Some(
+                req.feedback
+                    .map_or_else(|| note.to_owned(), |old| format!("{old}\n\n{note}")),
+            );
+        }
         let context_revision = if let Some(workdir) = req.workdir.as_deref() {
             let areas = req
                 .spec
@@ -483,7 +503,93 @@ where
             });
         }
 
-        let result = self.runner.run_selected(&req, &provider).await;
+        let spool_dir = self
+            .cfg
+            .worktree_root
+            .parent()
+            .unwrap_or(&self.cfg.worktree_root)
+            .join("run-spool");
+        std::fs::create_dir_all(&spool_dir).map_err(retryable)?;
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &spool_dir,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .map_err(retryable)?;
+        let spool_path = spool_dir.join(format!("{run_id}.ndjson"));
+        let path_text = spool_path.to_string_lossy().into_owned();
+        req.spool_path = Some(spool_path.clone());
+        let hook_store = self.store.clone();
+        let _spawn_hook = turtle_exec::install_spawn_hook(
+            req.control_key().to_owned(),
+            Arc::new(move |pid| {
+                let store = hook_store.clone();
+                let path = path_text.clone();
+                Box::pin(async move {
+                    store
+                        .with(move |s| {
+                            s.transaction(|tx| tx.record_run_process(run_id, pid, &path))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+            }),
+        );
+        let (current, cancel_requested) = self
+            .store
+            .with(move |s| {
+                Ok::<_, turtle_store::StoreError>((
+                    s.load_job(job_id)?,
+                    s.run_cancel_requested(run_id)?,
+                ))
+            })
+            .await
+            .map_err(retryable)?;
+        if cancel_requested
+            || current.job.holds.iter().any(|h| {
+                matches!(
+                    h,
+                    turtle_workflow::Hold::Paused {
+                        mode: turtle_workflow::PauseMode::Hard
+                    }
+                )
+            })
+        {
+            turtle_exec::cancel_job(req.control_key());
+        } else {
+            turtle_exec::resume_job(req.control_key());
+        }
+        let result = {
+            let running = self.runner.run_selected(&req, &provider);
+            tokio::pin!(running);
+            loop {
+                tokio::select! {
+                    result = &mut running => break result,
+                    () = tokio::time::sleep(Duration::from_millis(100)) => {
+                        let (state, cancel_requested) = self.store.with(move |s| Ok::<_, turtle_store::StoreError>((s.load_job(job_id)?, s.run_cancel_requested(run_id)?))).await.map_err(retryable)?;
+                        if cancel_requested || state.job.holds.iter().any(|h| matches!(h, turtle_workflow::Hold::Paused { mode: turtle_workflow::PauseMode::Hard })) {
+                            turtle_exec::cancel_job(req.control_key());
+                        }
+                    }
+                }
+            }
+        };
+        drop(_spawn_hook);
+        let worktree_dirty = if result.as_ref().err().is_some_and(AgentError::is_cancelled)
+            && req.role.writes_files()
+        {
+            if let Some(workdir) = &req.workdir {
+                Repo::new(workdir)
+                    .run(&["status", "--porcelain"])
+                    .await
+                    .ok()
+                    .map(|status| !status.is_empty())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let (project_id, event_usage) = (
             job.project_id,
             result.as_ref().map_or_else(
@@ -526,6 +632,11 @@ where
             .collect();
         let (end, error_text, usage) = match &result {
             Ok(out) => (RunEnd::Succeeded, None, out.usage),
+            Err(e) if e.is_cancelled() => (
+                RunEnd::Cancelled,
+                Some(e.to_string()),
+                e.usage().unwrap_or(UsageValue::Unavailable),
+            ),
             Err(e) => (
                 RunEnd::Failed {
                     retryable: e.retryable(),
@@ -614,12 +725,24 @@ where
                             }),
                             actor: Actor::AgentRun { id: run_id },
                         })?;
+                    } else if end == RunEnd::Cancelled {
+                        tx.append_event(&NewEvent {
+                            project_id: Some(project_id),
+                            job_id: Some(job_id),
+                            kind: "run.cancelled".into(),
+                            payload: json!({"run": run_id.to_string(), "role": role, "usage": event_usage, "worktree_dirty": worktree_dirty}),
+                            actor: Actor::Scheduler,
+                        })?;
                     }
                     Ok(())
                 })
             })
             .await
             .map_err(retryable)?;
+        let _ = std::fs::remove_file(spool_path);
+        if end == RunEnd::Cancelled {
+            return Err(ExecError::Interrupted);
+        }
         if let Some((limited_provider, reset_at, message)) = rate_limit {
             let latest_limited = self
                 .store
@@ -702,6 +825,7 @@ where
             run_id: RunId::new(),
             role,
             job_key: job.key.to_string(),
+            control_key: Some(job.job.id.to_string()),
             title: job.title.clone(),
             description: job.description.clone(),
             workdir: None,
@@ -711,6 +835,7 @@ where
             feedback: None,
             diff_summary: None,
             context: None,
+            spool_path: None,
         }
     }
 
@@ -1437,6 +1562,7 @@ where
             ExitOutcome::Exited(c) => ("failed", Some(c)),
             ExitOutcome::Signaled => ("failed", None),
             ExitOutcome::TimedOut => ("timeout", None),
+            ExitOutcome::Cancelled => ("cancelled", None),
         };
         Ok(GateRun {
             outcome,
@@ -1926,6 +2052,129 @@ where
     C: ContextProvider,
     G: GitFactsProvider,
 {
+    async fn recover_orphans(&self) -> Result<(), ExecError> {
+        let open = self
+            .store
+            .with(|s| s.open_runs_for_recovery())
+            .await
+            .map_err(retryable)?;
+        for run in open {
+            let Some(pid) = run.pid else {
+                let dir = self
+                    .cfg
+                    .worktree_root
+                    .parent()
+                    .unwrap_or(&self.cfg.worktree_root);
+                let _ =
+                    std::fs::remove_file(dir.join("run-spool").join(format!("{}.ndjson", run.id)));
+                continue;
+            };
+            #[cfg(unix)]
+            turtle_exec::terminate_orphan_group(pid, turtle_exec::KILL_GRACE).await;
+            #[cfg(not(unix))]
+            let _ = pid;
+            let bytes = run
+                .spool_path
+                .as_deref()
+                .and_then(|p| std::fs::read(p).ok())
+                .unwrap_or_default();
+            let out = Output {
+                outcome: ExitOutcome::Cancelled,
+                stdout: bytes.clone(),
+                stderr: Vec::new(),
+                truncated: false,
+                duration: Duration::ZERO,
+            };
+            let usage = match run.provider.as_str() {
+                "claude-code" => claude_runner::interpret(&out, run.role)
+                    .err()
+                    .and_then(|e| e.usage()),
+                "codex" => codex_runner::interpret(&out, run.role)
+                    .err()
+                    .and_then(|e| e.usage()),
+                _ => None,
+            }
+            .unwrap_or(UsageValue::Unavailable);
+            let job = self
+                .store
+                .with({
+                    let id = run.job_id;
+                    move |s| s.load_job(id)
+                })
+                .await
+                .map_err(retryable)?;
+            let paused = job.job.holds.iter().any(|h| {
+                matches!(
+                    h,
+                    turtle_workflow::Hold::Paused {
+                        mode: turtle_workflow::PauseMode::Hard
+                    }
+                )
+            });
+            let end = if paused {
+                RunEnd::Cancelled
+            } else {
+                RunEnd::Abandoned
+            };
+            let worktree_dirty = if run.role.writes_files() {
+                let project = self
+                    .store
+                    .with({
+                        let id = job.project_id;
+                        move |s| s.load_project(id)
+                    })
+                    .await
+                    .map_err(retryable)?;
+                if let Ok((layout, _)) = self.layout(&project, &job) {
+                    Repo::new(&layout.path)
+                        .run(&["status", "--porcelain"])
+                        .await
+                        .ok()
+                        .map(|s| !s.is_empty())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let transcript =
+                (!bytes.is_empty()).then(|| redacted_transcript(&String::from_utf8_lossy(&bytes)));
+            let blob = transcript
+                .as_deref()
+                .map(|text| {
+                    self.blobs
+                        .put(text.as_bytes())
+                        .map(|hash| (hash, text.len() as u64))
+                })
+                .transpose()
+                .map_err(retryable)?;
+            let charge = match usage {
+                UsageValue::Reported { usage } | UsageValue::Estimated { usage } => {
+                    Some(usage.total())
+                }
+                UsageValue::Unavailable => None,
+            };
+            let project_id = job.project_id;
+            self.store.with(move |s| s.transaction(|tx| {
+                tx.finish_run(run.id, end, Some("daemon stopped during run"), usage)?;
+                if let Some(tokens) = charge { tx.settle(run.id, tokens)?; }
+                else { tx.release(run.id, "usage unavailable after daemon crash")?; }
+                if let Some((hash, size)) = blob { tx.set_transcript_blob(run.id, hash, size)?; }
+                tx.append_event(&NewEvent {
+                    project_id: Some(project_id), job_id: Some(run.job_id),
+                    kind: if paused { "run.cancelled" } else { "run.abandoned" }.into(),
+                    payload: json!({"run": run.id.to_string(), "usage": usage, "recovered": true, "worktree_dirty": worktree_dirty}),
+                    actor: Actor::Scheduler,
+                })?;
+                Ok(())
+            })).await.map_err(retryable)?;
+            if let Some(path) = run.spool_path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        Ok(())
+    }
+
     async fn execute(&self, effect: &EffectRow) -> Result<ExecOutcome, ExecError> {
         let parsed: Effect = serde_json::from_value(effect.payload.clone())
             .map_err(|e| fatal(format!("unreadable effect payload: {e}")))?;
@@ -1948,8 +2197,19 @@ where
                     .map_err(retryable)?;
                 Ok(ExecOutcome::done(json!({"superseded": n})))
             }
-            // No live runs are tracked yet (no run supervisor); nothing to terminate or release.
-            Effect::TerminateRuns | Effect::ReleaseReservations | Effect::NotifyUser => {
+            Effect::TerminateRuns => {
+                let id = effect.job_id.ok_or_else(|| fatal("effect without a job"))?;
+                let requested = self
+                    .store
+                    .with(move |s| s.live_cancel_requested(id))
+                    .await
+                    .map_err(retryable)?;
+                if requested {
+                    turtle_exec::cancel_job(&id.to_string());
+                }
+                Ok(ExecOutcome::done(json!({"signalled": requested})))
+            }
+            Effect::ReleaseReservations | Effect::NotifyUser => {
                 Ok(ExecOutcome::done(json!({"note": "nothing to do yet"})))
             }
         }

@@ -45,7 +45,7 @@ export const realCommands = {
     request<{ok:boolean;id:string;key:string;version:number;started:boolean}>(`/projects/${encodeURIComponent(slug)}/jobs`,{method:'POST',body:JSON.stringify(input)}),
   setBudget: (input:{scope:'job'|'project'|'global';target?:string;limit:number;soft:boolean}) =>
     request<{ok:boolean;budget:{id:string;settled:number;reserved:number;limit:number;kind:'hard'|'soft'}}>('/budgets',{method:'POST',body:JSON.stringify(input)}),
-  job: (key: string, command: 'start' | 'pause' | 'resume' | 'cancel', expected_version: number, idempotency_key: string) =>
+  job: (key: string, command: 'start' | 'pause' | 'pause_hard' | 'resume' | 'cancel', expected_version: number, idempotency_key: string) =>
     request<{ok:boolean;version:number;replayed:boolean}>(`/jobs/${encodeURIComponent(key)}/commands`, {method:'POST',body:JSON.stringify({command,expected_version,idempotency_key})}),
   transcript: (id: string, offset = 0, limit = 100) =>
     request<{lines:string[];next_offset:number|null;provenance:string}>(`/runs/${encodeURIComponent(id)}/transcript?offset=${offset}&limit=${limit}`),

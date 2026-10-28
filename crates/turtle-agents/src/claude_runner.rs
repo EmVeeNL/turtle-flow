@@ -128,8 +128,12 @@ impl AgentRunner for ClaudeRunner {
             .args(self.args(req.role))
             .cwd(workdir)
             .stdin(prompts::build(req))
+            .job_key(req.control_key().to_owned())
             .timeout(self.config.timeout);
         spec.inherit_env.clone_from(&self.config.inherit_env);
+        if let Some(path) = &req.spool_path {
+            spec = spec.spool_stdout(path);
+        }
         let output = match turtle_exec::run(spec).await {
             Ok(o) => o,
             Err(ExecError::NotFound(p)) => {
@@ -191,6 +195,11 @@ pub fn interpret(out: &Output, role: Role) -> Result<AgentOutput, AgentError> {
     let usage = summary.usage.map(|usage| UsageValue::Reported { usage });
     let denials = summary.permission_denials.clone();
     match out.outcome {
+        ExitOutcome::Cancelled => {
+            return Err(
+                AgentError::cancelled(usage, transcript, denials).with_quota(summary.quota.clone())
+            );
+        }
         ExitOutcome::TimedOut => {
             return Err(AgentError::Fatal(format!(
                 "the run was stopped after {}s",
@@ -478,6 +487,24 @@ mod tests {
                 .transcript
                 .is_some_and(|text| text.contains("permission_denials"))
         );
+    }
+
+    #[test]
+    fn cancellation_keeps_usage_from_streamed_assistant_messages() {
+        let stream = concat!(
+            "{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"id\":\"two\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n"
+        );
+        let err = interpret(&output(stream, ExitOutcome::Cancelled), Role::Discovery)
+            .expect_err("cancelled");
+        assert!(err.is_cancelled());
+        assert!(
+            matches!(err.usage(), Some(UsageValue::Reported { usage }) if usage.total() == 22),
+            "{:?}",
+            err.usage()
+        );
+        assert!(err.transcript().is_some());
     }
 
     #[test]
