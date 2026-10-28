@@ -20,6 +20,7 @@ pub mod project;
 pub mod rate_limit;
 pub mod shared;
 pub mod static_gates;
+pub mod tasks;
 
 pub use approvals::{ApprovalError, ApprovalService};
 pub use binding::{
