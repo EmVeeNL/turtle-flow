@@ -1238,3 +1238,110 @@ fn seeded_sigkill_recovery_matches_uninterrupted_demo_delivery() {
         );
     }
 }
+
+#[test]
+fn job_show_lists_each_plan_task_with_runs_gates_and_commit_and_as_json() {
+    use turtle_store::{NewGateResult, NewTask, TaskState};
+    let w = World::new();
+    w.add_project();
+    w.ok(&["job", "create", "Add a greeting"]);
+    assert!(!w.ok(&["job", "show", "PAY-1"]).contains("tasks"));
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    let key: JobKey = "PAY-1".parse().expect("job key");
+    let job = store.find_job(&key).expect("job");
+    let id = job.job.id;
+    let plan = store
+        .transaction(|tx| {
+            tx.add_revision(&NewRevision {
+                job_id: id,
+                kind: ArtifactKind::Plan,
+                sha256: Sha256::from_bytes([7; 32]),
+                size_bytes: 2,
+                media_type: "application/json".into(),
+                schema_id: None,
+                author: Actor::Scheduler,
+            })
+        })
+        .expect("plan")
+        .id;
+    let task = |id: &str, title: &str, deps: &[&str]| NewTask {
+        plan_task_id: id.into(),
+        title: title.into(),
+        instructions: String::new(),
+        expected_paths: vec![],
+        criteria_refs: vec![],
+        depends_on: deps.iter().map(|d| (*d).to_owned()).collect(),
+        backfill: None,
+    };
+    let run = RunId::new();
+    store
+        .transaction(|tx| {
+            let rows = tx.plan_tasks(
+                id,
+                &plan,
+                &[task("T1", "Greeting", &[]), task("T2", "Farewell", &["T1"])],
+            )?;
+            tx.transition_task(
+                &rows[0].id,
+                TaskState::Running,
+                Some(run),
+                serde_json::json!({}),
+            )?;
+            tx.begin_run(&NewRun {
+                id: run,
+                job_id: id,
+                role: Role::Implementer,
+                stage: "implementation".into(),
+                provider: "fake".into(),
+                model: "m".into(),
+                adapter_version: "test".into(),
+                context_manifest_rev: None,
+            })?;
+            tx.transition_task(&rows[0].id, TaskState::Gating, None, serde_json::json!({}))?;
+            for (gate, outcome) in [("build", "passed"), ("test", "failed")] {
+                tx.record_task_gate(&NewGateResult {
+                    job_id: id,
+                    task_id: &rows[0].id,
+                    gate,
+                    outcome,
+                    command: Some("true"),
+                    exit_code: Some(0),
+                    duration_ms: Some(1),
+                    head_commit: "base",
+                    tree_hash: "tree",
+                    summary: &serde_json::json!({}),
+                })?;
+            }
+            tx.transition_task(&rows[0].id, TaskState::Fixing, None, serde_json::json!({}))
+        })
+        .expect("seed tasks");
+    drop(store);
+
+    let show = w.ok(&["job", "show", "PAY-1"]);
+    assert!(show.contains("  tasks        0 of 2 done"), "{show}");
+    assert!(
+        show.contains("    T1     fixing     -        Greeting")
+            && show.contains("runs 1, fix iterations 1, gates 1 passed, 1 failed")
+            && show.contains("    T2     pending    -        Farewell"),
+        "{show}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&w.ok(&["job", "show", "PAY-1", "--json"])).expect("json output");
+    assert_eq!(json["key"], "PAY-1");
+    let tasks = json["tasks"].as_array().expect("tasks");
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(tasks[0]["task"], "T1");
+    assert_eq!(tasks[0]["id"], format!("{plan}/T1"));
+    assert_eq!(tasks[0]["state"], "fixing");
+    assert_eq!(tasks[0]["runs"], 1);
+    assert_eq!(tasks[0]["fix_iterations"], 1);
+    assert_eq!(
+        tasks[0]["gates"],
+        serde_json::json!([{"gate":"build","outcome":"passed"},{"gate":"test","outcome":"failed"}])
+    );
+    assert_eq!(
+        tasks[1]["depends_on"],
+        serde_json::json!([format!("{plan}/T1")])
+    );
+    assert_eq!(json["task_mismatches"], serde_json::Value::Null);
+}
