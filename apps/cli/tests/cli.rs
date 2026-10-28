@@ -501,6 +501,120 @@ fn provider_commands_report_capabilities_and_validate_routing_flags() {
     );
 }
 
+/// Writes stand-in `claude`/`codex` CLIs that report `version` and a logged-in status.
+fn stand_in_provider(bin: &Path, name: &str, version: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let status = if name == "claude" {
+        "echo '{\"loggedIn\":true}'"
+    } else {
+        "echo 'Logged in using ChatGPT' >&2"
+    };
+    let path = bin.join(name);
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo '{version}'; else {status}; fi\n"
+        ),
+    )
+    .expect("script");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+#[test]
+fn capability_snapshots_are_reused_recorded_on_upgrade_and_diffed_by_doctor() {
+    let w = World::new();
+    let bin = w.home.parent().expect("parent").join("provider-bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    stand_in_provider(&bin, "claude", "2.1.310 (Claude Code)");
+    stand_in_provider(&bin, "codex", "codex-cli 0.163.0");
+    let run = |args: &[&str]| {
+        let out = w.command(args).env("PATH", &bin).output().expect("turtle");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Git is not on this PATH, so doctor fails overall; only the capability checks matter here.
+    let doctor = || -> Vec<serde_json::Value> {
+        serde_json::from_str(&run(&["doctor", "--json"])).expect("doctor JSON")
+    };
+    let check = |checks: &[serde_json::Value], name: &str| {
+        checks
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {checks:?}"))
+            .clone()
+    };
+
+    let fresh = check(&doctor(), "capabilities:claude-code");
+    assert_eq!(fresh["level"], "pass");
+    assert!(
+        fresh["detail"]
+            .as_str()
+            .expect("detail")
+            .starts_with("not recorded yet")
+    );
+    assert!(!w.home.exists(), "doctor never creates the data directory");
+
+    assert!(run(&["providers", "list"]).contains("snapshot=#1"));
+    assert!(run(&["providers", "list"]).contains("snapshot=#1"));
+    let rows = || -> i64 {
+        rusqlite::Connection::open(w.home.join("turtle.db"))
+            .expect("db")
+            .query_row("SELECT count(*) FROM capability_snapshots", [], |r| {
+                r.get(0)
+            })
+            .expect("count")
+    };
+    assert_eq!(rows(), 2, "an unchanged CLI reuses its stored snapshot");
+    let recorded = check(&doctor(), "capabilities:claude-code");
+    assert_eq!(recorded["level"], "pass");
+    assert_eq!(recorded["snapshot"]["current"]["version"], 1);
+    assert!(recorded["snapshot"].get("diff").is_none());
+
+    // A provider CLI upgrade is visible before it is recorded, then recorded by a refresh.
+    stand_in_provider(&bin, "claude", "2.1.311 (Claude Code)");
+    let pending = check(&doctor(), "capabilities:claude-code");
+    assert_eq!(pending["level"], "warn");
+    assert!(pending["snapshot"]["current"]["version"].is_null());
+    assert_eq!(pending["snapshot"]["previous"]["version"], 1);
+    assert_eq!(
+        pending["snapshot"]["diff"]["cli_version"],
+        serde_json::json!({"from": "2.1.310", "to": "2.1.311"})
+    );
+    let refreshed = run(&["providers", "refresh"]);
+    assert!(
+        refreshed.contains("claude-code: snapshot #2 recorded (cli 2.1.311")
+            && refreshed.contains("codex: snapshot #1 unchanged"),
+        "{refreshed}"
+    );
+    let human = run(&["doctor"]);
+    assert!(
+        human.contains("snapshot #2 (cli 2.1.311")
+            && human.contains("since #1: cli 2.1.310 → 2.1.311"),
+        "{human}"
+    );
+
+    // Leaving the verified range changes a capability as well as the version.
+    stand_in_provider(&bin, "claude", "2.2.0 (Claude Code)");
+    assert!(run(&["providers", "list"]).contains("snapshot=#3"));
+    let untested = check(&doctor(), "capabilities:claude-code");
+    assert_eq!(
+        untested["snapshot"]["diff"]["changed"],
+        serde_json::json!([{"capability": "compat", "from": "supported", "to": "untested"}])
+    );
+
+    // A missing binary records nothing and keeps the history.
+    std::fs::remove_file(bin.join("claude")).expect("uninstall");
+    assert!(run(&["providers", "list"]).contains("snapshot=#3"));
+    assert_eq!(rows(), 4);
+    let missing = check(&doctor(), "capabilities:claude-code");
+    assert!(
+        missing["detail"]
+            .as_str()
+            .expect("detail")
+            .starts_with("provider unavailable; last snapshot #3"),
+        "{missing}"
+    );
+}
+
 #[test]
 fn project_add_accepts_a_repository_and_rejects_the_rest() {
     let w = World::new();
