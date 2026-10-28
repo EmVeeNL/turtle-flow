@@ -2096,28 +2096,30 @@ async fn a_budget_that_cannot_cover_the_next_run_holds_the_job_until_it_is_raise
     assert!(b.unfinished().await > 0);
     assert_eq!(env.runner.calls().len(), 0);
 
-    // The user raises the budget and lifts the hold; the same effect then runs.
-    b.store
-        .with(move |s| {
-            s.transaction(|tx| {
-                tx.set_budget(
-                    BudgetScope::Job(id),
-                    5_000_000,
-                    true,
-                    Some(id),
-                    &Actor::local_user(),
-                )
-            })
-        })
+    // The approval, limit change and hold removal commit together. Restart before dispatch.
+    let approval = b
+        .approvals
+        .request_budget_increase(id, 5_000_000)
         .await
-        .expect("raise");
-    assert!(
-        turtle_scheduler::lift_budget_hold(b.dispatcher.engine(), id)
-            .await
-            .expect("lift"),
-        "the budget has room again"
-    );
-
+        .expect("request increase");
+    let after = b
+        .approvals
+        .decide(
+            approval.id,
+            Decision::Approve,
+            approval.subject_hash,
+            Actor::local_user(),
+            "test",
+            None,
+            vec![],
+        )
+        .await
+        .expect("approve increase");
+    assert_eq!(after.job.state, held.job.state);
+    assert!(after.job.holds.is_empty());
+    drop(b);
+    let (b, recovery) = env.boot(CrashPlan::never()).await;
+    assert_eq!(recovery.effects_failed.len(), 0);
     let job = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
     assert_eq!(job.job.state, JobState::Done);
     let (verdict, budgets, usage) = b
@@ -2141,6 +2143,146 @@ async fn a_budget_that_cannot_cover_the_next_run_holds_the_job_until_it_is_raise
         usage.tokens_reported + usage.tokens_estimated
     );
     assert!(usage.runs >= 5, "{usage:?}");
+    let events = b
+        .store
+        .with(move |s| s.list_events(Some(id)))
+        .await
+        .expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "approval.decided" && e.payload["gate"] == "budget_increase")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(
+                |e| e.kind == "job.hold_removed" && e.payload["hold"]["hold"] == "awaiting_budget"
+            )
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn budget_approval_resumes_planning_without_rerunning_or_recharging_specification() {
+    let env = Env::new(
+        FakeRunner::new(),
+        settings(Some(NEEDS_FEATURE_FILE), Some("release")),
+    )
+    .await;
+    env.main_repo()
+        .run(&["branch", "release", "main"])
+        .await
+        .expect("release branch");
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let id = env.job;
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    5_000_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("initial budget");
+    for _ in 0..100 {
+        b.human_step(id, &ApprovalPolicy::approve_all())
+            .await
+            .expect("human step");
+        if b.job(id).await.job.state == JobState::Planning {
+            break;
+        }
+        b.dispatcher.tick().await.expect("tick");
+    }
+    assert_eq!(b.job(id).await.job.state, JobState::Planning);
+    assert_eq!(env.runner.calls_of(Role::SpecWriter), 1);
+    let before = b.store.with(move |s| s.job_usage(id)).await.expect("usage");
+    assert_eq!(before.runs, 1);
+    b.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    before.tokens_estimated + 2_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("lower budget");
+    for _ in 0..50 {
+        b.dispatcher.tick().await.expect("tick");
+        if b.job(id)
+            .await
+            .job
+            .holds
+            .contains(&turtle_workflow::Hold::AwaitingBudget)
+        {
+            break;
+        }
+    }
+    assert!(
+        b.job(id)
+            .await
+            .job
+            .holds
+            .contains(&turtle_workflow::Hold::AwaitingBudget)
+    );
+    assert_eq!(env.runner.calls_of(Role::Planner), 0);
+    let approval = b
+        .approvals
+        .request_budget_increase(id, 5_000_000)
+        .await
+        .expect("request");
+    b.approvals
+        .decide(
+            approval.id,
+            Decision::Approve,
+            approval.subject_hash,
+            Actor::local_user(),
+            "test",
+            None,
+            vec![],
+        )
+        .await
+        .expect("approve");
+    assert_eq!(b.job(id).await.job.state, JobState::Planning);
+    let after = b
+        .store
+        .with(move |s| s.job_usage(id))
+        .await
+        .expect("usage after approval");
+    assert_eq!(after.runs, before.runs);
+    assert_eq!(after.tokens_estimated, before.tokens_estimated);
+    let finished = drive(&env, &b, &ApprovalPolicy::approve_all()).await;
+    assert_eq!(finished.job.state, JobState::Done);
+    assert_eq!(env.runner.calls_of(Role::SpecWriter), 1);
+    let events = b
+        .store
+        .with(move |s| s.list_events(Some(id)))
+        .await
+        .expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "job.stage_entered" && e.payload["to"] == "specification")
+            .count(),
+        1
+    );
+    assert!(matches!(
+        b.store.with(|s| s.verify_chain()).await.expect("chain"),
+        ChainVerdict::Intact { .. }
+    ));
 }
 
 #[tokio::test]

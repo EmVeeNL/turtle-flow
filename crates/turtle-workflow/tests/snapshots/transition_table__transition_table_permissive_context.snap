@@ -45,6 +45,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Backlog [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Backlog []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -91,6 +92,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Discovery [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Discovery []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -137,6 +139,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Specification [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Specification []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -183,6 +186,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> ScopeApproval [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> ScopeApproval []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -229,6 +233,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Planning [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Planning []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -275,6 +280,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> PlanApproval [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> PlanApproval []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -321,6 +327,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Implementation [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Implementation []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -367,6 +374,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> BuildTest [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> BuildTest []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -413,6 +421,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Review [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Review []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -459,6 +468,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Verification [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Verification []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -505,6 +515,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> AcceptanceApproval [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> AcceptanceApproval []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -551,6 +562,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Delivery [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Delivery []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -597,6 +609,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> AwaitingRelease [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> AwaitingRelease []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -643,6 +656,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: job_not_terminal
 {"command":"budget_exhausted"} => rejected: job_not_terminal
 {"command":"budget_restored"} => rejected: job_not_terminal
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => rejected: job_not_terminal
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: job_not_terminal
 
@@ -689,6 +703,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: hold_present
 {"command":"budget_exhausted"} => ok -> Blocked [{"effect":"request_approval","gate":"budget_increase","auto":false}, {"effect":"notify_user"}]
 {"command":"budget_restored"} => rejected: hold_present
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => ok -> Blocked []
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: hold_present
 
@@ -735,6 +750,7 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: job_not_terminal
 {"command":"budget_exhausted"} => rejected: job_not_terminal
 {"command":"budget_restored"} => rejected: job_not_terminal
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => rejected: job_not_terminal
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: job_not_terminal
 
@@ -781,5 +797,6 @@ expression: render(&permissive())
 {"command":"resume"} => rejected: job_not_terminal
 {"command":"budget_exhausted"} => rejected: job_not_terminal
 {"command":"budget_restored"} => rejected: job_not_terminal
+{"command":"budget_increase_approved"} => rejected: user_only
 {"command":"rate_limited","provider":"codex"} => rejected: job_not_terminal
 {"command":"rate_limit_cleared","provider":"codex"} => rejected: job_not_terminal

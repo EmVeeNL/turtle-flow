@@ -35,6 +35,46 @@ fn plan() -> C {
     }
 }
 
+#[test]
+fn approved_budget_increase_removes_only_the_budget_hold_at_the_same_stage() {
+    let mut job = JobAggregate::new(job_id(), Profile::standard());
+    job.state = JobState::Implementation;
+    job.holds = vec![
+        Hold::AwaitingBudget,
+        Hold::Paused {
+            mode: PauseMode::Soft,
+        },
+    ];
+    let before = job.clone();
+    let decision = decide(&job, &C::BudgetIncreaseApproved, &user(), &hostile()).expect("approved");
+    assert_eq!(decision.job.state, before.state);
+    assert_eq!(decision.job.counters, before.counters);
+    assert_eq!(
+        decision.job.holds,
+        vec![Hold::Paused {
+            mode: PauseMode::Soft
+        }]
+    );
+    assert!(decision.effects.is_empty());
+    assert_eq!(
+        decide(&job, &C::BudgetIncreaseApproved, &scheduler(), &hostile())
+            .expect_err("user only")
+            .guard,
+        "user_only"
+    );
+    assert_eq!(
+        decide(
+            &decision.job,
+            &C::BudgetIncreaseApproved,
+            &user(),
+            &hostile()
+        )
+        .expect_err("hold already lifted")
+        .guard,
+        "hold_present"
+    );
+}
+
 /// Drives a job from Backlog to Done; returns the visited states.
 fn happy_path(profile: Profile, complexity: Option<Complexity>) -> Vec<JobState> {
     let cx = permissive();

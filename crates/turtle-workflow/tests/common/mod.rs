@@ -159,6 +159,7 @@ pub fn sample_commands() -> Vec<JobCommand> {
         C::Resume,
         C::BudgetExhausted,
         C::BudgetRestored,
+        C::BudgetIncreaseApproved,
         C::RateLimited {
             provider: "codex".into(),
         },

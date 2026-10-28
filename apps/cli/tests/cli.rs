@@ -910,6 +910,140 @@ fn a_job_that_runs_out_of_budget_waits_and_resumes_when_the_budget_is_raised() {
     assert!(audit.contains("ledger consistent"), "{audit}");
 }
 
+#[test]
+fn sigkill_after_budget_approval_resumes_once() {
+    use sha2::Digest;
+    let w = World::new();
+    w.add_project();
+    w.ok(&[
+        "job",
+        "create",
+        "Add a greeting",
+        "--budget",
+        "5k",
+        "--start",
+    ]);
+    let port_socket = std::net::TcpListener::bind("127.0.0.1:0").expect("port");
+    let port = port_socket.local_addr().expect("address").port();
+    drop(port_socket);
+    let port_text = port.to_string();
+    let spawn = || {
+        Daemon(
+            w.command(&["daemon", "--agent", "demo", "--api-port", &port_text])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("daemon"),
+        )
+    };
+    let mut daemon = spawn();
+    wait_for("held job", || {
+        w.ok(&["job", "show", "PAY-1"]).contains("out of budget")
+    });
+    w.ok(&["job", "pause", "PAY-1"]);
+    let code = "0123456789abcdef0123456789abcdef";
+    let hash: String = sha2::Sha256::digest(code.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mut store = Store::open(&w.home.join("turtle.db"), Arc::new(SystemClock)).expect("store");
+    let held_key: JobKey = "PAY-1".parse().expect("key");
+    let held_id = store.find_job(&held_key).expect("job").job.id;
+    let before_runs = store.runs_for_job(held_id).expect("runs").len();
+    store
+        .create_dashboard_code(&hash, "2099-01-01T00:00:00Z", "full")
+        .expect("code");
+    let session = http(
+        port,
+        "POST",
+        "/api/v1/session",
+        &format!(
+            "Origin: http://127.0.0.1:{port}\r\nX-Turtle-Request: 1\r\nContent-Type: application/json\r\n"
+        ),
+        &format!("{{\"code\":\"{code}\"}}"),
+    );
+    let cookie = session
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|line| line.split(';').next())
+        .expect("cookie");
+    let headers = format!(
+        "Origin: http://127.0.0.1:{port}\r\nX-Turtle-Request: 1\r\nContent-Type: application/json\r\nCookie: {cookie}\r\n"
+    );
+    let requested = http(
+        port,
+        "POST",
+        "/api/v1/jobs/PAY-1/budget-approvals",
+        &headers,
+        r#"{"budget":5000000}"#,
+    );
+    assert!(requested.contains("200 OK"), "{requested}");
+    let body: serde_json::Value =
+        serde_json::from_str(requested.split_once("\r\n\r\n").expect("response body").1)
+            .expect("approval JSON");
+    let decision = http(port, "POST", &format!("/api/v1/approvals/{}/decisions", body["approval_id"].as_str().expect("id")), &headers,
+        &serde_json::json!({"decision":"approve","subject_hash":body["subject_hash"],"acknowledged_flags":[]}).to_string());
+    assert!(decision.contains("200 OK"), "{decision}");
+    daemon.0.kill().expect("SIGKILL daemon after approval");
+    daemon.0.wait().expect("reap daemon");
+    drop(daemon);
+    let _restarted = spawn();
+    wait_for("restarted API", || {
+        TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    assert_eq!(
+        store.runs_for_job(held_id).expect("runs").len(),
+        before_runs
+    );
+    w.ok(&["job", "resume", "PAY-1"]);
+    wait_for("resumed specification", || {
+        w.ok(&["job", "show", "PAY-1"])
+            .contains("state        scope_approval")
+    });
+    let key: JobKey = "PAY-1".parse().expect("key");
+    let job = store.find_job(&key).expect("job");
+    let events = store.list_events(Some(job.job.id)).expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "approval.decided" && e.payload["gate"] == "budget_increase")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(
+                |e| e.kind == "job.hold_removed" && e.payload["hold"]["hold"] == "awaiting_budget"
+            )
+            .count(),
+        1
+    );
+    let runs = store.runs_for_job(job.job.id).expect("runs");
+    assert_eq!(
+        runs.iter()
+            .filter(|run| run.role == "spec_writer" && run.status == "succeeded")
+            .count(),
+        1,
+        "{runs:?}"
+    );
+    assert_eq!(
+        store.job_usage(job.job.id).expect("usage").tokens_estimated,
+        1_200
+    );
+    assert!(matches!(
+        store.verify_chain().expect("chain"),
+        turtle_store::ChainVerdict::Intact { .. }
+    ));
+    assert!(matches!(
+        store.verify_ledger().expect("ledger"),
+        turtle_store::LedgerVerdict::Consistent { .. }
+    ));
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct KillOutcome {
     state: turtle_domain::JobState,
