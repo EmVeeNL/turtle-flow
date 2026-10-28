@@ -4,8 +4,8 @@
 **CLI binary:** `turtle` (Cargo package `turtle-flow`; see OQ-07 in [PRD.md §26](PRD.md#26-open-questions))
 **Repository:** `github.com/EmVeeNL/turtle-flow` (this package lives in `docs/`)
 **Package version:** 0.1.0 (design baseline; implementation under way)
-**Design date:** 2026-10-24 · **Last progress update:** 2026-10-27
-**Status:** PRs #33–#37 are open as a stacked series with passing CI. PR #33 targets `main`; each later PR builds on the previous one. The series covers strict task gates and plan approval, PDF extraction, remote-base fetching, and expanded security/recovery fixtures. Merge in order before treating those changes as integrated. Remaining beta acceptance evidence is tracked in [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26) and [BETA-READINESS.md](BETA-READINESS.md). PR merge polling is integrated in `main`. Where code and these documents disagree, the amendment notes in the ADRs and §6.1 record why.
+**Design date:** 2026-10-24
+**Status:** These documents hold durable scope, design and acceptance content. Live work status is tracked in the [Turtle Flow - Roadmap GitHub Project](https://github.com/users/EmVeeNL/projects/9); the beta acceptance evidence is defined in [BETA-READINESS.md](BETA-READINESS.md) and the dated implementation snapshot is [MVP.md §6.1](MVP.md#61-progress-against-the-milestones-2026-10-26). Where code and these documents disagree, the amendment notes in the ADRs and §6.1 record why.
 
 Turtle Flow is a local-first, CLI-first, Rust-based orchestrator that drives locally installed AI coding agents (initially Claude Code CLI and OpenAI Codex CLI) through a supervised, auditable software-delivery workflow: specification, human scope approval, planning, isolated implementation in Git worktrees, deterministic build/test gates, AI review, verification, human acceptance, and controlled delivery. A Rust core owns all state, policy, budgets, approvals and scheduling; AI agents are workers that produce artifacts.
 
@@ -15,6 +15,8 @@ Turtle Flow is a local-first, CLI-first, Rust-based orchestrator that drives loc
 
 | If you are… | Start with | Then read |
 |---|---|---|
+| User installing or running Turtle Flow | [INSTALL.md](INSTALL.md) | [QUICKSTART.md](QUICKSTART.md), [CLI-REFERENCE.md](CLI-REFERENCE.md), [CONFIGURATION.md](CONFIGURATION.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [SECURITY-MODEL.md](SECURITY-MODEL.md) |
+| Maintainer preparing the beta release | [BETA-READINESS.md](BETA-READINESS.md) | [LIVE-E2E-CHECKLIST.md](LIVE-E2E-CHECKLIST.md), [TESTING-STRATEGY.md](TESTING-STRATEGY.md) |
 | Product / business stakeholder | [PRD.md](PRD.md) | [MVP.md](MVP.md), [LICENSING.md](LICENSING.md), [ROADMAP.md](ROADMAP.md), [RFC-001](rfcs/RFC-001-cli-account-linking.md) |
 | Rust engineer starting implementation | [MVP.md](MVP.md) | [ARCHITECTURE.md](ARCHITECTURE.md), [DOMAIN-MODEL.md](DOMAIN-MODEL.md), [DATA-MODEL.md](DATA-MODEL.md), [WORKFLOW.md](WORKFLOW.md) |
 | Agent / provider integrator | [AGENT-PROTOCOL.md](AGENT-PROTOCOL.md) | [TOKEN-INTELLIGENCE.md](TOKEN-INTELLIGENCE.md), [ADR-007](adr/ADR-007-provider-adapter-architecture.md), [ADR-018](adr/ADR-018-model-routing-and-evaluation.md) |
@@ -28,6 +30,20 @@ Turtle Flow is a local-first, CLI-first, Rust-based orchestrator that drives loc
 ```text
 docs/
 ├── README.md                     ← this file: index, glossary, conventions
+│
+│   User documentation
+├── INSTALL.md                    ← install the release archives, checksum verification
+├── QUICKSTART.md                 ← register a project and run a first job
+├── CLI-REFERENCE.md              ← generated from the Clap command tree
+├── CONFIGURATION.md              ← data directory, project settings, daemon and agents
+├── TROUBLESHOOTING.md            ← `turtle doctor` and common failures
+├── SECURITY-MODEL.md             ← user-facing security model summary
+│
+│   Release readiness
+├── BETA-READINESS.md             ← 0.3 beta acceptance evidence (status in the GitHub Project)
+├── LIVE-E2E-CHECKLIST.md         ← live reference-repository runs (AC-01 / TST-16)
+│
+│   Design and product
 ├── PRD.md                        ← product requirements (FR/NFR/SEC/UX IDs)
 ├── MVP.md                        ← MVP scope, epics, milestones, DoD
 ├── ARCHITECTURE.md               ← system & component architecture, crate layout
@@ -41,7 +57,7 @@ docs/
 ├── ROADMAP.md                    ← MVP → post-MVP → server → enterprise
 ├── MONOREPO.md                   ← repo layout (apps/, crates/), pnpm + Turborepo + Cargo
 ├── PRODUCT.md                    ← brand and product context for design work
-├── LICENSE-KEYS.md               ← licence signing key handling (portal)
+├── LICENSE-KEYS.md               ← license verification public keys (private key stays a portal secret)
 ├── spikes/                       ← provider CLI spike report, fixtures and raw captures
 ├── dashboard/API-ASSUMPTIONS.md  ← dashboard API assumptions
 ├── rfcs/                         ← proposed cross-component protocols
@@ -51,7 +67,8 @@ docs/
 ├── DATA-MODEL.md                 ← SQLite schema, indexes, ERD, migrations
 ├── TESTING-STRATEGY.md           ← test pyramid, harnesses, fixtures, security tests
 ├── ARCHITECTURE-REVIEW.md        ← critical review, top-10 risks, next steps
-├── adr/                          ← 18 Architecture Decision Records + index
+├── adr/                          ← 18 Architecture Decision Records + index (README.md)
+├── assets/                       ← brand assets: logo, icons, wordmarks, fonts + HTML sources
 ├── diagrams/                     ← standalone .mmd sources for all 12 diagrams + index
 ├── examples/                     ← config, workflow, job, agent request/response examples
 ├── images/                       ← 6 rendered dashboard mockups (PNG) + HTML sources + prompts
