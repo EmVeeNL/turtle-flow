@@ -370,14 +370,14 @@ Usage: turtle job <COMMAND>
 Commands:
   create          Create a job in the backlog
   list            List jobs, newest first
-  show            Show one job
+  show            Show one job, including the state of each plan task
   events          Print the job's event history
   watch           Follow a job until it finishes or needs you
   start           Start a job from the backlog
   pause           Pause a job
   resume
   approve-budget  Approve a higher hard token budget and continue a held job
-  resolve         Continue a blocked conflict or authorize a fix after review findings
+  resolve         Continue a blocked conflict, authorize a fix after review findings, or continue after repairing a task mismatch
   sync            Check whether a pending pull request has merged and finish delivery
   worktree        Print the deterministic worktree path for a job
   revert          Create an approval-gated follow-up job for a delivered change's revert
@@ -426,16 +426,22 @@ Options:
 ## `turtle job show`
 
 ```text
-Show one job
+Show one job, including the state of each plan task
 
-Usage: turtle job show <KEY>
+Usage: turtle job show [OPTIONS] <KEY>
 
 Arguments:
   <KEY>
 
 Options:
+      --json  Print the job and its tasks as JSON
   -h, --help  Print help
 ```
+
+Tasks come from the `tasks` table and belong to the newest plan revision: state, commit, agent
+runs, fix iterations and the latest outcome of each per-task gate. A job blocked with
+`task_state_mismatch` also lists the disagreements between the table and the branch's
+`Turtle-Task` trailers (`task_mismatches` in JSON).
 
 ## `turtle job events`
 
@@ -525,7 +531,7 @@ Options:
 ## `turtle job resolve`
 
 ```text
-Continue a blocked conflict or authorize a fix after review findings
+Continue a blocked conflict, authorize a fix after review findings, or continue after repairing a task mismatch
 
 Usage: turtle job resolve [OPTIONS] <KEY>
 
@@ -533,7 +539,7 @@ Arguments:
   <KEY>
 
 Options:
-      --target <TARGET>  For review findings: implementation, planning or specification
+      --target <TARGET>  For review findings or a task mismatch: implementation, planning or specification
   -h, --help             Print help
 ```
 
