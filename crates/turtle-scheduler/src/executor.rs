@@ -7,7 +7,7 @@
 //! | effect | probe |
 //! |---|---|
 //! | `create_worktree` | worktree exists at the recorded base; a revert job also probes its factory revert commit |
-//! | `dispatch_ready_tasks` | a commit with the task's `Turtle-Task` trailer exists |
+//! | `dispatch_ready_tasks` | the task is `succeeded` in the `tasks` table, which must agree with the `Turtle-Task` trailers |
 //! | `run_gates`, `run_verification` | none needed: re-running is harmless |
 //! | `request_approval` | an identical pending approval exists |
 //! | `deliver` | a commit with the job's `Turtle-Job` trailer is on the target, or the parked ref |
@@ -39,7 +39,7 @@ use turtle_git::worktree::WorktreeOutcome;
 use turtle_git::{GitError, Repo};
 use turtle_store::{
     DeliveryStatus, EffectRow, JobRecord, NewEvent, NewRevision, NewRoutingDecision, NewRun,
-    ProjectRecord, ReservationOutcome, RevisionRecord, RunEnd,
+    ProjectRecord, ReservationOutcome, RevisionRecord, RunEnd, TaskState,
 };
 use turtle_tokens::{
     BucketPath, cold_start_estimate, estimate, reservation_size, score_complexity,
@@ -1162,6 +1162,29 @@ where
             self.need_doc(&job, ArtifactKind::Plan, "plan").await?;
         let repo = self.cfg.repo(&project);
         let wt = repo.at(&layout.path);
+        // Probe: the `tasks` table says which tasks finished; their trailers must agree.
+        let tasks = match crate::tasks::reconcile(
+            &self.store,
+            &repo,
+            &job,
+            &base,
+            &layout.spec.branch,
+            &plan,
+            &plan_rev,
+        )
+        .await?
+        {
+            crate::tasks::Reconciled::Agreed(tasks) => tasks,
+            crate::tasks::Reconciled::Mismatch(found) => {
+                return Ok(
+                    ExecOutcome::done(json!({"task_mismatches": found})).with_command(
+                        JobCommand::Halt {
+                            reason: BlockReason::TaskStateMismatch,
+                        },
+                    ),
+                );
+            }
+        };
         let key = job.key.to_string();
         let strict = job.job.profile.base == ProfileBase::Strict;
         let required_task_gates: &[&str] = &["build", "test", "lint"];
@@ -1201,14 +1224,12 @@ where
 
         let mut done = 0;
         for task in plan.execution_order().map_err(fatal)? {
-            let task_key = format!("{}/{}", plan_rev.id, task.id);
-            // Probe: a commit with this task's trailer means it already finished.
-            if repo
-                .find_commit_by_task(&layout.spec.branch, &task_key)
-                .await
-                .map_err(git_error)?
-                .is_some()
-            {
+            let row = tasks
+                .get(&task.id)
+                .ok_or_else(|| fatal(format!("task `{}` was not persisted", task.id)))?;
+            // The trailer value is the task's row id.
+            let task_key = row.id.clone();
+            if row.state.is_done() {
                 done += 1;
                 continue;
             }
@@ -1248,7 +1269,16 @@ where
                     req.plan = Some(plan.clone());
                     req.task = Some(task.clone());
                     req.feedback = feedback.clone();
+                    let entering = if fix_iteration == 0 {
+                        TaskState::Running
+                    } else {
+                        TaskState::Fixing
+                    };
+                    crate::tasks::enter(&self.store, &row.id, entering, Some(run_id), json!({}))
+                        .await?;
                     self.run_code_agent(req, &job, &wt).await?;
+                    crate::tasks::enter(&self.store, &row.id, TaskState::Gating, None, json!({}))
+                        .await?;
 
                     let mut results = Vec::with_capacity(task_gates.len());
                     let mut gates_passed = true;
@@ -1306,6 +1336,8 @@ where
                     });
                     self.store_doc(&job, ArtifactKind::GateResult, &report, Actor::Scheduler)
                         .await?;
+                    crate::tasks::record_gates(&self.store, &wt, job.job.id, &row.id, &results)
+                        .await?;
                     if gates_passed {
                         passed_run = Some(run_id);
                         break;
@@ -1318,6 +1350,14 @@ where
                     ));
                 }
                 let Some(run_id) = passed_run else {
+                    crate::tasks::enter(
+                        &self.store,
+                        &row.id,
+                        TaskState::Failed,
+                        None,
+                        json!({"reason": "fix_limit_reached"}),
+                    )
+                    .await?;
                     return Ok(ExecOutcome::done(json!({
                         "task": task.id,
                         "reason": "strict_task_gate_fix_limit_reached",
@@ -1335,16 +1375,26 @@ where
                 req.spec = Some(spec.clone());
                 req.plan = Some(plan.clone());
                 req.task = Some(task.clone());
+                crate::tasks::enter(
+                    &self.store,
+                    &row.id,
+                    TaskState::Running,
+                    Some(run_id),
+                    json!({}),
+                )
+                .await?;
                 self.run_code_agent(req, &job, &wt).await?;
                 run_id
             };
-            wt.commit_all(
-                &format!("feat({key}): {}", task.title),
-                &task.instructions,
-                &self.trailers(&job, Some(task_key), run_id).await?,
-            )
-            .await
-            .map_err(git_error)?;
+            let commit = wt
+                .commit_all(
+                    &format!("feat({key}): {}", task.title),
+                    &task.instructions,
+                    &self.trailers(&job, Some(task_key), run_id).await?,
+                )
+                .await
+                .map_err(git_error)?;
+            crate::tasks::committed(&self.store, &row.id, commit, run_id).await?;
             done += 1;
         }
 

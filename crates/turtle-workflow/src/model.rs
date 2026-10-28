@@ -41,6 +41,7 @@ pub enum BlockReason {
     PreflightDenied,
     ConflictDetected,
     ReviewDecisionRequired,
+    TaskStateMismatch,
     Timeout,
     Unrecoverable { code: String },
 }

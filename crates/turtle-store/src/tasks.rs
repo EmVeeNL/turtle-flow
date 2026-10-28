@@ -587,6 +587,10 @@ impl Tx<'_> {
         })
     }
 
+    pub fn task(&self, id: &str) -> Result<TaskRecord> {
+        load_task(&self.tx, id)
+    }
+
     pub fn tasks_of_revision(&self, plan_revision_id: &str) -> Result<Vec<TaskRecord>> {
         tasks_of_revision(&self.tx, plan_revision_id)
     }
