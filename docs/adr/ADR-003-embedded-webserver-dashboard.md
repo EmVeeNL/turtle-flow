@@ -82,7 +82,7 @@ The dashboard is a rich, private, local client; an SPA over the Rust JSON API is
 
 **Unchanged in the design:** Axum on loopback, `/api/v1`, SSE with `Last-Event-ID`, eventual CLI and dashboard API reuse, and the typography and icon-set decisions. Astro with Starlight remains the recommendation for the future public docs site.
 
-The implementation and its deviations from DASHBOARD-UX.md are documented in [`dashboard/README.md`](../../dashboard/README.md).
+The implementation and its deviations from DASHBOARD-UX.md are documented in [`apps/dashboard/README.md`](../../apps/dashboard/README.md).
 
 ## Implementation note (M4)
 

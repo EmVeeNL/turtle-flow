@@ -1,5 +1,5 @@
 {
-  "projectName": "customer-dashboard",
+  "projectName": "portal",
   "mode": "file-router",
   "bundler": "vite",
   "typescript": true,

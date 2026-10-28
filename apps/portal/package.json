@@ -1,8 +1,7 @@
 {
-  "name": "customer-dashboard",
+  "name": "@turtle-flow/portal",
   "private": true,
   "type": "module",
-  "packageManager": "npm@11.19.1",
   "engines": {
     "node": ">=22.14"
   },
@@ -14,7 +13,7 @@
     "generate-routes": "tsr generate",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "pnpm run build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "auth:schema": "auth generate --config src/server/auth.codegen.ts --adapter drizzle --dialect postgresql --output src/server/auth-schema.ts --yes",
     "db:generate": "drizzle-kit generate",
@@ -66,13 +65,5 @@
     "typescript": "^6.0.2",
     "vite": "^8.0.0",
     "wrangler": "^4.70.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss",
-      "sharp",
-      "workerd"
-    ]
   }
 }

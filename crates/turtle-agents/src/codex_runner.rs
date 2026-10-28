@@ -309,7 +309,7 @@ mod tests {
         Output {
             outcome: ExitOutcome::Exited(status),
             stdout: std::fs::read(format!(
-                "{}/../../spikes/fixtures/codex/{name}",
+                "{}/../../docs/spikes/fixtures/codex/{name}",
                 env!("CARGO_MANIFEST_DIR")
             ))
             .expect("fixture"),

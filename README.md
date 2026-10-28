@@ -63,14 +63,14 @@ What does not exist yet: retry-cost calibration, per-role context budgets and kn
 Local dashboard quick start:
 
 ```bash
-cd dashboard && npm ci && PUBLIC_API_ADAPTER=real npm run build
+pnpm install && PUBLIC_API_ADAPTER=real pnpm --filter @turtle-flow/dashboard run build
 cargo run -p turtle-flow -- up --agent demo
 cargo run -p turtle-flow -- dashboard   # interactive terminal; opens a one-use login URL
 ```
 
 The daemon chooses a random loopback port and records it in `<TURTLE_HOME>/run/api.port`. Use `turtle status` to see the address and `turtle down` to stop it. `--no-api` disables the web server; `--api-port` selects a fixed loopback port. To pair a phone on your tailnet, start with `turtle up --agent demo` (Tailscale auto-detection) or `turtle up --agent demo --tailnet-host <node>.<tailnet>.ts.net`, then run `turtle dashboard --phone` in a TTY and approve the Serve setup prompt if shown. It prints a QR code for a read-only session. The daemon remains bound to loopback; Tailscale Serve provides the private HTTPS path. Tailscale must be installed and connected on the machine and phone.
 
-The public website (a coming-soon page, [turtle-flow.com](https://turtle-flow.com)) lives in [`website/`](website/README.md) and is deployed with Cloudflare Workers Static Assets.
+The public website (a coming-soon page, [turtle-flow.com](https://turtle-flow.com)) lives in [`apps/website/`](apps/website/README.md) and is deployed with Cloudflare Workers Static Assets.
 
 ### Development
 
@@ -81,7 +81,7 @@ cargo run -p turtle-flow -- doctor                      # check Git and provider
 cargo deny check                                        # licenses, advisories, sources
 ```
 
-The toolchain is pinned in `rust-toolchain.toml`. Crates live in `crates/turtle-*` (see [docs/ARCHITECTURE.md §4.1](docs/ARCHITECTURE.md#41-crate-responsibilities-and-boundaries)). Provider CLI fixtures are in `spikes/fixtures/`.
+The toolchain is pinned in `rust-toolchain.toml`. Rust libraries live in `crates/turtle-*`, the `turtle` binary in `apps/cli` (see [docs/ARCHITECTURE.md §4.1](docs/ARCHITECTURE.md#41-crate-responsibilities-and-boundaries)). Provider CLI fixtures are in `spikes/fixtures/`.
 
 ### Documentation
 

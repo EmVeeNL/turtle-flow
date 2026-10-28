@@ -1,5 +1,5 @@
 //! Provider adapters: CLI discovery, output parsers verified against real transcripts (spike
-//! S-1/S-2, `spikes/fixtures/`), Claude Code and Codex runners with role prompts and document
+//! S-1/S-2, `docs/spikes/fixtures/`), Claude Code and Codex runners with role prompts and document
 //! schemas, capability discovery, ordered routing, and a scripted `FakeRunner`. The larger
 //! `ProviderAdapter` contract (health caching, cancellation) remains in the design.
 

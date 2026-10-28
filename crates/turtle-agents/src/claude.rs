@@ -244,7 +244,7 @@ mod tests {
     fn fixture(name: &str) -> RunSummary {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../spikes/fixtures/claude-code/"
+            "/../../docs/spikes/fixtures/claude-code/"
         );
         let text = std::fs::read_to_string(format!("{path}{name}")).expect("fixture exists");
         let mut p = StreamParser::new();

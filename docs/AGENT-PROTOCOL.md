@@ -328,7 +328,7 @@ This is a **blackboard pattern** with Turtle Flow as the sole writer of the blac
 
 ## 9. Provider Specifics and Verification Spikes
 
-> **Partly verified 2026-10-24** against Claude Code 2.1.310 and Codex 0.163.0. See the [spike report](../spikes/S-1-S-2-provider-cli-report.md); verified rows below are marked ✔. Key verified results: native structured output, `--max-budget-usd`, `--restricted`, `--permission-prompts none`, quota events, **no `--max-turns`**, and **inherited user config (MCP connectors, skills) inflates cost ~45×**, so the adapter must always apply the full isolation flag set.
+> **Partly verified 2026-10-24** against Claude Code 2.1.310 and Codex 0.163.0. See the [spike report](spikes/S-1-S-2-provider-cli-report.md); verified rows below are marked ✔. Key verified results: native structured output, `--max-budget-usd`, `--restricted`, `--permission-prompts none`, quota events, **no `--max-turns`**, and **inherited user config (MCP connectors, skills) inflates cost ~45×**, so the adapter must always apply the full isolation flag set.
 >
 > **Uncertain.** Provider CLIs evolve quickly. The mappings below reflect publicly documented behavior as understood at the time of writing (2025–2026 releases) and **must be verified** in the listed spikes against the exact CLI versions to be supported. The adapter design does not depend on any single item: each is a capability with a fallback.
 

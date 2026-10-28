@@ -30,7 +30,7 @@ async fn codex_receives_a_private_schema_and_scrubbed_environment() {
     let script = dir.path().join("codex");
     let seen = dir.path().join("seen");
     let fixture = format!(
-        "{}/../../spikes/fixtures/codex/02-readonly-structured.ndjson",
+        "{}/../../docs/spikes/fixtures/codex/02-readonly-structured.ndjson",
         env!("CARGO_MANIFEST_DIR")
     );
     std::fs::write(

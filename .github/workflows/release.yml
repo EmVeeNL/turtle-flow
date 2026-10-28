@@ -33,15 +33,13 @@ jobs:
         with:
           toolchain: 1.98.1
           targets: ${{ matrix.target }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: lts/*
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-      - run: npm ci
-        working-directory: dashboard
-      - run: npm run build
-        working-directory: dashboard
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @turtle-flow/dashboard...
+      - run: pnpm --filter @turtle-flow/dashboard run build
         env:
           PUBLIC_API_ADAPTER: real
       - run: cargo build --locked --release -p turtle-flow --features embedded-dashboard --target ${{ matrix.target }}

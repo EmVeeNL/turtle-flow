@@ -53,7 +53,7 @@ Detailed epics, milestones and acceptance: [MVP.md](MVP.md).
 
 ### Priority before the next broad feature work: finish the CLI and link account licenses
 
-The next licensing increment spans the local CLI and `customer-dashboard/`. Keep project state, source content, runs, and usage history in the local SQLite database. Account linking sends only the minimum licensing and installation metadata needed to issue and revoke a license.
+The next licensing increment spans the local CLI and `apps/portal/`. Keep project state, source content, runs, and usage history in the local SQLite database. Account linking sends only the minimum licensing and installation metadata needed to issue and revoke a license.
 
 1. **CLI license check and login guidance:** verify a cached signed license locally. If it is missing or expired, explain that the user can run `turtle login` to link the CLI to their Turtle Flow account. Preserve the Free local workflow when no valid account license is present; license expiry must not block access to local projects, history, exports, or the existing Free entitlement.
 2. **CLI-to-dashboard authorization:** follow [RFC-001](rfcs/RFC-001-cli-account-linking.md), using the [OAuth 2.0 Device Authorization flow (RFC 8628)](https://www.rfc-editor.org/rfc/rfc8628): an HTTP API handles the protocol, while a browser page handles sign-in and explicit device approval. The CLI receives a short-lived `device_code` and a human-entered `user_code`, opens `https://dash.turtle-flow.com/device`, and polls the API. Never put a bearer or device secret in a URL. Require the account’s existing sign-in protection before approving.
@@ -121,7 +121,7 @@ flowchart TB
 | Turtle Flow Core | Workflow, policy, tokens, scheduling | `turtle-workflow`, `turtle-policy`, `turtle-tokens`, `turtle-scheduler` (leader election added) |
 | Turtle Flow Server | HTTP API, auth, multi-tenancy (org), SSE | `turtle-api` + auth middleware |
 | Worker Nodes | Agent execution, gates, Git worktrees; pull leases; stream events; upload artifacts | `turtle-agents`, `turtle-exec`, `turtle-git`, `turtle-context` (packaging may run on server or worker) |
-| Dashboard | Same SPA, served by server; multi-user features enabled by entitlements | `dashboard/` |
+| Dashboard | Same SPA, served by server; multi-user features enabled by entitlements | `apps/dashboard/` |
 | Agent Execution | Always container-isolated (Tier 2+) on workers | `turtle-exec` container backend |
 | Organization Management | Users, teams, roles, project grants, approval policies | new crate `turtle-org` |
 | Licensing | Entitlements from license file; seat counting | `turtle-policy::entitlements` |
