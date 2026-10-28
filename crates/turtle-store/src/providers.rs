@@ -1,9 +1,14 @@
-//! Provider limit observations and honest quota-window snapshots.
+//! Provider limit observations, honest quota-window snapshots and versioned capability snapshots.
 
-use rusqlite::params;
+use std::path::Path;
+
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use turtle_domain::{RunId, WindowStatus};
 use ulid::Ulid;
 
+use crate::chain::hex;
 use crate::clock::format_ts;
 use crate::error::Result;
 use crate::store::{Store, Tx};
@@ -150,4 +155,132 @@ impl Store {
             .into_iter()
             .find(|item| item.provider == provider))
     }
+}
+
+/// One persisted capability snapshot (`capability_snapshots`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilitySnapshot {
+    pub id: String,
+    pub provider: String,
+    /// Per-provider sequence number, starting at 1.
+    pub version: i64,
+    pub cli_version: Option<String>,
+    pub capabilities: Value,
+    pub content_hash: String,
+    pub discovered_at: String,
+}
+
+/// Hash of what a snapshot asserts: provider, CLI version and capabilities, as canonical JSON.
+#[must_use]
+pub fn capability_hash(provider: &str, cli_version: Option<&str>, capabilities: &Value) -> String {
+    // `json!` builds sorted maps, so the serialization is canonical.
+    let doc =
+        json!({"provider": provider, "cli_version": cli_version, "capabilities": capabilities});
+    hex(Sha256::digest(doc.to_string().as_bytes()))
+}
+
+const SELECT_SNAPSHOT: &str =
+    "SELECT id,provider,version,cli_version,capabilities,content_hash,discovered_at
+     FROM capability_snapshots";
+
+fn read_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<CapabilitySnapshot> {
+    let capabilities: String = row.get(4)?;
+    Ok(CapabilitySnapshot {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        version: row.get(2)?,
+        cli_version: row.get(3)?,
+        capabilities: serde_json::from_str(&capabilities).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, e.into())
+        })?,
+        content_hash: row.get(5)?,
+        discovered_at: row.get(6)?,
+    })
+}
+
+/// Newest first, at most `limit`.
+fn snapshots(conn: &Connection, provider: &str, limit: u32) -> Result<Vec<CapabilitySnapshot>> {
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT_SNAPSHOT} WHERE provider=?1 ORDER BY version DESC LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![provider, limit], read_snapshot)?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+impl Tx<'_> {
+    /// Records a snapshot unless it is identical (by hash) to the provider's latest one. Returns
+    /// the snapshot in effect and whether it was newly written.
+    pub fn record_capability_snapshot(
+        &mut self,
+        provider: &str,
+        cli_version: Option<&str>,
+        capabilities: &Value,
+    ) -> Result<(CapabilitySnapshot, bool)> {
+        let content_hash = capability_hash(provider, cli_version, capabilities);
+        let latest = snapshots(&self.tx, provider, 1)?.pop();
+        if let Some(latest) = latest.as_ref().filter(|s| s.content_hash == content_hash) {
+            return Ok((latest.clone(), false));
+        }
+        let snapshot = CapabilitySnapshot {
+            id: Ulid::generate().to_string(),
+            provider: provider.to_owned(),
+            version: latest.map_or(1, |s| s.version + 1),
+            cli_version: cli_version.map(str::to_owned),
+            capabilities: capabilities.clone(),
+            content_hash,
+            discovered_at: self.now()?,
+        };
+        self.tx.execute(
+            "INSERT INTO capability_snapshots(id,provider,version,cli_version,capabilities,content_hash,discovered_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![snapshot.id, snapshot.provider, snapshot.version, snapshot.cli_version,
+                snapshot.capabilities.to_string(), snapshot.content_hash, snapshot.discovered_at],
+        )?;
+        Ok((snapshot, true))
+    }
+}
+
+impl Store {
+    /// The provider's snapshots, newest first, at most `limit`.
+    pub fn capability_snapshots(
+        &self,
+        provider: &str,
+        limit: u32,
+    ) -> Result<Vec<CapabilitySnapshot>> {
+        snapshots(&self.conn, provider, limit)
+    }
+
+    /// The snapshot a run started with, if one was recorded for its provider by then.
+    pub fn run_capability_snapshot(&self, run: RunId) -> Result<Option<CapabilitySnapshot>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!(
+                    "{SELECT_SNAPSHOT} WHERE id=(SELECT snapshot_id FROM run_capability_snapshots WHERE run_id=?1)"
+                ),
+                [run.to_string()],
+                read_snapshot,
+            )
+            .optional()?)
+    }
+}
+
+/// Reads snapshots without creating, migrating or writing the database, for `turtle doctor`.
+/// `None` when there is no database yet or its schema predates snapshots.
+pub fn read_capability_snapshots(
+    db: &Path,
+    provider: &str,
+    limit: u32,
+) -> Result<Option<Vec<CapabilitySnapshot>>> {
+    if !db.exists() {
+        return Ok(None);
+    }
+    let conn = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    if crate::migrate::current_version(&conn)? < 8 {
+        return Ok(None);
+    }
+    snapshots(&conn, provider, limit).map(Some)
 }

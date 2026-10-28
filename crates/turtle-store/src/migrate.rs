@@ -42,6 +42,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 7,
         sql: include_str!("../migrations/0007_approval_integrity.sql"),
     },
+    Migration {
+        version: 8,
+        sql: include_str!("../migrations/0008_capability_snapshots.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -176,6 +180,34 @@ mod tests {
             .expect("scope column");
         assert_eq!(scope_column, 1);
         assert_eq!(current_version(&conn).expect("version"), latest_version());
+    }
+
+    #[test]
+    fn upgrading_v7_replaces_unused_provider_capabilities_and_can_resume() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        migrate_with(&mut conn, &MIGRATIONS[..7], None, "t").expect("v7");
+        migrate(&mut conn, None, "t").expect("v8");
+        let tables = |conn: &Connection| -> Vec<String> {
+            conn.prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN
+                 ('provider_capabilities','capability_snapshots','run_capability_snapshots')
+                 ORDER BY name",
+            )
+            .expect("query")
+            .query_map([], |r| r.get(0))
+            .expect("rows")
+            .collect::<std::result::Result<_, _>>()
+            .expect("names")
+        };
+        assert_eq!(
+            tables(&conn),
+            ["capability_snapshots", "run_capability_snapshots"]
+        );
+        // A marker left behind by an interrupted upgrade re-runs the migration harmlessly.
+        conn.pragma_update(None, "user_version", 7).expect("marker");
+        migrate(&mut conn, None, "t").expect("resume");
+        assert_eq!(current_version(&conn).expect("version"), latest_version());
+        assert_eq!(tables(&conn).len(), 2);
     }
 
     #[test]
