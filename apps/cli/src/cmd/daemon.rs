@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use turtle_agents::{
-    AgentRunner, CapabilityRegistry, ClaudeConfig, ClaudeRunner, CodexConfig, CodexRunner,
-    FakeRunner, ProviderId, ProviderSlot, RoutingRunner,
+    AgentRunner, ClaudeConfig, ClaudeRunner, CodexConfig, CodexRunner, FakeRunner, ProviderId,
+    ProviderSlot, RoutingRunner,
 };
 use turtle_api::{ApiServer, Services};
 use turtle_domain::Role;
@@ -232,10 +232,14 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
         effort: options.codex_effort.clone(),
         ..CodexConfig::default()
     };
+    // The store is opened first so discovery can reuse and record capability snapshots; the
+    // lock is taken before it, as before any other daemon work.
+    let _lock = lock(&home)?;
+    let rt = Runtime::open(home.clone())?;
     let registry = if agents[0] == "demo" {
         None
     } else {
-        Some(CapabilityRegistry::discover().await)
+        Some(crate::capabilities::discover(&rt.store, false).await?.0)
     };
     let mut availability = std::collections::HashMap::new();
     for agent in &agents {
@@ -276,9 +280,7 @@ pub async fn run(home: Home, options: DaemonOptions) -> Result<()> {
     {
         bail!("{} is unavailable: {reason}", agents[0]);
     }
-    let _lock = lock(&home)?;
     let _ = std::fs::remove_file(home.root.join("run/api.port"));
-    let rt = Runtime::open(home.clone())?;
     std::fs::write(home.daemon_pid(), std::process::id().to_string())?;
     let result = match agents.as_slice() {
         ["demo"] => serve(&rt, &home, &options, FakeRunner::new(), "demo agent").await,
