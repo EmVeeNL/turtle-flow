@@ -29,7 +29,9 @@ pub use ledger::{
     ReservationOutcome, RunEnd, RunRecord,
 };
 pub use projects::{DeliveryRecord, DeliveryStatus, ProjectRecord};
-pub use providers::{LimitObservation, QuotaSnapshot};
+pub use providers::{
+    CapabilitySnapshot, LimitObservation, QuotaSnapshot, capability_hash, read_capability_snapshots,
+};
 pub use queue::{ClaimParams, EffectFate, RecoveryReport};
 pub use resources::{NewResource, ResourceHit, ResourceRecord};
 pub use store::{

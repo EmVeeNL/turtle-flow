@@ -239,7 +239,7 @@ fn v6_unsigned_approvals_are_signed_once_during_upgrade() {
     assert_eq!(hmac.expect("signed row").len(), 64);
     assert_eq!(
         turtle_store::migrate::current_version(store.raw_connection()).expect("version"),
-        7
+        turtle_store::migrate::latest_version()
     );
     let migration_events = store
         .list_events(None)

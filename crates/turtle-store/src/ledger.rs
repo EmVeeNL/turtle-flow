@@ -131,6 +131,8 @@ pub struct RunRecord {
     pub job_id: String,
     pub cli_version: Option<String>,
     pub routing_reason: Option<String>,
+    /// Content hash of the capability snapshot the run started with.
+    pub capability_snapshot_hash: Option<String>,
     pub role: String,
     pub provider: String,
     pub model: String,
@@ -619,12 +621,17 @@ impl Tx<'_> {
 
     // ------------------------------------------------------------------ runs
 
+    /// The run records its provider's latest capability snapshot (and that snapshot's CLI
+    /// version) as the capability set it starts with; both stay NULL when none is recorded.
     pub fn begin_run(&mut self, run: &NewRun) -> Result<()> {
         let now = self.now()?;
         self.tx.execute(
             "INSERT INTO agent_runs(id, job_id, role, stage, provider, model, adapter_version,
-                                    context_manifest_rev, status, started_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?9)",
+                                    context_manifest_rev, status, started_at, created_at,
+                                    cli_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?9,
+                     (SELECT cli_version FROM capability_snapshots WHERE provider = ?5
+                      ORDER BY version DESC LIMIT 1))",
             params![
                 run.id.to_string(),
                 run.job_id.to_string(),
@@ -636,6 +643,12 @@ impl Tx<'_> {
                 run.context_manifest_rev,
                 now
             ],
+        )?;
+        self.tx.execute(
+            "INSERT INTO run_capability_snapshots(run_id, snapshot_id)
+             SELECT ?1, id FROM capability_snapshots WHERE provider = ?2
+             ORDER BY version DESC LIMIT 1",
+            params![run.id.to_string(), run.provider],
         )?;
         Ok(())
     }
@@ -873,7 +886,7 @@ fn read_runs(
     job: Option<JobId>,
     id: Option<&str>,
 ) -> Result<Vec<RunRecord>> {
-    let sql = "SELECT a.id,a.role,a.provider,a.model,a.status,IFNULL(u.input_tokens,0),IFNULL(u.cached_read,0),IFNULL(u.cached_write,0),IFNULL(u.output_tokens,0),IFNULL(u.provenance,'unavailable'),a.started_at,a.ended_at,CASE WHEN a.started_at IS NOT NULL AND a.ended_at IS NOT NULL THEN CAST(MAX(0,ROUND((julianday(a.ended_at)-julianday(a.started_at))*86400000)) AS INTEGER) END,a.transcript_blob,a.job_id,a.cli_version,(SELECT reason FROM routing_decisions WHERE id=a.routing_decision_id) FROM agent_runs a LEFT JOIN usage_records u ON u.run_id=a.id WHERE (?1 IS NULL OR a.job_id=?1) AND (?2 IS NULL OR a.id=?2) ORDER BY a.created_at,a.id";
+    let sql = "SELECT a.id,a.role,a.provider,a.model,a.status,IFNULL(u.input_tokens,0),IFNULL(u.cached_read,0),IFNULL(u.cached_write,0),IFNULL(u.output_tokens,0),IFNULL(u.provenance,'unavailable'),a.started_at,a.ended_at,CASE WHEN a.started_at IS NOT NULL AND a.ended_at IS NOT NULL THEN CAST(MAX(0,ROUND((julianday(a.ended_at)-julianday(a.started_at))*86400000)) AS INTEGER) END,a.transcript_blob,a.job_id,a.cli_version,(SELECT reason FROM routing_decisions WHERE id=a.routing_decision_id),(SELECT s.content_hash FROM run_capability_snapshots r JOIN capability_snapshots s ON s.id=r.snapshot_id WHERE r.run_id=a.id) FROM agent_runs a LEFT JOIN usage_records u ON u.run_id=a.id WHERE (?1 IS NULL OR a.job_id=?1) AND (?2 IS NULL OR a.id=?2) ORDER BY a.created_at,a.id";
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt
         .query_map(params![job.map(|j| j.to_string()), id], |r| {
@@ -896,6 +909,7 @@ fn read_runs(
                 r.get::<_, String>(14)?,
                 r.get::<_, Option<String>>(15)?,
                 r.get::<_, Option<String>>(16)?,
+                r.get::<_, Option<String>>(17)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -906,6 +920,7 @@ fn read_runs(
                 job_id: r.14,
                 cli_version: r.15,
                 routing_reason: r.16,
+                capability_snapshot_hash: r.17,
                 role: r.1,
                 provider: r.2,
                 model: r.3,

@@ -49,7 +49,7 @@ pub fn event_hash(prev_hash: &str, e: &HashedEvent<'_>) -> String {
     hex(Sha256::digest(format!("{prev_hash}{canonical}").as_bytes()))
 }
 
-fn hex(bytes: impl AsRef<[u8]>) -> String {
+pub(crate) fn hex(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
