@@ -248,6 +248,10 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
         }
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
         JobCommandLine::ApproveBudget { key, budget } => {
+            use std::io::IsTerminal;
+            if !std::io::stdin().is_terminal() {
+                bail!("budget approvals require an interactive terminal");
+            }
             let job = find(rt, &key).await?;
             let requested = crate::cmd::budget::parse_tokens(&budget)?;
             let approval = rt

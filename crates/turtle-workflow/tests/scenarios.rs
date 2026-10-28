@@ -46,7 +46,14 @@ fn approved_budget_increase_removes_only_the_budget_hold_at_the_same_stage() {
         },
     ];
     let before = job.clone();
-    let decision = decide(&job, &C::BudgetIncreaseApproved, &user(), &hostile()).expect("approved");
+    assert_eq!(
+        decide(&job, &C::BudgetIncreaseApproved, &user(), &hostile())
+            .expect_err("approval required")
+            .guard,
+        "approval_valid"
+    );
+    let decision =
+        decide(&job, &C::BudgetIncreaseApproved, &user(), &permissive()).expect("approved");
     assert_eq!(decision.job.state, before.state);
     assert_eq!(decision.job.counters, before.counters);
     assert_eq!(
@@ -67,7 +74,7 @@ fn approved_budget_increase_removes_only_the_budget_hold_at_the_same_stage() {
             &decision.job,
             &C::BudgetIncreaseApproved,
             &user(),
-            &hostile()
+            &permissive()
         )
         .expect_err("hold already lifted")
         .guard,
