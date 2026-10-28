@@ -1074,3 +1074,58 @@ async fn tasks_are_found_by_trailer() {
     );
     assert_eq!(wt.tree_of("HEAD").await.expect("tree").len(), 40);
 }
+
+#[tokio::test]
+async fn task_commits_list_trailers_and_the_working_tree_hash_matches_the_commit() {
+    let f = fixture().await;
+    let base = f.repo.head().await.expect("head");
+    let s = spec(&f, "API-25", &base);
+    f.repo.ensure_worktree(&s).await.expect("create");
+    let wt = f.repo.at(s.path().expect("path"));
+    write(wt.path(), "plain.txt", "1\n");
+    let plain = wt
+        .commit_all("feat(API-25): plain", "", &trailers("API-25", "RUN-0"))
+        .await
+        .expect("commit")
+        .expect("sha");
+    write(wt.path(), "t2.txt", "2\n");
+    // Gates see the tree the task commit will have, untracked files included.
+    let tree = wt.working_tree_hash().await.expect("tree");
+    assert_eq!(wt.status_paths().await.expect("status").len(), 1);
+    let t = Trailers {
+        job: "API-25".into(),
+        task: Some("REV1/T2".into()),
+        run: Some("RUN-T2".into()),
+        ..Trailers::default()
+    };
+    let task = wt
+        .commit_all("feat(API-25): t2", "Turtle-Task: REV1/T9", &t)
+        .await
+        .expect("commit")
+        .expect("sha");
+    assert_eq!(wt.tree_of(&task).await.expect("tree of"), tree);
+    let found = f
+        .repo
+        .task_commits(&base, &s.branch)
+        .await
+        .expect("task commits");
+    assert_eq!(
+        found.len(),
+        1,
+        "only commits with a Turtle-Task trailer: {found:?}"
+    );
+    assert_eq!(found[0].sha, task);
+    assert_eq!(
+        found[0].task, "REV1/T2",
+        "a trailer-like body line is ignored"
+    );
+    assert_eq!(found[0].run.as_deref(), Some("RUN-T2"));
+    assert!(
+        f.repo
+            .task_commits(&task, &s.branch)
+            .await
+            .expect("empty range")
+            .is_empty()
+    );
+    assert_ne!(plain, task);
+}

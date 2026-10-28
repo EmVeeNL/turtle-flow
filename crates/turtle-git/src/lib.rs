@@ -65,6 +65,7 @@ pub mod policy;
 pub mod recovery;
 pub mod refresh;
 pub mod repo;
+pub mod tasks;
 pub mod worktree;
 
 pub use repo::{Identity, Repo};
