@@ -3,8 +3,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use turtle_exec::{CommandSpec, ExecError};
+
+use crate::snapshot::{ADAPTER_VERSION, CapabilitySet, StoredSnapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -53,7 +55,7 @@ impl ProviderId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompatStatus {
     Supported,
@@ -84,9 +86,9 @@ pub struct ProviderCapabilities {
     pub info: ProviderInfo,
     pub auth: AuthStatus,
     pub native_json_schema: bool,
-    pub quota_visibility: &'static str,
-    pub sandbox_modes: &'static [&'static str],
-    pub effort_levels: &'static [&'static str],
+    pub quota_visibility: String,
+    pub sandbox_modes: Vec<String>,
+    pub effort_levels: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +105,29 @@ impl CapabilityRegistry {
         Self { providers }
     }
 
+    /// Builds a registry from capabilities discovered elsewhere (for example with
+    /// [`discover_with_snapshot`]). A provider missing from `capabilities` counts as not installed.
+    #[must_use]
+    pub fn from_capabilities(capabilities: impl IntoIterator<Item = ProviderCapabilities>) -> Self {
+        let mut providers: HashMap<_, _> = capabilities
+            .into_iter()
+            .map(|caps| (caps.info.provider, caps))
+            .collect();
+        for id in ProviderId::ALL {
+            providers.entry(id).or_insert_with(|| {
+                let info = ProviderInfo {
+                    provider: id,
+                    version: None,
+                    compat: CompatStatus::NotInstalled,
+                    detail: "not discovered".into(),
+                };
+                let set = verified_set(id, info.compat);
+                ProviderCapabilities::from_set(info, AuthStatus::Unknown, set)
+            });
+        }
+        Self { providers }
+    }
+
     #[must_use]
     pub fn get(&self, id: ProviderId) -> &ProviderCapabilities {
         self.providers
@@ -112,6 +137,36 @@ impl CapabilityRegistry {
 }
 
 impl ProviderCapabilities {
+    fn from_set(info: ProviderInfo, auth: AuthStatus, set: CapabilitySet) -> Self {
+        Self {
+            info,
+            auth,
+            native_json_schema: set.native_json_schema,
+            quota_visibility: set.quota_visibility,
+            sandbox_modes: set.sandbox_modes,
+            effort_levels: set.effort_levels,
+        }
+    }
+
+    /// The version-dependent part that is persisted as a capability snapshot.
+    #[must_use]
+    pub fn capability_set(&self) -> CapabilitySet {
+        CapabilitySet {
+            adapter_version: ADAPTER_VERSION.into(),
+            compat: self.info.compat,
+            native_json_schema: self.native_json_schema,
+            quota_visibility: self.quota_visibility.clone(),
+            sandbox_modes: self.sandbox_modes.clone(),
+            effort_levels: self.effort_levels.clone(),
+        }
+    }
+
+    /// The CLI version a snapshot is keyed by: the parsed `--version`, if any.
+    #[must_use]
+    pub fn cli_version(&self) -> Option<String> {
+        self.info.version.as_ref().map(ToString::to_string)
+    }
+
     #[must_use]
     pub fn available(&self) -> bool {
         matches!(
@@ -141,60 +196,101 @@ impl ProviderCapabilities {
 
 pub async fn discover_capabilities(provider: ProviderId) -> ProviderCapabilities {
     let info = discover(provider).await;
-    let auth = if matches!(
+    let auth = auth_status(provider, &info).await;
+    let set = verified_set(provider, info.compat);
+    ProviderCapabilities::from_set(info, auth, set)
+}
+
+/// Result of [`discover_with_snapshot`].
+#[derive(Clone, Debug)]
+pub struct Discovered {
+    pub capabilities: ProviderCapabilities,
+    /// The stored snapshot was reused because the CLI and adapter versions are unchanged.
+    pub reused: bool,
+}
+
+/// Discovers one provider, reusing the capabilities of `stored` (its latest persisted snapshot)
+/// when the CLI version and the adapter version are unchanged and `force` is not set. The
+/// `--version` probe and the login check always run, so a missing or upgraded binary is never
+/// hidden by a stored snapshot.
+pub async fn discover_with_snapshot(
+    provider: ProviderId,
+    stored: Option<StoredSnapshot<'_>>,
+    force: bool,
+) -> Discovered {
+    let info = discover(provider).await;
+    let auth = auth_status(provider, &info).await;
+    let live_version = info.version.as_ref().map(ToString::to_string);
+    let reusable = stored
+        .filter(|s| !force && live_version.is_some() && s.cli_version == live_version.as_deref())
+        .and_then(|s| serde_json::from_value::<CapabilitySet>(s.capabilities.clone()).ok())
+        .filter(|set| set.adapter_version == ADAPTER_VERSION && set.compat == info.compat);
+    let reused = reusable.is_some();
+    let set = reusable.unwrap_or_else(|| verified_set(provider, info.compat));
+    Discovered {
+        capabilities: ProviderCapabilities::from_set(info, auth, set),
+        reused,
+    }
+}
+
+async fn auth_status(provider: ProviderId, info: &ProviderInfo) -> AuthStatus {
+    if !matches!(
         info.compat,
         CompatStatus::Supported | CompatStatus::Untested
     ) {
-        let args: &[&str] = match provider {
-            ProviderId::ClaudeCode => &["auth", "status"],
-            ProviderId::Codex => &["login", "status"],
-        };
-        match turtle_exec::run(
-            CommandSpec::new(provider.binary())
-                .args(args.iter().copied())
-                .timeout(Duration::from_secs(15)),
-        )
-        .await
-        {
-            Ok(out) if out.success() => match provider {
-                ProviderId::ClaudeCode
-                    if serde_json::from_slice::<serde_json::Value>(&out.stdout)
-                        .ok()
-                        .and_then(|v| v["loggedIn"].as_bool())
-                        == Some(true) =>
-                {
-                    AuthStatus::LoggedIn
-                }
-                ProviderId::ClaudeCode => AuthStatus::NotLoggedIn,
-                ProviderId::Codex => {
-                    codex_auth_status(&out.stdout_lossy(), &String::from_utf8_lossy(&out.stderr))
-                }
-            },
-            Ok(out) if provider == ProviderId::Codex => {
+        return AuthStatus::Unknown;
+    }
+    let args: &[&str] = match provider {
+        ProviderId::ClaudeCode => &["auth", "status"],
+        ProviderId::Codex => &["login", "status"],
+    };
+    match turtle_exec::run(
+        CommandSpec::new(provider.binary())
+            .args(args.iter().copied())
+            .timeout(Duration::from_secs(15)),
+    )
+    .await
+    {
+        Ok(out) if out.success() => match provider {
+            ProviderId::ClaudeCode
+                if serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                    .ok()
+                    .and_then(|v| v["loggedIn"].as_bool())
+                    == Some(true) =>
+            {
+                AuthStatus::LoggedIn
+            }
+            ProviderId::ClaudeCode => AuthStatus::NotLoggedIn,
+            ProviderId::Codex => {
                 codex_auth_status(&out.stdout_lossy(), &String::from_utf8_lossy(&out.stderr))
             }
-            Ok(_) => AuthStatus::NotLoggedIn,
-            Err(_) => AuthStatus::Unknown,
+        },
+        Ok(out) if provider == ProviderId::Codex => {
+            codex_auth_status(&out.stdout_lossy(), &String::from_utf8_lossy(&out.stderr))
         }
-    } else {
-        AuthStatus::Unknown
+        Ok(_) => AuthStatus::NotLoggedIn,
+        Err(_) => AuthStatus::Unknown,
+    }
+}
+
+/// Capabilities verified against the supported CLI range (spike S-1/S-2).
+fn verified_set(provider: ProviderId, compat: CompatStatus) -> CapabilitySet {
+    let (quota_visibility, sandbox_modes, effort_levels): (_, &[&str], &[&str]) = match provider {
+        ProviderId::ClaudeCode => (
+            "partial",
+            &["read-only-tools", "workspace-write"],
+            &["low", "medium", "high", "xhigh", "max"],
+        ),
+        ProviderId::Codex => ("unknown", &["read-only", "workspace-write"], &["low"]),
     };
-    let (quota_visibility, sandbox_modes, effort_levels): (_, &'static [&str], &'static [&str]) =
-        match provider {
-            ProviderId::ClaudeCode => (
-                "partial",
-                &["read-only-tools", "workspace-write"],
-                &["low", "medium", "high", "xhigh", "max"],
-            ),
-            ProviderId::Codex => ("unknown", &["read-only", "workspace-write"], &["low"]),
-        };
-    ProviderCapabilities {
-        info,
-        auth,
+    let owned = |items: &[&str]| items.iter().map(|&item| item.to_owned()).collect();
+    CapabilitySet {
+        adapter_version: ADAPTER_VERSION.into(),
+        compat,
         native_json_schema: true,
-        quota_visibility,
-        sandbox_modes,
-        effort_levels,
+        quota_visibility: quota_visibility.into(),
+        sandbox_modes: owned(sandbox_modes),
+        effort_levels: owned(effort_levels),
     }
 }
 
@@ -317,9 +413,9 @@ mod tests {
             },
             auth: AuthStatus::Unknown,
             native_json_schema: true,
-            quota_visibility: "unknown",
-            sandbox_modes: &["read-only"],
-            effort_levels: &["low"],
+            quota_visibility: "unknown".into(),
+            sandbox_modes: vec!["read-only".into()],
+            effort_levels: vec!["low".into()],
         };
         assert_eq!(
             caps.exclusion_reason().as_deref(),
