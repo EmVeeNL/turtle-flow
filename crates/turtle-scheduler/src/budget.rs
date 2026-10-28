@@ -6,7 +6,7 @@ use turtle_workflow::{Hold, JobCommand};
 use crate::engine::{ContextProvider, Engine, EngineError};
 
 /// Smallest headroom worth waking a held job for: the cheapest run's cold-start estimate.
-const MIN_HEADROOM: u64 = 10_000;
+pub(crate) const MIN_HEADROOM: u64 = 10_000;
 
 /// Lifts the job's `AwaitingBudget` hold if every hard budget that applies has room again.
 /// Returns whether the hold was lifted. `BudgetRestored` is a machine result, so it is issued

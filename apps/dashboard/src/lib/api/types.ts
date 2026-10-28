@@ -11,7 +11,7 @@ export interface Job { id: string; key: string; project_id: string; title: strin
 export interface Task { id: string; job_id: string; ordinal: number; title: string; state: 'pending' | 'ready' | 'running' | 'gating' | 'fixing' | 'succeeded' | 'failed' | 'skipped' | 'superseded'; commit_sha?: string | null; gate_summary?: string | null; }
 export interface ArtifactRevision { id: string; job_id: string; kind: string; rev: number; sha256: string; author: string; created_at: string; summary: string | null; }
 export interface BoundArtifact { id?: string | null; kind: string; rev: number; sha256: string; content?: string | null; summary?: string | null; }
-export interface Approval { id: string; job_id: string; gate_kind: ApprovalKind; subject_hash: string; status: ApprovalStatus; requested_at: string; expires_at?: string | null; binding: { artifacts: BoundArtifact[]; base_commit?: string | null; head_commit?: string | null; diff_sha256?: string | null; target_branch?: string | null; budget_envelope?: number | null; profile?: string; profile_hash?: string; policy_version?: string | number; canonical?: unknown; }; flags: string[]; invalidated_if: string[]; }
+export interface Approval { id: string; job_id: string; gate_kind: ApprovalKind; subject_hash: string; status: ApprovalStatus; requested_at: string; expires_at?: string | null; binding: { artifacts: BoundArtifact[]; base_commit?: string | null; head_commit?: string | null; diff_sha256?: string | null; target_branch?: string | null; budget_envelope?: number | null; budget_increase?: {budget_id:string;current_tokens:number;requested_tokens:number;stage:JobState} | null; profile?: string; profile_hash?: string; policy_version?: string | number; canonical?: unknown; }; flags: string[]; invalidated_if: string[]; }
 export interface AgentRun { id: string; job_id: string; role: string; provider: string; model: string; cli_version: string | null; routing_reason: string | null; status: 'running' | 'succeeded' | 'failed' | 'queued' | 'starting' | 'cancelled' | 'timed_out' | 'abandoned'; duration: string | null; usage: TokenUsage; cost_usd: number | null; }
 export interface ResourceVersion { version: number; sha256: string; status: 'ready' | 'extracting' | 'failed'; }
 export interface Resource { id: string; title: string; kind: 'file' | 'url_snapshot'; trust: TrustLevel; versions: ResourceVersion[]; attached_to: string[]; size: string; used_in: number; }
@@ -26,4 +26,5 @@ export interface DashboardAdapter {
   approval(id: string): Promise<Approval | null>;
   run(id: string): Promise<AgentRun | null>;
   decideApproval(id: string, decision: 'approve' | 'changes' | 'reject', subject_hash: string, comment: string, acknowledged_flags?: string[]): Promise<{ ok: boolean; error?: string }>;
+  requestBudgetApproval(key: string, budget: number): Promise<{ok:boolean;approval_id:string;subject_hash:string}>;
 }

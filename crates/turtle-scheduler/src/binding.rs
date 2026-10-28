@@ -8,9 +8,9 @@ use std::future::Future;
 
 use sha2::{Digest, Sha256 as Hasher};
 use turtle_domain::{GateKind, Sha256};
-use turtle_policy::{ApprovalBinding, ArtifactRef, BudgetEnvelope, GitBinding};
-use turtle_store::{JobRecord, RevisionRecord};
-use turtle_workflow::Profile;
+use turtle_policy::{ApprovalBinding, ArtifactRef, BudgetEnvelope, BudgetIncrease, GitBinding};
+use turtle_store::{BudgetRecord, BudgetScope, JobRecord, RevisionRecord};
+use turtle_workflow::{Hold, Profile};
 
 /// Version of the security policy (protected paths, gates). Bumped when policy changes in a way
 /// that should invalidate acceptance approvals.
@@ -22,6 +22,40 @@ pub enum BindingError {
     Missing(&'static str),
     #[error("{0:?} approvals have no binding builder")]
     Unsupported(GateKind),
+    #[error("the job is not waiting on a hard job budget")]
+    NotHeld,
+    #[error("the requested budget must raise the current limit")]
+    NotIncrease,
+}
+
+pub fn build_budget_binding(
+    job: &JobRecord,
+    budget: &BudgetRecord,
+    requested_tokens: u64,
+    policy_version: u32,
+) -> Result<ApprovalBinding, BindingError> {
+    if !job.job.holds.contains(&Hold::AwaitingBudget)
+        || budget.scope != BudgetScope::Job(job.job.id)
+        || !budget.hard
+    {
+        return Err(BindingError::NotHeld);
+    }
+    if requested_tokens <= budget.limit_tokens {
+        return Err(BindingError::NotIncrease);
+    }
+    let mut binding = ApprovalBinding::new(
+        GateKind::BudgetIncrease,
+        job.job.id,
+        profile_hash(&job.job.profile),
+        policy_version,
+    );
+    binding.budget_increase = Some(BudgetIncrease {
+        budget_id: budget.id,
+        current_tokens: budget.limit_tokens,
+        requested_tokens,
+        stage: job.job.state,
+    });
+    Ok(binding)
 }
 
 /// Latest revisions of the artifacts approvals can bind to.

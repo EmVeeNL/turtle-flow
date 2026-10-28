@@ -265,6 +265,10 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{key}", get(data::job))
         .route("/api/v1/approvals/{id}", get(data::approval))
         .route("/api/v1/approvals/{id}/decisions", post(decide_approval))
+        .route(
+            "/api/v1/jobs/{key}/budget-approvals",
+            post(request_budget_approval),
+        )
         .route("/api/v1/jobs/{key}/commands", post(job_command))
         .route("/api/v1/runs/{id}", get(data::run))
         .route("/api/v1/runs/{id}/transcript", get(data::transcript))
@@ -703,6 +707,37 @@ async fn set_budget(
     ))
 }
 #[derive(Deserialize)]
+struct BudgetApprovalRequest {
+    budget: u64,
+}
+async fn request_budget_approval(
+    State(state): State<AppState>,
+    AxumPath(key): AxumPath<String>,
+    payload: Result<Json<BudgetApprovalRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(input) = payload.map_err(|_| ApiError::bad("invalid JSON body"))?;
+    let key: JobKey = key.parse().map_err(|_| ApiError::not_found())?;
+    let job = state
+        .services
+        .store
+        .with(move |s| s.find_job(&key))
+        .await
+        .map_err(store_error)?;
+    let approval = state
+        .services
+        .approvals
+        .request_budget_increase(job.job.id, input.budget)
+        .await
+        .map_err(|e| match e {
+            ApprovalError::InvalidBudget(message) => ApiError::bad(message),
+            ApprovalError::Store(error) => store_error(error),
+            _ => ApiError::unavailable(),
+        })?;
+    Ok(Json(
+        json!({"ok":true,"approval_id":approval.id.to_string(),"subject_hash":approval.subject_hash.to_hex()}),
+    ))
+}
+#[derive(Deserialize)]
 struct DecisionRequest {
     decision: String,
     subject_hash: String,
@@ -750,6 +785,7 @@ async fn decide_approval(
             "acknowledge flags: {}",
             flags.join(", ")
         ))),
+        Err(ApprovalError::InvalidBudget(message)) => Err(ApiError::bad(message)),
         Err(_) => Err(ApiError::unavailable()),
     }
 }
@@ -965,6 +1001,93 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
             .expect("authorized request")
+    }
+
+    #[tokio::test]
+    async fn budget_approval_endpoint_resumes_a_held_job() {
+        use turtle_domain::{JobType, Priority};
+        use turtle_store::{NewJob, NewProject};
+        let (state, _dir) = state();
+        let job = state
+            .services
+            .store
+            .with(|s| {
+                s.transaction(|tx| {
+                    let project = tx.insert_project(&NewProject {
+                        slug: "sample".into(),
+                        key_prefix: "API".into(),
+                        name: "Sample".into(),
+                        description: String::new(),
+                        repo_path: "/tmp/sample".into(),
+                        default_branch: "main".into(),
+                        default_profile: "standard".into(),
+                    })?;
+                    let job = tx.create_job(
+                        &NewJob {
+                            project_id: project,
+                            title: "Budget test".into(),
+                            description: String::new(),
+                            job_type: JobType::Feature,
+                            priority: Priority::Normal,
+                            profile: turtle_workflow::Profile::standard(),
+                        },
+                        &Actor::local_user(),
+                    )?;
+                    tx.set_budget(
+                        BudgetScope::Job(job.job.id),
+                        5_000,
+                        true,
+                        Some(job.job.id),
+                        &Actor::local_user(),
+                    )?;
+                    Ok(job)
+                })
+            })
+            .await
+            .expect("job");
+        let id = job.job.id;
+        state
+            .services
+            .engine
+            .submit(id, JobCommand::Start, Actor::local_user())
+            .await
+            .expect("start");
+        state
+            .services
+            .engine
+            .submit(id, JobCommand::BudgetExhausted, Actor::Scheduler)
+            .await
+            .expect("hold");
+        let path = format!("/api/v1/jobs/{}/budget-approvals", job.key);
+        let response = router(state.clone())
+            .oneshot(session_request(
+                &state,
+                Method::POST,
+                &path,
+                json!({"budget":100000}),
+                false,
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json");
+        let approval = body["approval_id"].as_str().expect("approval ID");
+        let decision_path = format!("/api/v1/approvals/{approval}/decisions");
+        let decision = router(state.clone()).oneshot(session_request(&state, Method::POST, &decision_path, json!({"decision":"approve","subject_hash":body["subject_hash"],"acknowledged_flags":[]}), false)).await.expect("decision");
+        assert_eq!(decision.status(), StatusCode::OK);
+        let after = state
+            .services
+            .store
+            .with(move |s| s.load_job(id))
+            .await
+            .expect("after");
+        assert!(after.job.holds.is_empty());
+        assert_eq!(after.job.state, turtle_domain::JobState::Specification);
     }
 
     #[tokio::test]

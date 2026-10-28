@@ -4,5 +4,7 @@
 pub mod binding;
 pub mod invalidation;
 
-pub use binding::{ApprovalBinding, ArtifactRef, BINDING_SCHEMA, BudgetEnvelope, GitBinding};
+pub use binding::{
+    ApprovalBinding, ArtifactRef, BINDING_SCHEMA, BudgetEnvelope, BudgetIncrease, GitBinding,
+};
 pub use invalidation::MaterialChange;
