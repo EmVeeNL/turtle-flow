@@ -19,20 +19,33 @@ scripts/       Release, e2e and docs tooling.
 
 ```bash
 corepack enable          # pnpm is pinned by `packageManager` in package.json
-pnpm install
+corepack pnpm install
 ```
 
 ## Common commands
 
 | Task | Command |
 |---|---|
-| Build all TS apps | `pnpm build` |
-| Lint / typecheck / test | `pnpm lint`, `pnpm check`, `pnpm test` |
-| One app | `pnpm --filter @turtle-flow/portal dev` |
+| Build all TS apps | `corepack pnpm build` |
+| Lint / typecheck / test | `corepack pnpm lint`, `corepack pnpm check`, `corepack pnpm test` |
+| One app | `corepack pnpm --filter @turtle-flow/portal dev` |
 | Rust tests | `cargo test --workspace` |
-| Release binary with dashboard | `PUBLIC_API_ADAPTER=real pnpm --filter @turtle-flow/dashboard build && cargo build --release -p turtle-flow --features embedded-dashboard` |
+| Release binary with dashboard | `PUBLIC_API_ADAPTER=real corepack pnpm --filter @turtle-flow/dashboard build && cargo build --release -p turtle-flow --features embedded-dashboard` |
 
 `apps/cli/package.json` wraps the Cargo commands so `turbo run build` orders the dashboard build before the embedding binary build.
+
+## CI
+
+CI runs Rust jobs for Rust paths and the web job for web paths. The docs link check runs on every push and pull request. The `all-green` job combines the results, treating skipped jobs as successful; use `all-green` as the required branch protection check.
+
+To enable Turborepo remote caching in CI, configure these GitHub repository settings:
+
+| Setting | Value |
+|---|---|
+| Actions secret `TURBO_TOKEN` | A Turborepo remote cache access token. |
+| Actions variable `TURBO_TEAM` | The team slug associated with the token. |
+
+The web job continues with local caching when either setting is unset, including on fork pull requests where the secret is unavailable.
 
 ## Rules
 
