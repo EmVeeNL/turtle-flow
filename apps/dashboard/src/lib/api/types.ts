@@ -8,7 +8,11 @@ export interface TokenEstimate { p10: number; p50: number; p90: number; confiden
 export interface Budget { id: string; scope?: 'global' | 'project' | 'job'; settled: number; reserved: number; limit: number; kind: 'hard' | 'soft'; }
 export interface Project { id: string; slug: string; key_prefix: string; name: string; description: string; repo_path: string; default_branch: string; default_profile: string; status: 'active' | 'archived'; active_jobs: number; pending_approvals: number; gate_pass_rate: number | null; last_delivery: string | null; health: 'healthy' | 'warning' | 'missing' | 'unknown'; budget: Budget | null; }
 export interface Job { id: string; key: string; project_id: string; title: string; description: string; type: 'feature' | 'bugfix' | 'refactor' | 'docs' | 'chore'; profile: string; state: JobState; hold?: 'paused' | 'awaiting_budget' | 'rate_limited' | 'waiting_for_dependencies' | null; holds?: Array<{hold:string;mode?:string;provider?:string}>; priority: 'urgent' | 'high' | 'normal' | 'low'; stage_index: number; provider: string | null; usage: TokenUsage; estimate: TokenEstimate | null; budget?: Budget | null; elapsed: string | null; base_commit?: string | null; head_commit?: string | null; version?: number; }
-export interface Task { id: string; job_id: string; ordinal: number; title: string; state: 'pending' | 'ready' | 'running' | 'gating' | 'fixing' | 'succeeded' | 'failed' | 'skipped' | 'superseded'; commit_sha?: string | null; gate_summary?: string | null; }
+export type TaskState = 'pending' | 'ready' | 'running' | 'gating' | 'fixing' | 'succeeded' | 'failed' | 'skipped' | 'superseded';
+export interface TaskGate { gate: string; outcome: 'passed' | 'failed' | 'error' | 'skipped'; }
+/** One row of the `tasks` table: `id` is the commit's `Turtle-Task` trailer value. */
+export interface Task { id: string; job_id: string; ordinal: number; title: string; state: TaskState; commit_sha?: string | null; gate_summary?: string | null; plan_task_id?: string; plan_revision_id?: string; depends_on?: string[]; fix_iterations?: number; runs?: number; gates?: TaskGate[]; updated_at?: string; }
+export type JobDetail = Job & { tasks?: Task[] };
 export interface ArtifactRevision { id: string; job_id: string; kind: string; rev: number; sha256: string; author: string; created_at: string; summary: string | null; }
 export interface BoundArtifact { id?: string | null; kind: string; rev: number; sha256: string; content?: string | null; summary?: string | null; }
 export interface Approval { id: string; job_id: string; gate_kind: ApprovalKind; subject_hash: string; status: ApprovalStatus; requested_at: string; expires_at?: string | null; binding: { artifacts: BoundArtifact[]; base_commit?: string | null; head_commit?: string | null; diff_sha256?: string | null; target_branch?: string | null; budget_envelope?: number | null; budget_increase?: {budget_id:string;current_tokens:number;requested_tokens:number;stage:JobState} | null; profile?: string; profile_hash?: string; policy_version?: string | number; canonical?: unknown; }; flags: string[]; invalidated_if: string[]; }
@@ -22,7 +26,7 @@ export interface DashboardAdapter {
   me(): Promise<{ readonly: boolean }>;
   overview(): Promise<DashboardData>;
   project(slug: string): Promise<Project | null>;
-  job(key: string): Promise<Job | null>;
+  job(key: string): Promise<JobDetail | null>;
   approval(id: string): Promise<Approval | null>;
   run(id: string): Promise<AgentRun | null>;
   decideApproval(id: string, decision: 'approve' | 'changes' | 'reject', subject_hash: string, comment: string, acknowledged_flags?: string[]): Promise<{ ok: boolean; error?: string }>;
