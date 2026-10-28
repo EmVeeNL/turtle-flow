@@ -105,6 +105,8 @@ Fresh worktrees lack build artifacts (`target/`, `node_modules/`, virtualenvs), 
 
 Commit-to-run lineage is stored in `commit_records` (FR-100) and recoverable from trailers alone.
 
+**Tasks and trailers (issue #63).** The `Turtle-Task` value of a task commit is the task's id in the `tasks` table, `<plan revision id>/<plan task id>`; job-level fix commits use `fix/<run>`. Each task commit is recorded in `commit_records` (kind `task`, with `task_id` and `run_id`) and in `tasks.commit_sha`. The trailers stay the Git-side record: before tasks run, the scheduler reads the trailer block (last paragraph only, so trailer-like lines in a task body are ignored) of every commit in `base..branch` and checks that it agrees with the table. A disagreement blocks the job as `task_state_mismatch` and is never repaired silently; only a commit made by the task's own run before the database update (crash boundary 16) is recorded. See [WORKFLOW.md §10](WORKFLOW.md#10-recovery-behavior).
+
 ## 5. Delivery Policies
 
 | Mode | How | When to use | Requirements |

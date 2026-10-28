@@ -172,7 +172,20 @@ CREATE TABLE tasks (
   UNIQUE (plan_revision_id, ordinal)
 );
 CREATE INDEX ix_tasks_job_state ON tasks(job_id, state);
+-- v10 (0010_task_links.sql): per-task lookups. 0009 is reserved for another change.
+CREATE INDEX ix_tasks_job_revision ON tasks(job_id, plan_revision_id, ordinal);
+CREATE INDEX ix_runs_task ON agent_runs(task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX ix_gates_task ON gate_results(task_id, created_at) WHERE task_id IS NOT NULL;
+CREATE INDEX ix_commit_records_job_task ON commit_records(job_id, task_id);
 ```
+
+**Implementation status (issue #63, 2026-10-28):** `tasks` is written, by `dispatch_ready_tasks`, once per approved plan revision (`turtle-store::tasks`).
+
+- **Ids.** A task's `id` is `<plan revision id>/<plan task id>`, for example `01JB…/T1`. That is also the value of the task commit's `Turtle-Task` trailer, so Git and the table name a task the same way. `depends_on` holds task ids; `ordinal` is the 1-based plan position.
+- **States.** `pending` (dependencies open) or `ready` on insert; `ready → running → gating → (fixing → gating)* → succeeded | failed`. `fixing` increments `fix_iterations`. An active task may re-enter `running` (retry after a failed or interrupted attempt), `failed → ready` when a human resumes the job, and unfinished tasks of an older plan revision become `superseded` when a new revision is persisted; succeeded ones keep their commits. A task whose dependencies are all `succeeded` or `skipped` becomes `ready` (T-2). Non-strict tasks go `running → succeeded`; a task whose run changed nothing succeeds with `commit_sha = NULL`.
+- **Links.** An implementer or fixer run begun while a task of its job is active gets that `task_id` (a job runs one task at a time), and its `usage_records` row copies it. Strict per-task gate checks are rows in `gate_results` with `task_id`, `head_commit` = the HEAD the attempt started from and `tree_hash` = the tree the work tree would commit; a timeout is stored as `error`. The task commit is a `commit_records` row of kind `task` with its `task_id` and `run_id`. The gate result artifact is still written for each attempt.
+- **Events.** `task.created`, `task.state_changed` (from, to, fix iterations, run), `task.commit_recorded` (commit, run, `recovered`) and `task.mismatch_detected` (the disagreements). Task events fill the `task_id` (and, where known, `run_id`) event columns, which are part of the event hash.
+- **Not yet.** Estimates, complexity and `role` stay at their defaults; `skipped` is not produced; job-level fix commits get no `commit_records` row.
 
 ### 3.3 Agent runs, routing, usage
 

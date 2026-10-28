@@ -64,7 +64,7 @@ Outbox + probes is a proven pattern for exactly-once *effects* over at-least-onc
 | Effect | Probe | What a crash would otherwise cause |
 |---|---|---|
 | `create_worktree` | base commit recorded in the job first; worktree on the expected branch at that base; setup marker inside the Git directory | a second worktree, or setup skipped or repeated |
-| `dispatch_ready_tasks` | commit with the task's `Turtle-Task: <plan revision>/<task>` trailer | the implementer is paid for twice |
+| `dispatch_ready_tasks` | the task is `succeeded` in the `tasks` table; the table must agree with the `Turtle-Task: <plan revision>/<task>` trailers on the branch (2026-10-28) | the implementer is paid for twice |
 | start run (spec, plan, review, verification) | a scheduler-authored artifact revision created after the effect | the agent is paid for twice |
 | `run_gates` | none (harmless to repeat) | extra gate-result revision only |
 | `request_approval` | identical pending approval | a second approval |
@@ -72,6 +72,8 @@ Outbox + probes is a proven pattern for exactly-once *effects* over at-least-onc
 | `cleanup_worktree` | removing a missing worktree succeeds | none |
 
 The crash test asserts, for every sampled boundary: exactly one delivery commit, exactly one commit per task, the same artifact revisions as a clean run, the same stage transitions, **and exactly one agent call per role**. Removing the delivery probe, the task probe, or the artifact-reuse probe each fails it with a specific message.
+
+Task probe update (issue #63, 2026-10-28): task progress is read from the `tasks` table, so a task whose run changed nothing (and left no commit) is no longer re-run after a crash. Trailers are checked against the table, not used to rebuild it; a commit by the task's own run that the table missed is recorded (boundary 16) and any other disagreement blocks the job as `task_state_mismatch` ([WORKFLOW.md §10](../WORKFLOW.md#10-recovery-behavior)). `crates/turtle-scheduler/tests/tasks.rs` covers re-delivery, boundary 16 and mismatches with real Git.
 
 Known gaps: a task whose agent run produced no change leaves no commit, so it is re-run after a crash; gate output beyond the last 4000 characters is not kept; `terminate_runs` cannot yet stop a run that is still executing (no run supervisor).
 ## Related ADRs

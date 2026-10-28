@@ -6,7 +6,7 @@
 | Status | Proposed baseline; core decisions in [ADR-005](adr/ADR-005-workflow-state-machine.md), [ADR-006](adr/ADR-006-supervised-autonomy-approvals.md), [ADR-017](adr/ADR-017-recovery-idempotency-crash-safety.md) |
 | Related | [DOMAIN-MODEL.md](DOMAIN-MODEL.md), [examples/example-workflow.yaml](examples/example-workflow.yaml) |
 
-**Implementation status (2026-10-27).** The `strict` profile runs configured build, test and lint commands after each task, plus secret-scan and scope-conformance checks on that task's worktree diff. Failed task checks are sent to a fixer for at most the profile's configured fix iterations; exhaustion or missing required commands blocks the job. The integrated job still runs its full gate suite. Plan approval is required in `standard` when a plan has more than eight tasks or its frozen preflight token envelope exceeds the configured job token limit. The estimate is stored with its plan hash in a `PreflightReport`; scope and plan approval bindings include the configured job budget, and plan bindings include the preflight report. Changing the job limit therefore invalidates stale approvals. CLI and API decisions use the same approval service, which rechecks the current binding and invalidates stale decisions; duplicate requests reuse the pending row. A clean local base refresh invalidates acceptance and repeats gates, review and verification. For PR-delivery projects, a bounded fetch of `origin/<target>` runs before worktree creation and delivery (PR #35); a moved remote target follows the same refresh path. Standard retains its existing autonomous major-finding fix behavior; the table's tighter standard severity is not implemented. Local squash remains the default for all profiles; PR delivery is an explicit project setting.
+**Implementation status (2026-10-27).** The `strict` profile runs configured build, test and lint commands after each task, plus secret-scan and scope-conformance checks on that task's worktree diff. Failed task checks are sent to a fixer for at most the profile's configured fix iterations; exhaustion or missing required commands blocks the job. Every task's state, fix iterations, runs, gate checks and commit are recorded in the `tasks` table and its linked rows, and restart recovery reads them from there (§10). The integrated job still runs its full gate suite. Plan approval is required in `standard` when a plan has more than eight tasks or its frozen preflight token envelope exceeds the configured job token limit. The estimate is stored with its plan hash in a `PreflightReport`; scope and plan approval bindings include the configured job budget, and plan bindings include the preflight report. Changing the job limit therefore invalidates stale approvals. CLI and API decisions use the same approval service, which rechecks the current binding and invalidates stale decisions; duplicate requests reuse the pending row. A clean local base refresh invalidates acceptance and repeats gates, review and verification. For PR-delivery projects, a bounded fetch of `origin/<target>` runs before worktree creation and delivery (PR #35); a moved remote target follows the same refresh path. Standard retains its existing autonomous major-finding fix behavior; the table's tighter standard severity is not implemented. Local squash remains the default for all profiles; PR delivery is an explicit project setting.
 
 ---
 
@@ -419,6 +419,17 @@ flowchart TD
     E --> Q[Reconcile ledger:<br/>close reservations of final runs]
     Q --> SCH[Start scheduler + API]
 ```
+
+**Task recovery (issue #63).** A re-delivered `dispatch_ready_tasks` reads task progress from the `tasks` table ([DATA-MODEL.md §3.2](DATA-MODEL.md#32-jobs-tasks-dependencies)): a `succeeded` task is skipped, even one whose run changed nothing and so left no commit. Nothing is rebuilt from trailers while rows exist. Before any task runs, the table is compared with the `Turtle-Task` trailers in `base..branch`:
+
+| Finding | Handling |
+|---|---|
+| Recorded commit and trailer match | Continue |
+| Trailer commit for an active task, made by a run that belongs to that task (boundary 16) | Record the commit (`task.commit_recorded`, `recovered: true`); the agent is not re-run |
+| No rows yet for the plan revision (job started before tasks were persisted) | Insert the rows; tasks whose trailer commit exists start `succeeded` (`task.created`, `source: trailer_backfill`) |
+| Recorded commit missing or different, unrecorded or duplicate trailer commit, trailer for a task the revision does not have | `task.mismatch_detected`, then `Halt(task_state_mismatch)`; the table is not changed |
+
+A `task_state_mismatch` block is recoverable: repair the job branch (for example, move it back to the recorded commits) or choose re-planning, then `turtle job resolve <key> [--target implementation|planning]`. `turtle job show` lists the mismatches. Known limitation: a target refresh folds task commits into one refresh commit, so re-entering `implementation` after a refresh reports `commit_missing` instead of re-running the tasks.
 
 ### 10.1 Step boundaries and recovery actions (crash-injection catalogue)
 
