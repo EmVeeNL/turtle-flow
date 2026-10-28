@@ -96,7 +96,7 @@ stateDiagram-v2
 | Hold | Set by | Effect | Cleared by |
 |---|---|---|---|
 | `paused{soft}` | User | No new runs/gates start; current run finishes | `resume` |
-| `paused{hard}` | User | Current run/gate terminated (recorded `cancelled`), reservation released | `resume` (stage step restarts) |
+| `paused{hard}` | User | Current agent run terminated (recorded `cancelled`), reported partial usage settled | `resume` (stage step starts a new attempt) |
 | `awaiting_budget` | Engine (preflight/reservation failure on hard budget) | No new runs; user chooses a new total job budget for approval | Hash-bound increase approved, direct budget edit, or user lowers scope |
 | `rate_limited{provider, until}` | Run supervisor on rate-limit error | Runs needing that provider wait; scheduler may fail over if allowed | Time passes / probe succeeds |
 
@@ -384,8 +384,8 @@ Retries create a new `AgentRun` (attempt + 1) with a new reservation; the failed
 ### 9.3 Pause/resume
 
 - Soft pause: scheduler stops dispatching; the running step completes and commits its result; the job holds.
-- Hard pause: running process group gets SIGTERM, then SIGKILL after 5 s; run → `cancelled`; working-tree changes from the interrupted run are **stashed into a recovery ref** (`refs/turtle/recovery/<run-id>`) and the tree is reset to the last Turtle Flow commit, so resumption starts clean.
-- Resume: clears hold; the scheduler re-evaluates the current stage's next step (idempotent).
+- Hard pause: the run supervisor sees the persisted hold and sends SIGTERM to the agent process group, then SIGKILL after at most 5 s. The run becomes `cancelled`; streamed usage is settled and its transcript is redacted. The worktree stays as it is. The `run.cancelled` event records whether it is dirty.
+- Resume: clears the hold and retries the interrupted step as a new run attempt. Its prompt notes the interruption and asks the agent to inspect partial work. Completed stages are not repeated.
 
 ### 9.4 Cancellation
 
@@ -405,15 +405,12 @@ flowchart TD
     L --> I[SQLite integrity_check quick<br/>+ migration check]
     I --> X[Expire leases of dead instances]
     X --> R{For each run in starting/running}
-    R --> P{Process still alive?<br/>pid + start-time + cmdline match}
+    R --> P{Recorded process group?}
     P -- yes, orphan --> K[Terminate process group]
     P -- no --> U
-    K --> U[Parse captured transcript tail<br/>for usage + result]
-    U --> V{Result complete and valid?}
-    V -- yes --> C[Submit RunCompleted<br/>idempotency key = run id]
-    V -- no --> F[Mark run abandoned,<br/>settle usage reported or estimated]
-    F --> W[Stash worktree changes to<br/>refs/turtle/recovery/run-id,<br/>reset to last Turtle Flow commit]
-    C --> G
+    K --> U[Parse durable stream spool<br/>for partial usage]
+    U --> F[Mark run cancelled if hard paused,<br/>otherwise abandoned; settle usage]
+    F --> W[Leave worktree unchanged;<br/>record whether it is dirty]
     W --> G[Git recovery probes per worktree:<br/>index.lock, rebase/merge in progress,<br/>missing dirs, unexpected refs]
     G --> E[Re-dispatch pending effects<br/>each with completion probe]
     E --> Q[Reconcile ledger:<br/>close reservations of final runs]
@@ -440,9 +437,9 @@ These 25 boundaries are each covered by a crash-injection test ([TESTING-STRATEG
 | 1 | Job created; first effect not dispatched | pending effect in outbox | Re-dispatch |
 | 2 | Preflight computed; reservation not written | run `queued` without reservation | Re-run preflight (deterministic) |
 | 3 | Reservation written; process not spawned | run `starting`, no PID | Spawn (idempotency key = run id) |
-| 4 | Process spawned; PID not recorded | run `starting`, scratch dir has `pid` file written by supervisor before exec | Probe PID file; kill orphan; restart run as attempt+1 |
+| 4 | Supervisor spawned; PID not recorded | wrapper waits for a release line from daemon | Wrapper exits on daemon death; restart run as attempt+1 |
 | 5 | Run streaming | run `running`, lease expired | Orphan check → kill; parse transcript tail |
-| 6 | Process exited; result not committed | transcript has final result event | Submit `RunCompleted` from transcript |
+| 6 | Process exited; result not committed | durable stream spool exists | Recover partial usage, mark abandoned or cancelled, retry step |
 | 7 | Output blob written; revision not committed | orphan blob (no row) | Recreated from transcript in step 6; orphan blobs GC'd |
 | 8 | Run committed; settlement missing | final run with open reservation | Ledger reconciliation settles |
 | 9 | Approval pending | — | Nothing (waits for user) |
@@ -450,7 +447,7 @@ These 25 boundaries are each covered by a crash-injection test ([TESTING-STRATEG
 | 11 | Worktree intent written; `git worktree add` not run | effect pending; dir absent | Run `git worktree add` |
 | 12 | `git worktree add` done; DB not updated | dir exists, HEAD = expected base, branch matches | Mark effect complete |
 | 13 | Branch created; worktree add failed | branch exists, no worktree | `git worktree add <path> <branch>` (reuse branch if at base) |
-| 14 | Agent modified files; crashed before commit | dirty tree, run not final | Stash to recovery ref; reset; retry task |
+| 14 | Agent modified files; crashed before commit | dirty tree, run not final | Leave tree unchanged, record dirty state, retry task |
 | 15 | `git commit` in progress | `index.lock` present, no git process | Remove stale lock (only in Turtle Flow worktree, only if no git process holds it); recompute |
 | 16 | Commit created; DB not updated | HEAD has trailer `Turtle-Run: <id>` | Record commit (probe by trailer) |
 | 17 | Gate running | gate `running`, lease expired | Kill orphan; re-run gate (gates are idempotent by design) |

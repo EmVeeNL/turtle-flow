@@ -51,6 +51,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 10,
         sql: include_str!("../migrations/0010_task_links.sql"),
     },
+    Migration {
+        version: 11,
+        sql: include_str!("../migrations/0011_run_recovery.sql"),
+    },
 ];
 
 /// Newest schema generation this build understands.
@@ -191,7 +195,7 @@ mod tests {
     fn upgrading_v7_replaces_unused_provider_capabilities_and_can_resume() {
         let mut conn = Connection::open_in_memory().expect("open");
         migrate_with(&mut conn, &MIGRATIONS[..7], None, "t").expect("v7");
-        migrate(&mut conn, None, "t").expect("v8");
+        migrate_with(&mut conn, &MIGRATIONS[..8], None, "t").expect("v8");
         let tables = |conn: &Connection| -> Vec<String> {
             conn.prepare(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN
@@ -210,7 +214,8 @@ mod tests {
         );
         // A marker left behind by an interrupted upgrade re-runs the migration harmlessly.
         conn.pragma_update(None, "user_version", 7).expect("marker");
-        migrate(&mut conn, None, "t").expect("resume");
+        migrate_with(&mut conn, &MIGRATIONS[..8], None, "t").expect("resume");
+        migrate(&mut conn, None, "t").expect("v9");
         assert_eq!(current_version(&conn).expect("version"), latest_version());
         assert_eq!(tables(&conn).len(), 2);
     }
@@ -230,9 +235,9 @@ mod tests {
             .expect("count")
         };
         assert_eq!(indexes(&conn), 4);
+        // Replay only 0010: 0011 adds columns, which SQLite cannot add twice.
         conn.pragma_update(None, "user_version", 8).expect("marker");
-        migrate(&mut conn, None, "t").expect("resume");
-        assert_eq!(current_version(&conn).expect("version"), latest_version());
+        migrate_with(&mut conn, &MIGRATIONS[..9], None, "t").expect("resume");
         assert_eq!(indexes(&conn), 4);
     }
 

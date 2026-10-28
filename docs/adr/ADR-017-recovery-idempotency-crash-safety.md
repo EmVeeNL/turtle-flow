@@ -16,8 +16,8 @@ How do we guarantee that after any crash Turtle Flow converges to a correct stat
 1. **Transactional outbox:** state change + events + effect intents commit atomically; effects execute only after commit ([ARCHITECTURE.md §3.2](../ARCHITECTURE.md#32-the-command--transaction--effect-loop)).
 2. **Every effect has an idempotency key and a completion probe** that inspects the real world (Git refs, files, trailers, PR lists, transcripts) to detect prior completion before acting.
 3. **Leases with instance IDs** on running work; a new daemon instance treats leases from dead instances as expired after verifying process liveness.
-4. **Startup recovery** sequence (lock → integrity check → expire leases → orphan processes → transcript salvage → stash dirty worktrees → Git probes → re-dispatch effects → ledger reconciliation) before the scheduler starts ([WORKFLOW.md §10](../WORKFLOW.md#10-recovery-behavior)).
-5. **Agent runs are not resumed mid-flight** after a daemon crash: if the transcript contains a complete result it is accepted; otherwise the run is `abandoned`, usage settled (reported or estimated), worktree changes stashed to a recovery ref, and the task retried.
+4. **Startup recovery** sequence (lock → terminate recorded orphan process groups → salvage partial transcripts and usage → expire leases → re-dispatch effects) before the scheduler starts ([WORKFLOW.md §10](../WORKFLOW.md#10-recovery-behavior)).
+5. **Agent runs are not resumed mid-flight** after a daemon crash: the run is `cancelled` when a hard pause is held, otherwise `abandoned`; reported partial usage is settled, the worktree remains untouched, and the interrupted step gets a new attempt.
 6. **Crash-injection tests** for 25 defined step boundaries are part of the Definition of Done.
 
 ## Considered Alternatives
@@ -56,7 +56,7 @@ Outbox + probes is a proven pattern for exactly-once *effects* over at-least-onc
 - **Startup recovery** (`Engine::recover`): instances that did not stop cleanly are marked stopped, their claimed effects return to `pending`, effects that already used every attempt become `failed` and their jobs are blocked. Each requeue and failure is an event, and `daemon.recovered` summarizes the run.
 - **Crash injection.** `CrashPlan` marks every step boundary (after claim, after execution, around every decision and commit). The test harness crashes at boundary N, boots a fresh instance on the same on-disk database, and compares the finished job's event history and effect set with an uninterrupted run, for every N and for pairs of crashes. A separate seeded `kill -9` subprocess loop now exercises daemon restart through demo-agent delivery; it does not yet kill at every step boundary, and its kill timing is concentrated around scheduler and Git effects. Power-loss simulation remains planned.
 - **Mutation-checked.** Replacing the atomic completion with two transactions fails the harness, and so does disabling recovery.
-- **Not yet covered** (no code exists for them yet): orphaned agent processes, reservation and ledger reconciliation, recovery refs for interrupted agent work, and the effect-specific completion probes (worktree, commit, delivery). The generic protocol is proven; each executor must bring its own probe test when it is added.
+- **At this point** orphaned agent processes, reservation and ledger reconciliation, recovery refs for interrupted agent work, and effect-specific completion probes were not implemented. Later notes below describe the added coverage.
 ## Executor probes (2026-10-25)
 
 `FactoryExecutor` gives every effect kind its own completion probe, and the end-to-end crash test (`turtle-scheduler/tests/e2e.rs`) crashes at **every** "effect executed" boundary plus a spread of the others, with real Git:
@@ -75,7 +75,12 @@ The crash test asserts, for every sampled boundary: exactly one delivery commit,
 
 Task probe update (issue #63, 2026-10-28): task progress is read from the `tasks` table, so a task whose run changed nothing (and left no commit) is no longer re-run after a crash. Trailers are checked against the table, not used to rebuild it; a commit by the task's own run that the table missed is recorded (boundary 16) and any other disagreement blocks the job as `task_state_mismatch` ([WORKFLOW.md §10](../WORKFLOW.md#10-recovery-behavior)). `crates/turtle-scheduler/tests/tasks.rs` covers re-delivery, boundary 16 and mismatches with real Git.
 
-Known gaps: a task whose agent run produced no change leaves no commit, so it is re-run after a crash; gate output beyond the last 4000 characters is not kept; `terminate_runs` cannot yet stop a run that is still executing (no run supervisor).
+Known gaps: a task whose agent run produced no change leaves no commit, so it is re-run after a crash; gate output beyond the last 4000 characters is not kept.
+
+## Hard pause and run recovery (2026-10-28)
+
+The run supervisor detects a persisted hard pause, signals the agent process group and escalates after a bounded grace period. The provider starts behind a waiting wrapper: the daemon records the process group PID before releasing the CLI, so a crash before registration cannot start an orphan provider. A mode-0600 stdout spool is synced during execution. Cancellation and restart recovery parse available usage, redact and store the partial transcript, and settle the reservation in one transaction. Migration 0011 makes usage records unique by run. `run.cancelled` and `run.abandoned` events use the existing hash chain. The worktree is left intact and its dirty state is recorded; resumption retries only the interrupted step with a new attempt and interruption context. The crash-injection test covers a pause committed just before daemon loss and validates the recovered ledger and event chain.
+
 ## Related ADRs
 
 [ADR-004](ADR-004-sqlite-persistence-event-logging.md), [ADR-005](ADR-005-workflow-state-machine.md), [ADR-009](ADR-009-git-worktree-isolation.md), [ADR-011](ADR-011-job-scheduling-concurrency.md)

@@ -148,11 +148,23 @@ pub struct RunRecord {
     pub transcript_blob: Option<turtle_domain::Sha256>,
 }
 
+#[derive(Debug, Clone)]
+pub struct OpenRun {
+    pub id: RunId,
+    pub job_id: JobId,
+    pub provider: String,
+    pub role: Role,
+    pub pid: Option<u32>,
+    pub spool_path: Option<String>,
+}
+
 /// How a run ended, for the `agent_runs` row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunEnd {
     Succeeded,
     Failed { retryable: bool },
+    Cancelled,
+    Abandoned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -629,11 +641,16 @@ impl Tx<'_> {
     /// most one; stage-level runs keep `task_id = NULL`.
     pub fn begin_run(&mut self, run: &NewRun) -> Result<()> {
         let now = self.now()?;
+        let attempt: i64 = self.tx.query_row(
+            "SELECT COALESCE(MAX(attempt),0)+1 FROM agent_runs WHERE job_id=?1 AND stage=?2 AND role=?3",
+            params![run.job_id.to_string(), run.stage, crate::store::to_s(&run.role)?],
+            |r| r.get(0),
+        )?;
         self.tx.execute(
             "INSERT INTO agent_runs(id, job_id, role, stage, provider, model, adapter_version,
-                                    context_manifest_rev, status, started_at, created_at,
+                                    context_manifest_rev, attempt, status, started_at, created_at,
                                     cli_version, task_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?9,
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, 'running', ?9, ?9,
                      (SELECT cli_version FROM capability_snapshots WHERE provider = ?5
                       ORDER BY version DESC LIMIT 1),
                      (SELECT id FROM tasks WHERE job_id = ?2 AND ?3 IN ('implementer', 'fixer')
@@ -648,7 +665,8 @@ impl Tx<'_> {
                 run.model,
                 run.adapter_version,
                 run.context_manifest_rev,
-                now
+                now,
+                attempt,
             ],
         )?;
         self.tx.execute(
@@ -656,6 +674,25 @@ impl Tx<'_> {
              SELECT ?1, id FROM capability_snapshots WHERE provider = ?2
              ORDER BY version DESC LIMIT 1",
             params![run.id.to_string(), run.provider],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_run_process(&mut self, run: RunId, pid: u32, spool_path: &str) -> Result<()> {
+        let updated = self.tx.execute(
+            "UPDATE agent_runs SET pid=?1, transcript_spool_path=?2 WHERE id=?3 AND status='running'",
+            params![i64::from(pid), spool_path, run.to_string()],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::NotFound(format!("active run {run}")));
+        }
+        Ok(())
+    }
+
+    pub fn request_cancel_for_job(&mut self, job: JobId) -> Result<()> {
+        self.tx.execute(
+            "UPDATE agent_runs SET cancel_requested=1 WHERE job_id=?1 AND status IN ('queued','starting','running')",
+            [job.to_string()],
         )?;
         Ok(())
     }
@@ -709,6 +746,8 @@ impl Tx<'_> {
         let (status, retryable) = match end {
             RunEnd::Succeeded => ("succeeded", None),
             RunEnd::Failed { retryable } => ("failed", Some(i64::from(retryable))),
+            RunEnd::Cancelled => ("cancelled", None),
+            RunEnd::Abandoned => ("abandoned", None),
         };
         let (job, provider, model, project): (String, String, String, String) = self.tx.query_row(
             "SELECT a.job_id, a.provider, a.model, j.project_id FROM agent_runs a
@@ -778,6 +817,55 @@ impl Tx<'_> {
 }
 
 impl Store {
+    pub fn run_cancel_requested(&self, run: RunId) -> Result<bool> {
+        let requested: i64 = self.raw_connection().query_row(
+            "SELECT cancel_requested FROM agent_runs WHERE id=?1",
+            [run.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(requested != 0)
+    }
+
+    pub fn live_cancel_requested(&self, job: JobId) -> Result<bool> {
+        let count: i64 = self.raw_connection().query_row(
+            "SELECT count(*) FROM agent_runs WHERE job_id=?1 AND cancel_requested=1 AND status IN ('queued','starting','running')",
+            [job.to_string()], |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    }
+    pub fn open_runs_for_recovery(&self) -> Result<Vec<OpenRun>> {
+        let mut stmt = self.raw_connection().prepare(
+            "SELECT id,job_id,provider,role,pid,transcript_spool_path FROM agent_runs
+             WHERE status IN ('queued','starting','running')",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<i64>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(id, job_id, provider, role, pid, spool_path)| {
+                Ok(OpenRun {
+                    id: id
+                        .parse()
+                        .map_err(|_| StoreError::Corrupt(format!("bad run id {id}")))?,
+                    job_id: job_id
+                        .parse()
+                        .map_err(|_| StoreError::Corrupt(format!("bad job id {job_id}")))?,
+                    provider,
+                    role: serde_json::from_value(serde_json::Value::String(role))?,
+                    pid: pid.and_then(|p| u32::try_from(p).ok()),
+                    spool_path,
+                })
+            })
+            .collect()
+    }
     pub fn recent_runs(&self, limit: usize) -> Result<Vec<RunRecord>> {
         let mut runs = read_runs(self.raw_connection(), None, None)?;
         runs.reverse();

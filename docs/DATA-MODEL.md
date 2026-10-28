@@ -172,7 +172,7 @@ CREATE TABLE tasks (
   UNIQUE (plan_revision_id, ordinal)
 );
 CREATE INDEX ix_tasks_job_state ON tasks(job_id, state);
--- v10 (0010_task_links.sql): per-task lookups. 0009 is reserved for another change.
+-- v10 (0010_task_links.sql): per-task lookups. Version 9 is unused.
 CREATE INDEX ix_tasks_job_revision ON tasks(job_id, plan_revision_id, ordinal);
 CREATE INDEX ix_runs_task ON agent_runs(task_id) WHERE task_id IS NOT NULL;
 CREATE INDEX ix_gates_task ON gate_results(task_id, created_at) WHERE task_id IS NOT NULL;
@@ -262,7 +262,7 @@ CREATE INDEX ix_usage_job ON usage_records(job_id);
 
 **Implementation status (M2, 2026-10-25):** `context_manifest_rev` is populated before each agent process starts when repository context is available. Its referenced `context_manifest` artifact revision contains the redacted package item list, exclusions, size estimates, and package hash.
 
-Run transcripts are stored as redacted content-addressed blobs and linked through `agent_runs.transcript_blob`. The current runner captures at process completion and caps the redacted stream at 2 MiB; denied actions are separate `run.policy_denied` audit events.
+Run transcripts are stored as redacted content-addressed blobs and linked through `agent_runs.transcript_blob`. Migration 0011 adds `transcript_spool_path` for crash recovery, a durable `cancel_requested` flag on active runs, and a unique index on `usage_records(run_id)`. The supervisor fsyncs a mode-0600 raw stdout spool while the process runs, then removes it after the run and ledger settlement commit. A hard-paused run is `cancelled`; the available usage is settled once, the redacted transcript is linked, and a hash-chained `run.cancelled` event records the worktree's dirty state. Startup recovery terminates recorded process groups and applies the same settlement; interrupted runs without a hard pause become `abandoned`. Denied actions remain separate `run.policy_denied` audit events.
 
 ### 3.4 Budgets, reservations, ledger, estimation
 

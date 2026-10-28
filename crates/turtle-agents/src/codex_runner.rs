@@ -110,8 +110,12 @@ impl AgentRunner for CodexRunner {
             .args(self.args(req.role, schema_path.as_deref(), workdir))
             .cwd(workdir)
             .stdin(prompts::build(req))
+            .job_key(req.control_key().to_owned())
             .timeout(self.config.timeout);
         spec.inherit_env.clone_from(&self.config.inherit_env);
+        if let Some(path) = &req.spool_path {
+            spec = spec.spool_stdout(path);
+        }
         let output = match turtle_exec::run(spec).await {
             Ok(o) => o,
             Err(ExecError::NotFound(p)) => {
@@ -196,6 +200,9 @@ fn interpret_with_clock(
     let usage = summary.usage.map(|usage| UsageValue::Reported { usage });
     let detail = |error: AgentError| error.with_details(usage, transcript.clone(), Vec::new());
     match out.outcome {
+        ExitOutcome::Cancelled => {
+            return Err(AgentError::cancelled(usage, transcript, Vec::new()));
+        }
         ExitOutcome::TimedOut => {
             return Err(detail(AgentError::Fatal(format!(
                 "the run was stopped after {}s",

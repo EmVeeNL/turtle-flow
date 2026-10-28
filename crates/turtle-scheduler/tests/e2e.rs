@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tempfile::TempDir;
@@ -25,6 +26,7 @@ use turtle_store::{
     NewProject, Store, SystemClock,
 };
 use turtle_workflow::Profile;
+use turtle_workflow::{JobCommand, PauseMode, StageMode};
 
 type Ctx = StoreContext<RepoGitFacts>;
 type Exec<R> = FactoryExecutor<R, Ctx, RepoGitFacts>;
@@ -2421,4 +2423,320 @@ async fn a_failed_run_without_usage_remains_unknown_and_releases_its_reservation
         budgets[0].settled_tokens,
         usage.tokens_reported + usage.tokens_estimated
     );
+}
+
+struct PauseStub {
+    fake: FakeRunner,
+    spec_calls: AtomicUsize,
+    soft: bool,
+}
+
+impl AgentRunner for PauseStub {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+
+    async fn run(&self, req: &AgentRequest) -> Result<AgentOutput, AgentError> {
+        if req.role == Role::SpecWriter && self.spec_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            if self.soft {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                return self.fake.run(req).await;
+            }
+            let stream = "printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"id\":\"partial\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}' 'api_key = ghp_synthetic123456789012345678901234567890'; while :; do sleep 1; done";
+            let spec = turtle_exec::CommandSpec::new("sh")
+                .args(["-c", stream])
+                .job_key(req.control_key().to_owned())
+                .spool_stdout(req.spool_path.as_ref().expect("spool path"))
+                .kill_grace(Duration::from_millis(100));
+            let output = turtle_exec::run(spec)
+                .await
+                .map_err(|e| AgentError::Fatal(e.to_string()))?;
+            return turtle_agents::claude_runner::interpret(&output, req.role);
+        }
+        self.fake.run(req).await
+    }
+}
+
+async fn pause_env(soft: bool) -> Env<PauseStub> {
+    let mut profile = Profile::standard();
+    profile.discovery = StageMode::On;
+    Env::new_with_profile(
+        PauseStub {
+            fake: FakeRunner::new(),
+            spec_calls: AtomicUsize::new(0),
+            soft,
+        },
+        settings(None, None),
+        profile,
+    )
+    .await
+}
+
+async fn start_spec_run(
+    env: &Env<PauseStub>,
+    b: &Booted<PauseStub>,
+) -> tokio::task::JoinHandle<Result<turtle_scheduler::TickReport, DispatchError>> {
+    b.dispatcher
+        .engine()
+        .submit(env.job, JobCommand::Start, Actor::local_user())
+        .await
+        .expect("start");
+    b.dispatcher.tick().await.expect("discovery");
+    assert_eq!(b.job(env.job).await.job.state, JobState::Specification);
+    let dispatcher = b.dispatcher.clone();
+    tokio::spawn(async move { dispatcher.tick().await })
+}
+
+async fn wait_for_spec_process(b: &Booted<PauseStub>) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let open = b
+                .store
+                .with(|s| s.open_runs_for_recovery())
+                .await
+                .expect("open runs");
+            if open.iter().any(|run| {
+                run.role == Role::SpecWriter
+                    && run.pid.is_some()
+                    && run
+                        .spool_path
+                        .as_deref()
+                        .and_then(|p| std::fs::metadata(p).ok())
+                        .is_some_and(|m| m.len() > 0)
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("spec process started");
+}
+
+#[tokio::test]
+async fn hard_pause_settles_partial_usage_once_and_resumes_a_new_attempt() {
+    let env = pause_env(false).await;
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let mut tick = start_spec_run(&env, &b).await;
+    wait_for_spec_process(&b).await;
+    b.dispatcher
+        .engine()
+        .submit(
+            env.job,
+            JobCommand::Pause {
+                mode: PauseMode::Hard,
+            },
+            Actor::local_user(),
+        )
+        .await
+        .expect("hard pause");
+    tokio::time::timeout(Duration::from_secs(5), &mut tick)
+        .await
+        .expect("tick stopped")
+        .expect("joined")
+        .expect("tick");
+    let runs = b
+        .store
+        .with({
+            let id = env.job;
+            move |s| s.runs_for_job(id)
+        })
+        .await
+        .expect("runs");
+    let cancelled = runs
+        .iter()
+        .find(|r| r.role == "spec_writer" && r.status == "cancelled")
+        .expect("cancelled run");
+    assert_eq!(cancelled.input + cancelled.output, 15);
+    assert_eq!(cancelled.provenance, "reported");
+    let transcript = env
+        .blobs
+        .get(&cancelled.transcript_blob.expect("transcript"))
+        .expect("blob");
+    assert!(
+        !String::from_utf8(transcript)
+            .expect("utf8")
+            .contains("ghp_synthetic123456789012345678901234567890")
+    );
+    assert_eq!(b.job(env.job).await.job.state, JobState::Specification);
+    b.dispatcher
+        .engine()
+        .submit(env.job, JobCommand::Resume, Actor::local_user())
+        .await
+        .expect("resume");
+    for _ in 0..3 {
+        b.dispatcher.tick().await.expect("resume tick");
+    }
+    assert_eq!(b.job(env.job).await.job.state, JobState::ScopeApproval);
+    let conn = Store::open(&env.db, Arc::new(SystemClock)).expect("store");
+    let rows: Vec<(String, i64)> = {
+        let mut stmt = conn.raw_connection().prepare("SELECT status,attempt FROM agent_runs WHERE job_id=?1 AND role='spec_writer' ORDER BY attempt").expect("statement");
+        stmt.query_map([env.job.to_string()], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(rows, [("cancelled".into(), 1), ("succeeded".into(), 2)]);
+    assert_eq!(env.runner.fake.calls_of(Role::Discovery), 1);
+    assert!(
+        env.runner
+            .fake
+            .calls()
+            .iter()
+            .any(|c| c.role == Role::SpecWriter && c.had_feedback)
+    );
+    let usage_rows: i64 = conn
+        .raw_connection()
+        .query_row(
+            "SELECT COUNT(*) FROM usage_records WHERE run_id=?1",
+            [cancelled.id.as_str()],
+            |r| r.get(0),
+        )
+        .expect("usage count");
+    assert_eq!(usage_rows, 1);
+    assert!(matches!(
+        conn.verify_ledger().expect("ledger"),
+        LedgerVerdict::Consistent { .. }
+    ));
+    assert!(matches!(
+        conn.verify_chain().expect("chain"),
+        ChainVerdict::Intact { .. }
+    ));
+}
+
+#[tokio::test]
+async fn soft_pause_lets_the_current_agent_finish() {
+    let env = pause_env(true).await;
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let mut tick = start_spec_run(&env, &b).await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    b.dispatcher
+        .engine()
+        .submit(
+            env.job,
+            JobCommand::Pause {
+                mode: PauseMode::Soft,
+            },
+            Actor::local_user(),
+        )
+        .await
+        .expect("soft pause");
+    tokio::time::timeout(Duration::from_secs(5), &mut tick)
+        .await
+        .expect("tick finished")
+        .expect("joined")
+        .expect("tick");
+    let job = b.job(env.job).await;
+    assert_eq!(job.job.state, JobState::ScopeApproval);
+    assert!(job.job.is_paused());
+    let runs = b
+        .store
+        .with({
+            let id = env.job;
+            move |s| s.runs_for_job(id)
+        })
+        .await
+        .expect("runs");
+    assert!(
+        runs.iter()
+            .any(|r| r.role == "spec_writer" && r.status == "succeeded")
+    );
+    assert!(!runs.iter().any(|r| r.status == "cancelled"));
+}
+
+#[tokio::test]
+async fn immediate_resume_still_cancels_the_interrupted_run() {
+    let env = pause_env(false).await;
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let mut tick = start_spec_run(&env, &b).await;
+    wait_for_spec_process(&b).await;
+    b.dispatcher
+        .engine()
+        .submit(
+            env.job,
+            JobCommand::Pause {
+                mode: PauseMode::Hard,
+            },
+            Actor::local_user(),
+        )
+        .await
+        .expect("pause");
+    b.dispatcher
+        .engine()
+        .submit(env.job, JobCommand::Resume, Actor::local_user())
+        .await
+        .expect("resume");
+    tokio::time::timeout(Duration::from_secs(5), &mut tick)
+        .await
+        .expect("tick stopped")
+        .expect("joined")
+        .expect("tick");
+    let runs = b
+        .store
+        .with({
+            let id = env.job;
+            move |s| s.runs_for_job(id)
+        })
+        .await
+        .expect("runs");
+    assert!(
+        runs.iter()
+            .any(|r| r.role == "spec_writer" && r.status == "cancelled")
+    );
+    for _ in 0..3 {
+        b.dispatcher.tick().await.expect("retry tick");
+    }
+    assert_eq!(b.job(env.job).await.job.state, JobState::ScopeApproval);
+}
+
+#[tokio::test]
+async fn crash_during_hard_pause_recovers_the_run_and_ledger() {
+    let env = pause_env(false).await;
+    let (b, _) = env.boot(CrashPlan::never()).await;
+    let tick = start_spec_run(&env, &b).await;
+    wait_for_spec_process(&b).await;
+    let engine = Engine::new(
+        b.store.clone(),
+        Arc::new(turtle_scheduler::StaticContext::default()),
+        CrashPlan::at(1),
+    );
+    let err = engine
+        .submit(
+            env.job,
+            JobCommand::Pause {
+                mode: PauseMode::Hard,
+            },
+            Actor::local_user(),
+        )
+        .await
+        .expect_err("injected crash");
+    assert!(matches!(err, EngineError::Crashed(_)));
+    tick.abort();
+    let _ = tick.await;
+    let (restarted, report) = env.boot(CrashPlan::never()).await;
+    assert!(report.effects_requeued > 0);
+    let runs = restarted
+        .store
+        .with({
+            let id = env.job;
+            move |s| s.runs_for_job(id)
+        })
+        .await
+        .expect("runs");
+    let cancelled = runs
+        .iter()
+        .find(|r| r.role == "spec_writer" && r.status == "cancelled")
+        .expect("recovered cancelled run");
+    assert_eq!(cancelled.input + cancelled.output, 15);
+    assert!(cancelled.transcript_blob.is_some());
+    let conn = Store::open(&env.db, Arc::new(SystemClock)).expect("store");
+    assert!(matches!(
+        conn.verify_ledger().expect("ledger"),
+        LedgerVerdict::Consistent { .. }
+    ));
+    assert!(matches!(
+        conn.verify_chain().expect("chain"),
+        ChainVerdict::Intact { .. }
+    ));
+    assert!(restarted.job(env.job).await.job.is_paused());
 }

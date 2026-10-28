@@ -120,6 +120,7 @@ mod tests {
             run_id: RunId::new(),
             role,
             job_key: "API-7".into(),
+            control_key: None,
             title: "Add rate limiting".into(),
             description: "Limit each client to 100 requests per minute.".into(),
             workdir: None,
@@ -129,6 +130,7 @@ mod tests {
             feedback: None,
             diff_summary: None,
             context: None,
+            spool_path: None,
         }
     }
 

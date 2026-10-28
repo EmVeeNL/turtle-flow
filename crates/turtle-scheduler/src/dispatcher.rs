@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::{Notify, watch};
+use tokio::task::AbortHandle;
 use tokio::task::JoinSet;
 use turtle_store::{ClaimParams, EffectRow, RecoveryReport, StoreError};
 use turtle_workflow::{Effect, JobCommand};
@@ -84,6 +85,8 @@ pub enum ExecError {
         reason: String,
         not_before: String,
     },
+    #[error("run interrupted by hard pause")]
+    Interrupted,
 }
 
 /// Performs effects. Must be idempotent per `effect.idempotency_key`.
@@ -92,6 +95,10 @@ pub trait Executor: Send + Sync + 'static {
         &self,
         effect: &EffectRow,
     ) -> impl Future<Output = Result<ExecOutcome, ExecError>> + Send;
+
+    fn recover_orphans(&self) -> impl Future<Output = Result<(), ExecError>> + Send {
+        async { Ok(()) }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +109,8 @@ pub enum DispatchError {
     Engine(#[from] EngineError),
     #[error(transparent)]
     Crashed(#[from] Crashed),
+    #[error("run recovery failed: {0}")]
+    Recovery(String),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -127,6 +136,14 @@ pub struct Dispatcher<E, C> {
     instance: String,
     crash: CrashPlan,
     wake: Arc<Notify>,
+}
+
+struct AbortOnDrop(AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl<E, C> Clone for Dispatcher<E, C> {
@@ -168,6 +185,10 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
             })
             .await?;
         let engine = Engine::new(store, ctx, crash.clone());
+        executor
+            .recover_orphans()
+            .await
+            .map_err(|e| DispatchError::Recovery(e.to_string()))?;
         let report = engine.recover(&instance).await?;
         Ok((
             Self {
@@ -261,6 +282,7 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
         let executor = Arc::clone(&self.executor);
         let for_task = effect.clone();
         let mut handle = tokio::spawn(async move { executor.execute(&for_task).await });
+        let _abort_on_drop = AbortOnDrop(handle.abort_handle());
 
         let outcome = tokio::select! {
             joined = &mut handle => Some(match joined {
@@ -308,6 +330,9 @@ impl<E: Executor, C: ContextProvider> Dispatcher<E, C> {
                 self.engine
                     .defer_effect_until(&effect, &instance, command, &reason, &not_before)
                     .await?
+            }
+            Err(ExecError::Interrupted) => {
+                self.engine.defer_interrupted(&effect, &instance).await?
             }
         };
         Ok(finished)

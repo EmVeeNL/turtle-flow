@@ -73,7 +73,7 @@ pub enum JobCommandLine {
     /// Pause a job.
     Pause {
         key: String,
-        /// Stop the current agent run too (not implemented yet: the run finishes first).
+        /// Stop the current agent run and resume it as a new attempt.
         #[arg(long)]
         hard: bool,
     },
@@ -248,7 +248,14 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
             } else {
                 PauseMode::Soft
             };
-            act(rt, &key, JobCommand::Pause { mode }, "Paused").await
+            if hard {
+                let job = find(rt, &key).await?;
+                let after = submit(rt, &job, JobCommand::Pause { mode }).await?;
+                println!("Pausing... {}", after.key);
+                Ok(())
+            } else {
+                act(rt, &key, JobCommand::Pause { mode }, "Paused").await
+            }
         }
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
         JobCommandLine::ApproveBudget { key, budget } => {
@@ -607,7 +614,7 @@ async fn show(rt: &Runtime, key: &str, json: bool) -> Result<()> {
     let job = find(rt, key).await?;
     let id = job.job.id;
     let project = rt.store.with(move |s| s.project_of_job(id)).await?;
-    let (approvals, events, delivery, gate_revision, tasks) = rt
+    let (approvals, events, delivery, gate_revision, tasks, runs) = rt
         .store
         .with(move |s| {
             Ok::<_, turtle_store::StoreError>((
@@ -616,6 +623,7 @@ async fn show(rt: &Runtime, key: &str, json: bool) -> Result<()> {
                 s.delivery(id)?,
                 s.latest_revision(id, ArtifactKind::GateResult)?,
                 s.task_summaries(Some(id))?,
+                s.runs_for_job(id)?,
             ))
         })
         .await?;
@@ -678,6 +686,26 @@ async fn show(rt: &Runtime, key: &str, json: bool) -> Result<()> {
     println!("{}  {}", job.key, job.title);
     println!("  project      {} ({})", project.name, project.slug);
     println!("  state        {}", label(&job.job.state));
+    if let Some(mode) = job.job.holds.iter().find_map(|hold| match hold {
+        Hold::Paused { mode } => Some(mode),
+        _ => None,
+    }) {
+        let status = match mode {
+            PauseMode::Soft => "paused",
+            PauseMode::Hard
+                if runs
+                    .iter()
+                    .any(|r| matches!(r.status.as_str(), "queued" | "starting" | "running")) =>
+            {
+                "pausing..."
+            }
+            PauseMode::Hard if runs.iter().any(|r| r.status == "cancelled") => {
+                "paused (run cancelled)"
+            }
+            PauseMode::Hard => "paused",
+        };
+        println!("  pause        {status}");
+    }
     println!("  profile      {}", job.job.profile.name);
     println!(
         "  type         {}   priority {}",

@@ -27,7 +27,7 @@ Job worktree paths are derived from the same `Layout` used by the scheduler and 
 |---|---|---|---|
 | Target / integration | project `delivery.target_branch` (default: repo default branch, e.g. `main`) | User | Protected by default |
 | Job branch | `turtle/<job-key>-<slug>` e.g. `turtle/API-42-add-rate-limiting` | Turtle Flow | Created from recorded `base_commit` |
-| Recovery refs | `refs/turtle/recovery/<run-id>` | Turtle Flow | Stashed uncommitted agent changes after crash/hard pause; not branches (hidden from `git branch`) |
+| Recovery refs | `refs/turtle/recovery/<run-id>` | Turtle Flow | Quarantined changes after a Git policy violation; not branches (hidden from `git branch`). Hard pause leaves the worktree in place. |
 | Delivery temp | `refs/turtle/delivery/<job-key>` | Turtle Flow | Plumbing-built merge result before CAS ref update |
 | Release tags | `v<semver>` (configurable) | Turtle Flow (after release approval) | Annotated |
 

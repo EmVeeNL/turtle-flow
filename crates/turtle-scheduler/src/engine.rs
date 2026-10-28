@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use turtle_domain::{Actor, JobId};
 use turtle_store::{EffectFate, EffectRow, JobRecord, RecoveryReport, StoreError};
-use turtle_workflow::{BlockReason, DecisionContext, JobCommand, Rejection, decide};
+use turtle_workflow::{BlockReason, DecisionContext, JobCommand, PauseMode, Rejection, decide};
 
 use crate::crash::{CrashPlan, Crashed};
 use crate::shared::SharedStore;
@@ -106,12 +106,29 @@ impl<C: ContextProvider> Engine<C> {
                 .with(move |s| {
                     s.transaction(|tx| {
                         tx.apply_decision(version, &decision, &c, &a)?;
+                        if matches!(
+                            c,
+                            JobCommand::Pause {
+                                mode: PauseMode::Hard
+                            }
+                        ) {
+                            tx.request_cancel_for_job(job)?;
+                        }
                         tx.load_job(job)
                     })
                 })
                 .await;
             match stored {
                 Ok(rec) => {
+                    match cmd {
+                        JobCommand::Pause {
+                            mode: PauseMode::Hard,
+                        } => {
+                            turtle_exec::cancel_job(&rec.job.id.to_string());
+                        }
+                        JobCommand::Resume => turtle_exec::resume_job(&rec.job.id.to_string()),
+                        _ => {}
+                    }
                     self.crash.point("submit:committed")?;
                     return Ok(rec);
                 }
@@ -143,6 +160,13 @@ impl<C: ContextProvider> Engine<C> {
         }
         let cx = self.ctx.context(&record).await;
         let decision = decide(&record.job, &cmd, &actor, &cx)?;
+        let hard_pause = matches!(
+            cmd,
+            JobCommand::Pause {
+                mode: PauseMode::Hard
+            }
+        );
+        let resume = matches!(cmd, JobCommand::Resume);
         self.crash.point("submit:decided")?;
         let outcome = self
             .store
@@ -157,12 +181,20 @@ impl<C: ContextProvider> Engine<C> {
                         return Ok((tx.load_job(job)?, true));
                     }
                     tx.apply_decision(expected_version, &decision, &cmd, &actor)?;
+                    if hard_pause {
+                        tx.request_cancel_for_job(job)?;
+                    }
                     let updated = tx.load_job(job)?;
                     tx.remember_command(&key, &job.to_string(), &label, updated.job.version)?;
                     Ok((updated, false))
                 })
             })
             .await?;
+        if hard_pause && !outcome.1 {
+            turtle_exec::cancel_job(&outcome.0.job.id.to_string());
+        } else if resume && !outcome.1 {
+            turtle_exec::resume_job(&outcome.0.job.id.to_string());
+        }
         self.crash.point("submit:committed")?;
         Ok(outcome)
     }
@@ -270,6 +302,27 @@ impl<C: ContextProvider> Engine<C> {
             Some(not_before.to_owned()),
         )
         .await
+    }
+
+    pub async fn defer_interrupted(
+        &self,
+        effect: &EffectRow,
+        instance: &str,
+    ) -> Result<Finished, EngineError> {
+        let (id, inst) = (effect.id, instance.to_owned());
+        match self
+            .store
+            .with(move |s| {
+                s.transaction(|tx| {
+                    tx.defer_effect(id, &inst, "run interrupted by hard pause", None)
+                })
+            })
+            .await
+        {
+            Ok(()) => Ok(Finished::Requeued),
+            Err(StoreError::LeaseLost { .. }) => Ok(Finished::LeaseLost),
+            Err(e) => Err(e.into()),
+        }
     }
 
     async fn defer_effect_inner(

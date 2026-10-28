@@ -11,6 +11,7 @@ fn request(workdir: &Path) -> AgentRequest {
         run_id: RunId::new(),
         role: Role::Discovery,
         job_key: "API-1".into(),
+        control_key: None,
         title: "Find files".into(),
         description: "List the layout".into(),
         workdir: Some(workdir.to_path_buf()),
@@ -20,6 +21,7 @@ fn request(workdir: &Path) -> AgentRequest {
         feedback: None,
         diff_summary: None,
         context: None,
+        spool_path: None,
     }
 }
 

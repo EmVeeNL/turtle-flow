@@ -22,6 +22,8 @@ pub struct AgentRequest {
     pub run_id: RunId,
     pub role: Role,
     pub job_key: String,
+    /// Unique job identifier used for process cancellation across projects.
+    pub control_key: Option<String>,
     pub title: String,
     pub description: String,
     /// The directory the run works in: the job worktree for code roles, the project checkout
@@ -35,12 +37,21 @@ pub struct AgentRequest {
     pub diff_summary: Option<String>,
     /// Redacted repository context and its auditable manifest, built by `turtle-context`.
     pub context: Option<AgentContext>,
+    /// Durable raw stream used to salvage usage and transcript after a daemon crash.
+    pub spool_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentContext {
     pub text: String,
     pub manifest_json: String,
+}
+
+impl AgentRequest {
+    #[must_use]
+    pub fn control_key(&self) -> &str {
+        self.control_key.as_deref().unwrap_or(&self.job_key)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +76,8 @@ pub enum AgentError {
     RetryableDetails(Box<AgentErrorDetails>),
     #[error("{0}")]
     FatalDetails(Box<AgentErrorDetails>),
+    #[error("{0}")]
+    Cancelled(Box<AgentErrorDetails>),
     #[error("{message}")]
     RateLimited {
         provider: String,
@@ -91,11 +104,29 @@ impl std::fmt::Display for AgentErrorDetails {
 
 impl AgentError {
     #[must_use]
+    pub fn cancelled(
+        usage: Option<UsageValue>,
+        transcript: Option<String>,
+        permission_denials: Vec<crate::claude::PermissionDenial>,
+    ) -> Self {
+        Self::Cancelled(Box::new(AgentErrorDetails {
+            message: "run cancelled by hard pause".into(),
+            usage,
+            transcript,
+            permission_denials,
+            quota: None,
+        }))
+    }
+    #[must_use]
     pub fn retryable(&self) -> bool {
         matches!(
             self,
             Self::Retryable(_) | Self::RetryableDetails(_) | Self::RateLimited { .. }
         )
+    }
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled(_))
     }
     #[must_use]
     pub fn rate_limit(&self) -> Option<(&str, Option<time::OffsetDateTime>)> {
@@ -111,7 +142,8 @@ impl AgentError {
         match self {
             Self::RateLimited { details, .. }
             | Self::RetryableDetails(details)
-            | Self::FatalDetails(details) => details.quota.as_ref(),
+            | Self::FatalDetails(details)
+            | Self::Cancelled(details) => details.quota.as_ref(),
             _ => None,
         }
     }
@@ -125,7 +157,9 @@ impl AgentError {
     #[must_use]
     pub fn usage(&self) -> Option<UsageValue> {
         match self {
-            Self::RetryableDetails(details) | Self::FatalDetails(details) => details.usage,
+            Self::RetryableDetails(details)
+            | Self::FatalDetails(details)
+            | Self::Cancelled(details) => details.usage,
             Self::RateLimited { details, .. } => details.usage,
             _ => None,
         }
@@ -133,9 +167,9 @@ impl AgentError {
     #[must_use]
     pub fn transcript(&self) -> Option<&str> {
         match self {
-            Self::RetryableDetails(details) | Self::FatalDetails(details) => {
-                details.transcript.as_deref()
-            }
+            Self::RetryableDetails(details)
+            | Self::FatalDetails(details)
+            | Self::Cancelled(details) => details.transcript.as_deref(),
             Self::RateLimited { details, .. } => details.transcript.as_deref(),
             _ => None,
         }
@@ -143,9 +177,9 @@ impl AgentError {
     #[must_use]
     pub fn permission_denials(&self) -> &[crate::claude::PermissionDenial] {
         match self {
-            Self::RetryableDetails(details) | Self::FatalDetails(details) => {
-                &details.permission_denials
-            }
+            Self::RetryableDetails(details)
+            | Self::FatalDetails(details)
+            | Self::Cancelled(details) => &details.permission_denials,
             Self::RateLimited { details, .. } => &details.permission_denials,
             _ => &[],
         }
@@ -157,12 +191,13 @@ impl AgentError {
         transcript: Option<String>,
         permission_denials: Vec<crate::claude::PermissionDenial>,
     ) -> Self {
-        let (retryable, message) = match self {
-            Self::Retryable(message) => (true, message),
-            Self::Fatal(message) => (false, message),
-            Self::RetryableDetails(details) => (true, details.message),
-            Self::FatalDetails(details) => (false, details.message),
-            Self::RateLimited { message, .. } => (true, message),
+        let (retryable, cancelled, message) = match self {
+            Self::Retryable(message) => (true, false, message),
+            Self::Fatal(message) => (false, false, message),
+            Self::RetryableDetails(details) => (true, false, details.message),
+            Self::FatalDetails(details) => (false, false, details.message),
+            Self::Cancelled(details) => (false, true, details.message),
+            Self::RateLimited { message, .. } => (true, false, message),
         };
         let details = Box::new(AgentErrorDetails {
             message,
@@ -171,7 +206,9 @@ impl AgentError {
             permission_denials,
             quota: None,
         });
-        if retryable {
+        if cancelled {
+            Self::Cancelled(details)
+        } else if retryable {
             Self::RetryableDetails(details)
         } else {
             Self::FatalDetails(details)
@@ -224,6 +261,10 @@ impl AgentError {
             Self::FatalDetails(mut details) => {
                 details.quota = quota;
                 Self::FatalDetails(details)
+            }
+            Self::Cancelled(mut details) => {
+                details.quota = quota;
+                Self::Cancelled(details)
             }
             Self::RateLimited {
                 provider,
@@ -655,6 +696,7 @@ mod tests {
             run_id: RunId::new(),
             role,
             job_key: "API-1".into(),
+            control_key: None,
             title: "Add thing".into(),
             description: "details".into(),
             workdir,
@@ -672,6 +714,7 @@ mod tests {
             feedback: None,
             diff_summary: None,
             context: None,
+            spool_path: None,
         }
     }
 

@@ -14,5 +14,10 @@ workspace = true
 [dependencies]
 turtle-domain = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+
+[target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

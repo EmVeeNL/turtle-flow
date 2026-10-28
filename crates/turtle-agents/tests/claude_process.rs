@@ -24,6 +24,7 @@ fn request(workdir: Option<&Path>) -> AgentRequest {
         run_id: RunId::new(),
         role: Role::Discovery,
         job_key: "API-1".into(),
+        control_key: None,
         title: "Find the limiter".into(),
         description: "Where is rate limiting done?".into(),
         workdir: workdir.map(Path::to_path_buf),
@@ -33,6 +34,7 @@ fn request(workdir: Option<&Path>) -> AgentRequest {
         feedback: None,
         diff_summary: None,
         context: None,
+        spool_path: None,
     }
 }
 

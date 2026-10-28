@@ -66,6 +66,7 @@ fn job_value(
     provider: &Option<String>,
     estimate: &Option<DashboardEstimate>,
     budgets: &[BudgetRecord],
+    runs: &[RunRecord],
 ) -> Value {
     let state = serde_json::to_value(j.job.state).unwrap_or(Value::Null);
     let hold = j.job.holds.first().map(|h| match h {
@@ -73,6 +74,30 @@ fn job_value(
         turtle_workflow::Hold::AwaitingBudget => "awaiting_budget",
         turtle_workflow::Hold::RateLimited { .. } => "rate_limited",
         turtle_workflow::Hold::WaitingForDependencies => "waiting_for_dependencies",
+    });
+    let pause_status = j.job.holds.iter().find_map(|h| match h {
+        turtle_workflow::Hold::Paused {
+            mode: turtle_workflow::PauseMode::Soft,
+        } => Some("paused"),
+        turtle_workflow::Hold::Paused {
+            mode: turtle_workflow::PauseMode::Hard,
+        } => {
+            let related: Vec<_> = runs
+                .iter()
+                .filter(|r| r.job_id == j.job.id.to_string())
+                .collect();
+            if related
+                .iter()
+                .any(|r| matches!(r.status.as_str(), "queued" | "starting" | "running"))
+            {
+                Some("pausing...")
+            } else if related.iter().any(|r| r.status == "cancelled") {
+                Some("paused (run cancelled)")
+            } else {
+                Some("paused")
+            }
+        }
+        _ => None,
     });
     let priority = serde_json::to_value(j.priority).unwrap_or(Value::Null);
     let job_type = serde_json::to_value(j.job_type).unwrap_or(Value::Null);
@@ -83,7 +108,7 @@ fn job_value(
         .iter()
         .find(|b| b.scope == BudgetScope::Job(j.job.id))
         .map(budget);
-    json!({"id":j.job.id.to_string(),"key":j.key.to_string(),"project_id":j.project_id.to_string(),"title":j.title,"description":j.description,"type":job_type,"profile":j.job.profile.name,"state":state,"hold":hold,"holds":j.job.holds,"priority":priority,"stage_index":stage_index(j.job.state),"provider":provider,"usage":usage_for_job(u),"estimate":estimate,"budget":budget,"elapsed":null,"base_commit":j.base_commit,"head_commit":null,"version":j.job.version})
+    json!({"id":j.job.id.to_string(),"key":j.key.to_string(),"project_id":j.project_id.to_string(),"title":j.title,"description":j.description,"type":job_type,"profile":j.job.profile.name,"state":state,"hold":hold,"pause_status":pause_status,"holds":j.job.holds,"priority":priority,"stage_index":stage_index(j.job.state),"provider":provider,"usage":usage_for_job(u),"estimate":estimate,"budget":budget,"elapsed":null,"base_commit":j.base_commit,"head_commit":null,"version":j.job.version})
 }
 fn stage_index(s: turtle_domain::JobState) -> usize {
     use turtle_domain::JobState;
@@ -205,7 +230,7 @@ pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         .iter()
         .zip(&usages)
         .zip(&job_facts)
-        .map(|((j, u), (provider, estimate))| job_value(j, u, provider, estimate, &budgets))
+        .map(|((j, u), (provider, estimate))| job_value(j, u, provider, estimate, &budgets, &runs))
         .collect();
     let approvals: Vec<_> = approvals
         .iter()
@@ -228,7 +253,7 @@ pub async fn project(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let (p, stats, jobs, approvals, budgets, usages, facts) = state
+    let (p, stats, jobs, approvals, budgets, usages, facts, runs) = state
         .services
         .store
         .with(move |s| {
@@ -256,6 +281,7 @@ pub async fn project(
                 s.list_budgets()?,
                 usages,
                 facts,
+                s.recent_runs(10_000)?,
             ))
         })
         .await
@@ -265,7 +291,9 @@ pub async fn project(
         jobs.iter()
             .zip(&usages)
             .zip(&facts)
-            .map(|((j, u), (provider, estimate))| job_value(j, u, provider, estimate, &budgets))
+            .map(|((j, u), (provider, estimate))| job_value(
+                j, u, provider, estimate, &budgets, &runs
+            ))
             .collect::<Vec<_>>()
     );
     Ok(Json(value))
@@ -357,7 +385,7 @@ pub async fn job(
         })
         .await
         .map_err(store_error)?;
-    let mut value = job_value(&job, &usage, &provider, &estimate, &budgets);
+    let mut value = job_value(&job, &usage, &provider, &estimate, &budgets, &runs);
     value["gates"] = gate_revision
         .as_ref()
         .and_then(|revision| state.services.blobs.get(&revision.sha256).ok())
