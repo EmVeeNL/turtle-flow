@@ -24,6 +24,14 @@ describe('real dashboard adapter', () => {
       acknowledged_flags:['protected_path:Cargo.lock']
     });
   });
+  it('requests an exact budget increase for a held job', async () => {
+    const fetch=vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,approval_id:'a1',subject_hash:'abc'}),{status:200}));
+    vi.stubGlobal('fetch',fetch);
+    expect(await realAdapter.requestBudgetApproval('CLI-8',1500000)).toMatchObject({approval_id:'a1'});
+    const [url,init]=fetch.mock.calls[0] as [string,RequestInit];
+    expect(url).toBe('/api/v1/jobs/CLI-8/budget-approvals');
+    expect(JSON.parse(init.body as string)).toEqual({budget:1500000});
+  });
   it('returns null for missing detail and reports stale decisions', async () => {
     const fetch=vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'not_found',message:'missing'}}),{status:404}))

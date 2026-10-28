@@ -15,7 +15,8 @@ use turtle_scheduler::{
     GitFactsProvider, SharedStore, StoreContext,
 };
 use turtle_store::{
-    Decision, JobRecord, ManualClock, NewJob, NewProject, NewRevision, Store, StoreError,
+    BudgetScope, Decision, JobRecord, ManualClock, NewJob, NewProject, NewRevision, Store,
+    StoreError,
 };
 use turtle_workflow::{JobCommand as C, Profile, ReviewVerdict, VerificationOutcome};
 
@@ -227,6 +228,191 @@ impl Env {
             )
             .await
     }
+}
+
+#[tokio::test]
+async fn budget_approval_is_bound_to_current_limit_and_rejects_stale_decisions() {
+    let env = env(Profile::standard()).await;
+    let id = env.job;
+    env.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    20_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("budget");
+    env.submit(C::Start, Actor::local_user())
+        .await
+        .expect("start");
+    env.submit(C::BudgetExhausted, Actor::Scheduler)
+        .await
+        .expect("hold");
+    assert!(
+        env.service
+            .request_budget_increase(id, 20_000)
+            .await
+            .is_err(),
+        "cannot lower or keep limit"
+    );
+    let approval = env
+        .service
+        .request_budget_increase(id, 100_000)
+        .await
+        .expect("request");
+    assert_eq!(
+        approval
+            .binding
+            .budget_increase
+            .as_ref()
+            .expect("binding")
+            .stage,
+        JobState::Specification
+    );
+    env.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    30_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("changed budget");
+    let result = env
+        .service
+        .decide(
+            approval.id,
+            Decision::Approve,
+            approval.subject_hash,
+            Actor::local_user(),
+            "test",
+            None,
+            vec![],
+        )
+        .await;
+    assert!(matches!(result, Err(ApprovalError::Stale)), "{result:?}");
+    assert_eq!(env.state().await, JobState::Specification);
+    let budgets = env
+        .store
+        .with(move |s| s.transaction(|tx| tx.budgets_for_job(id)))
+        .await
+        .expect("budgets");
+    assert_eq!(budgets[0].limit_tokens, 30_000);
+    assert_eq!(
+        env.store
+            .with(move |s| s.approval(approval.id))
+            .await
+            .expect("approval")
+            .status,
+        ApprovalStatus::Invalidated
+    );
+    let project = env
+        .store
+        .with(move |s| s.load_job(id))
+        .await
+        .expect("job")
+        .project_id;
+    env.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Project(project),
+                    60_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("project ceiling");
+    assert!(matches!(
+        env.service.request_budget_increase(id, 100_000).await,
+        Err(ApprovalError::InvalidBudget(_))
+    ));
+}
+
+#[tokio::test]
+async fn tampered_budget_approval_cannot_raise_the_limit() {
+    let env = env(Profile::standard()).await;
+    let id = env.job;
+    env.store
+        .with(move |s| {
+            s.transaction(|tx| {
+                tx.set_budget(
+                    BudgetScope::Job(id),
+                    20_000,
+                    true,
+                    Some(id),
+                    &Actor::local_user(),
+                )
+            })
+        })
+        .await
+        .expect("budget");
+    env.submit(C::Start, Actor::local_user())
+        .await
+        .expect("start");
+    env.submit(C::BudgetExhausted, Actor::Scheduler)
+        .await
+        .expect("hold");
+    let approval = env
+        .service
+        .request_budget_increase(id, 100_000)
+        .await
+        .expect("request");
+    let approval_id = approval.id.to_string();
+    env.store
+        .with(move |s| {
+            s.raw_connection().execute(
+                "UPDATE approvals SET subject_hash = ?1 WHERE id = ?2",
+                ["0".repeat(64), approval_id],
+            )
+        })
+        .await
+        .expect("tamper");
+    let result = env
+        .service
+        .decide(
+            approval.id,
+            Decision::Approve,
+            approval.subject_hash,
+            Actor::local_user(),
+            "test",
+            None,
+            vec![],
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ApprovalError::Store(StoreError::ApprovalIntegrity { .. }))
+    ));
+    let budgets = env
+        .store
+        .with(move |s| s.transaction(|tx| tx.budgets_for_job(id)))
+        .await
+        .expect("budgets");
+    assert_eq!(budgets[0].limit_tokens, 20_000);
+    assert!(
+        env.store
+            .with(move |s| s.load_job(id))
+            .await
+            .expect("job")
+            .job
+            .holds
+            .contains(&turtle_workflow::Hold::AwaitingBudget)
+    );
 }
 
 #[tokio::test]
