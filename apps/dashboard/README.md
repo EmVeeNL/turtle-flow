@@ -6,17 +6,17 @@ The default build is a design preview backed by mock data. The `PUBLIC_API_ADAPT
 
 ```sh
 cd dashboard
-npm ci
-npm run dev
-npm run check
-npm run lint
-npm test
-npm run build
-npx playwright install chromium
-npm run test:e2e
+pnpm install
+pnpm run dev
+pnpm run check
+pnpm run lint
+pnpm test
+ppnpm run build
+pnpm exec playwright install chromium
+pnpm run test:e2e
 ```
 
-The static bundle is in `dist/`. For live use, run `PUBLIC_API_ADAPTER=real npm run build`, start `turtle up --agent demo` (or a real provider), then run `turtle dashboard` in an interactive terminal. The daemon serves the bundle on its loopback port; `/login#code=…` exchanges the one-use code for a session cookie. For a Tailscale phone session, run `turtle dashboard --phone`; it asks before adding a Serve mapping and prints a QR code containing a read-only, one-time login link. Build with the real adapter. The daemon continues to listen on loopback; Tailscale terminates HTTPS and forwards to the local API. The implemented endpoint contract is in [API-ASSUMPTIONS.md](API-ASSUMPTIONS.md).
+The static bundle is in `dist/`. For live use, run `PUBLIC_API_ADAPTER=real pnpm run build`, start `turtle up --agent demo` (or a real provider), then run `turtle dashboard` in an interactive terminal. The daemon serves the bundle on its loopback port; `/login#code=…` exchanges the one-use code for a session cookie. For a Tailscale phone session, run `turtle dashboard --phone`; it asks before adding a Serve mapping and prints a QR code containing a read-only, one-time login link. Build with the real adapter. The daemon continues to listen on loopback; Tailscale terminates HTTPS and forwards to the local API. The implemented endpoint contract is in [API-ASSUMPTIONS.md](../../docs/dashboard/API-ASSUMPTIONS.md).
 
 ## Structure and decisions
 

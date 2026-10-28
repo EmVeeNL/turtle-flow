@@ -861,7 +861,7 @@ async fn static_file(State(state): State<AppState>, uri: axum::http::Uri) -> Res
         return asset_response(&relative, file.data.to_vec());
     }
     if path == "/" {
-        Html("<!doctype html><title>Dashboard not built</title><p>Dashboard not built. Run <code>npm run build</code> in dashboard/.</p>").into_response()
+        Html("<!doctype html><title>Dashboard not built</title><p>Dashboard not built. Run <code>npm run build</code> in apps/dashboard/.</p>").into_response()
     } else {
         ApiError::not_found().into_response()
     }
@@ -889,7 +889,7 @@ fn asset_response(path: &str, bytes: Vec<u8>) -> Response {
 }
 #[cfg(feature = "embedded-dashboard")]
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../../dashboard/dist"]
+#[folder = "../../apps/dashboard/dist"]
 struct Embedded;
 
 #[cfg(test)]

@@ -396,7 +396,7 @@ async fn serve<R: AgentRunner>(
         None
     } else {
         let source_dist =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dashboard/dist");
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../dashboard/dist");
         let dashboard_dir = std::env::var_os("TURTLE_DASHBOARD_DIR")
             .map(std::path::PathBuf::from)
             .or_else(|| source_dist.exists().then_some(source_dist));

@@ -5,9 +5,9 @@ TanStack Start account portal for `dash.turtle-flow.com`, deployed as a Cloudfla
 ## Local development
 
 ```sh
-npm install
+pnpm install
 # Copy .dev.vars.example to .dev.vars and configure a local secret plus database.
-npm run dev
+pnpm run dev
 ```
 
 ## Stack
@@ -26,7 +26,7 @@ npm run dev
 - A generated high-entropy `BETTER_AUTH_SECRET` is stored as a Worker secret and is not in this repository.
 - `EMAIL_FROM` remains `accounts@turtle-flow.com` as requested. Complete SPF, DKIM, and DMARC setup before relying on email delivery for public sign-up.
 - Database migrations are applied. The `license_user_id_unique` index enforces one license per account, including when requests race.
-- The Ed25519 private signing key is stored as the Worker secret `LICENSE_SIGNING_KEY_PKCS8`; the matching public key and key ID are recorded in [LICENSE-KEYS.md](./LICENSE-KEYS.md). Never commit or expose the private key.
+- The Ed25519 private signing key is stored as the Worker secret `LICENSE_SIGNING_KEY_PKCS8`; the matching public key and key ID are recorded in [LICENSE-KEYS.md](../../docs/LICENSE-KEYS.md). Never commit or expose the private key.
 - Keep purchase plans, pricing, and checkout private until a payment provider, approved price IDs, refund policy, and license terms are chosen. There is no payment provider or live purchase flow configured.
 - Preserve ADR-014: licenses are Ed25519-signed JSON envelopes intended for offline CLI verification. Neon stores only the signed payload, signature, and key ID; the private signing key stays in a managed signing secret and never enters the database. Hardware fingerprinting and device binding are excluded. The CLI still needs the public key added to its trust store before it can verify these downloads.
 
@@ -35,9 +35,9 @@ npm run dev
 For a new deployment, after the database is migrated:
 
 ```sh
-npm run cf-typegen
-npm run build
-npm run deploy
+pnpm run cf-typegen
+ppnpm run build
+pnpm run deploy
 ```
 
 `wrangler.jsonc` declares the `dash.turtle-flow.com` custom domain, account origin/sender variables, Cloudflare Email Service binding, `LICENSE_CACHE` namespace, and Hyperdrive config ID. Secret values are not checked in.

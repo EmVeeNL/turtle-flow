@@ -10,7 +10,7 @@
 
 ## 1. Summary
 
-Add an explicit `turtle login` flow that links a local CLI installation to the user’s customer-dashboard account. The CLI uses a device authorization flow: it displays a short code, the user approves that device in the authenticated dashboard, and the CLI receives a device-bound, Ed25519-signed license lease.
+Add an explicit `turtle login` flow that links a local CLI installation to the user’s portal (`apps/portal`) account. The CLI uses a device authorization flow: it displays a short code, the user approves that device in the authenticated dashboard, and the CLI receives a device-bound, Ed25519-signed license lease.
 
 An account may have at most **two active linked CLI installations**. The approved lease lifetime is **30 days**. At expiry, the CLI prompts the user to run `turtle login` and approve a new lease. The CLI does not hold a long-lived bearer or refresh token. The signed lease is cached locally and can be checked offline until expiry.
 

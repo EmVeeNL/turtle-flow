@@ -1,0 +1,13 @@
+{
+  "name": "@turtle-flow/cli",
+  "private": true,
+  "scripts": {
+    "build": "cargo build --locked --release -p turtle-flow --features embedded-dashboard",
+    "check": "cargo clippy --locked --workspace --all-targets -- -D warnings",
+    "lint": "cargo fmt --all --check",
+    "test": "cargo test --locked --workspace"
+  },
+  "devDependencies": {
+    "@turtle-flow/dashboard": "workspace:*"
+  }
+}

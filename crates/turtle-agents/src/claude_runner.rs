@@ -339,7 +339,7 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!(
-            "{}/../../spikes/fixtures/claude-code/{name}",
+            "{}/../../docs/spikes/fixtures/claude-code/{name}",
             env!("CARGO_MANIFEST_DIR")
         ))
         .expect("fixture")

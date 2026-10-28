@@ -7,7 +7,7 @@
 web
 
 ## Stack
-Website (`website/`): Astro, Tailwind CSS v4, GSAP, pnpm; Space Grotesk (headings) + Asap Sharp (body) + JetBrains Mono (hashes), Fluent icons (Iconify, build time). Product dashboard (`dashboard/`): Astro + Tailwind v4 + Preact islands. Hosting for turtle-flow.com is undecided.
+Website (`apps/website/`): Astro, Tailwind CSS v4, GSAP, pnpm; Space Grotesk (headings) + Asap Sharp (body) + JetBrains Mono (hashes), Fluent icons (Iconify, build time). Product dashboard (`dashboard/`): Astro + Tailwind v4 + Preact islands. Hosting for turtle-flow.com is undecided.
 
 ## Users
 Developers and small teams who already use AI coding agents (Claude Code, Codex) on their own repositories and want to hand them whole jobs without losing control of what ships.

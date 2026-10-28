@@ -152,7 +152,7 @@ mod tests {
     fn classifies_recorded_usage_limit() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../spikes/fixtures/codex/01-usage-limit-error.ndjson"
+            "/../../docs/spikes/fixtures/codex/01-usage-limit-error.ndjson"
         );
         let text = std::fs::read_to_string(path).expect("fixture exists");
         let errors: Vec<_> = text.lines().filter_map(classify_error_event).collect();
