@@ -623,15 +623,22 @@ impl Tx<'_> {
 
     /// The run records its provider's latest capability snapshot (and that snapshot's CLI
     /// version) as the capability set it starts with; both stay NULL when none is recorded.
+    ///
+    /// An implementer or fixer run begun while one of its job's tasks is active (`running`,
+    /// `gating` or `fixing`) belongs to that task. A job runs one task at a time, so there is at
+    /// most one; stage-level runs keep `task_id = NULL`.
     pub fn begin_run(&mut self, run: &NewRun) -> Result<()> {
         let now = self.now()?;
         self.tx.execute(
             "INSERT INTO agent_runs(id, job_id, role, stage, provider, model, adapter_version,
                                     context_manifest_rev, status, started_at, created_at,
-                                    cli_version)
+                                    cli_version, task_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?9,
                      (SELECT cli_version FROM capability_snapshots WHERE provider = ?5
-                      ORDER BY version DESC LIMIT 1))",
+                      ORDER BY version DESC LIMIT 1),
+                     (SELECT id FROM tasks WHERE job_id = ?2 AND ?3 IN ('implementer', 'fixer')
+                        AND state IN ('running', 'gating', 'fixing')
+                      ORDER BY updated_at DESC, id DESC LIMIT 1))",
             params![
                 run.id.to_string(),
                 run.job_id.to_string(),
@@ -723,8 +730,9 @@ impl Tx<'_> {
         self.tx.execute(
             "INSERT INTO usage_records(id, run_id, project_id, job_id, provider, model,
                     input_tokens, cached_read, cached_write, output_tokens, reasoning_tokens,
-                    provenance, billing_mode, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'unknown', ?13)",
+                    provenance, billing_mode, recorded_at, task_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'unknown', ?13,
+                     (SELECT task_id FROM agent_runs WHERE id = ?2))",
             params![
                 ulid::Ulid::generate().to_string(),
                 run.to_string(),

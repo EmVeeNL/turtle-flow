@@ -32,6 +32,12 @@ pub enum StoreError {
         "database schema version {found} is newer than this build supports ({supported}); upgrade Turtle Flow"
     )]
     SchemaTooNew { found: u32, supported: u32 },
+    #[error("task {task} cannot move from {from} to {to}")]
+    InvalidTaskTransition {
+        task: String,
+        from: &'static str,
+        to: &'static str,
+    },
     #[error("stored data is inconsistent: {0}")]
     Corrupt(String),
     #[error("approval {id} failed integrity verification")]
