@@ -1091,6 +1091,132 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_detail_and_overview_report_each_task_from_the_tasks_table() {
+        use turtle_domain::{ArtifactKind, JobType, Priority, RunId};
+        use turtle_store::{NewGateResult, NewJob, NewProject, NewRevision, NewTask, TaskState};
+        let (state, _dir) = state();
+        let (key, plan) = state
+            .services
+            .store
+            .with(|s| {
+                s.transaction(|tx| {
+                    let project = tx.insert_project(&NewProject {
+                        slug: "sample".into(),
+                        key_prefix: "API".into(),
+                        name: "Sample".into(),
+                        description: String::new(),
+                        repo_path: "/tmp/sample".into(),
+                        default_branch: "main".into(),
+                        default_profile: "standard".into(),
+                    })?;
+                    let job = tx.create_job(
+                        &NewJob {
+                            project_id: project,
+                            title: "Tasks".into(),
+                            description: String::new(),
+                            job_type: JobType::Feature,
+                            priority: Priority::Normal,
+                            profile: turtle_workflow::Profile::standard(),
+                        },
+                        &Actor::local_user(),
+                    )?;
+                    let id = job.job.id;
+                    let plan = tx
+                        .add_revision(&NewRevision {
+                            job_id: id,
+                            kind: ArtifactKind::Plan,
+                            sha256: turtle_domain::Sha256::from_bytes([3; 32]),
+                            size_bytes: 2,
+                            media_type: "application/json".into(),
+                            schema_id: None,
+                            author: Actor::Scheduler,
+                        })?
+                        .id;
+                    let task = |plan_task_id: &str, deps: Vec<String>| NewTask {
+                        plan_task_id: plan_task_id.into(),
+                        title: format!("Task {plan_task_id}"),
+                        instructions: String::new(),
+                        expected_paths: vec![],
+                        criteria_refs: vec![],
+                        depends_on: deps,
+                        backfill: None,
+                    };
+                    let rows = tx.plan_tasks(
+                        id,
+                        &plan,
+                        &[task("T1", vec![]), task("T2", vec!["T1".into()])],
+                    )?;
+                    let run = RunId::new();
+                    tx.transition_task(&rows[0].id, TaskState::Running, Some(run), json!({}))?;
+                    tx.begin_run(&turtle_store::NewRun {
+                        id: run,
+                        job_id: id,
+                        role: turtle_domain::Role::Implementer,
+                        stage: "implementation".into(),
+                        provider: "fake".into(),
+                        model: "m".into(),
+                        adapter_version: "test".into(),
+                        context_manifest_rev: None,
+                    })?;
+                    tx.transition_task(&rows[0].id, TaskState::Gating, None, json!({}))?;
+                    for gate in ["build", "test"] {
+                        tx.record_task_gate(&NewGateResult {
+                            job_id: id,
+                            task_id: &rows[0].id,
+                            gate,
+                            outcome: "passed",
+                            command: Some("true"),
+                            exit_code: Some(0),
+                            duration_ms: Some(1),
+                            head_commit: "base",
+                            tree_hash: "tree",
+                            summary: &json!({}),
+                        })?;
+                    }
+                    tx.record_task_commit(&rows[0].id, Some("c0ffee"), run, false)?;
+                    Ok((job.key.to_string(), plan))
+                })
+            })
+            .await
+            .expect("seed");
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                let response = router(state.clone())
+                    .oneshot(session_request(&state, Method::GET, &path, json!({}), true))
+                    .await
+                    .expect("request");
+                assert_eq!(response.status(), StatusCode::OK);
+                serde_json::from_slice::<Value>(
+                    &axum::body::to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .expect("body"),
+                )
+                .expect("json")
+            }
+        };
+        let detail = get(format!("/api/v1/jobs/{key}?include=tasks")).await;
+        let tasks = detail["tasks"].as_array().expect("tasks");
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0]["id"], format!("{plan}/T1"));
+        assert_eq!(tasks[0]["plan_task_id"], "T1");
+        assert_eq!(tasks[0]["state"], "succeeded");
+        assert_eq!(tasks[0]["commit_sha"], "c0ffee");
+        assert_eq!(tasks[0]["runs"], 1);
+        assert_eq!(tasks[0]["gate_summary"], "build passed · test passed");
+        assert_eq!(
+            tasks[0]["gates"][1],
+            json!({"gate":"test","outcome":"passed"})
+        );
+        assert_eq!(tasks[1]["state"], "ready", "its dependency is done");
+        assert_eq!(tasks[1]["gate_summary"], Value::Null);
+        assert_eq!(tasks[1]["depends_on"], json!([format!("{plan}/T1")]));
+        let overview = get("/api/v1/overview".into()).await;
+        assert_eq!(overview["tasks"].as_array().map(Vec::len), Some(2));
+        assert_eq!(overview["tasks"][0]["job_id"], detail["id"]);
+    }
+
+    #[tokio::test]
     async fn agent_approval_intent_has_no_decision_route() {
         let (state, _dir) = state();
         let response = router(state.clone())
