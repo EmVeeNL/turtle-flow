@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use turtle_domain::{Actor, ArtifactKind, JobKey, JobState, JobType, Priority};
 use turtle_scheduler::{Layout, pr::PrClient};
-use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord};
+use turtle_store::{BudgetScope, JobRecord, NewJob, ProjectRecord, TaskSummary};
 use turtle_workflow::{Hold, JobCommand, PauseMode, Profile, ProfileBase};
 
 use crate::runtime::{Runtime, label, parse_label};
@@ -49,9 +49,12 @@ pub enum JobCommandLine {
         #[arg(long)]
         active: bool,
     },
-    /// Show one job.
+    /// Show one job, including the state of each plan task.
     Show {
         key: String,
+        /// Print the job and its tasks as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Print the job's event history.
     Events {
@@ -84,10 +87,11 @@ pub enum JobCommandLine {
         #[arg(long)]
         budget: String,
     },
-    /// Continue a blocked conflict or authorize a fix after review findings.
+    /// Continue a blocked conflict, authorize a fix after review findings, or continue after
+    /// repairing a task mismatch.
     Resolve {
         key: String,
-        /// For review findings: implementation, planning or specification.
+        /// For review findings or a task mismatch: implementation, planning or specification.
         #[arg(long)]
         target: Option<String>,
     },
@@ -212,7 +216,7 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
             }
             Ok(())
         }
-        JobCommandLine::Show { key } => show(rt, &key).await,
+        JobCommandLine::Show { key, json } => show(rt, &key, json).await,
         JobCommandLine::Events { key, json } => {
             let job = find(rt, &key).await?;
             let id = job.job.id;
@@ -371,7 +375,11 @@ async fn resolve(rt: &Runtime, key: &str, target: Option<&str>) -> Result<()> {
         .blocked
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("job is not blocked"))?;
-    if blocked.reason == turtle_workflow::BlockReason::ReviewDecisionRequired {
+    if matches!(
+        blocked.reason,
+        turtle_workflow::BlockReason::ReviewDecisionRequired
+            | turtle_workflow::BlockReason::TaskStateMismatch
+    ) {
         let target: JobState =
             parse_label("resolution target", target.unwrap_or("implementation"))?;
         let after = rt
@@ -564,11 +572,42 @@ async fn act(rt: &Runtime, key: &str, command: JobCommand, done: &str) -> Result
     Ok(())
 }
 
-async fn show(rt: &Runtime, key: &str) -> Result<()> {
+/// The tasks of the newest plan revision; earlier revisions only matter for history.
+fn current_tasks(tasks: &[TaskSummary]) -> Vec<&TaskSummary> {
+    let Some(latest) = tasks.iter().map(|t| &t.task).max_by(|a, b| {
+        (a.created_at.as_str(), a.plan_revision_id.as_str())
+            .cmp(&(b.created_at.as_str(), b.plan_revision_id.as_str()))
+    }) else {
+        return Vec::new();
+    };
+    tasks
+        .iter()
+        .filter(|t| t.task.plan_revision_id == latest.plan_revision_id)
+        .collect()
+}
+
+fn task_json(t: &TaskSummary) -> serde_json::Value {
+    serde_json::json!({
+        "id": t.task.id,
+        "task": t.task.plan_task_id,
+        "plan_revision": t.task.plan_revision_id,
+        "ordinal": t.task.ordinal,
+        "title": t.task.title,
+        "state": t.task.state,
+        "depends_on": t.task.depends_on,
+        "fix_iterations": t.task.fix_iterations,
+        "runs": t.runs,
+        "commit": t.task.commit_sha,
+        "gates": t.gates.iter().map(|(gate, outcome)| serde_json::json!({"gate": gate, "outcome": outcome})).collect::<Vec<_>>(),
+        "updated_at": t.task.updated_at,
+    })
+}
+
+async fn show(rt: &Runtime, key: &str, json: bool) -> Result<()> {
     let job = find(rt, key).await?;
     let id = job.job.id;
     let project = rt.store.with(move |s| s.project_of_job(id)).await?;
-    let (approvals, events, delivery, gate_revision) = rt
+    let (approvals, events, delivery, gate_revision, tasks) = rt
         .store
         .with(move |s| {
             Ok::<_, turtle_store::StoreError>((
@@ -576,9 +615,40 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
                 s.list_events(Some(id))?,
                 s.delivery(id)?,
                 s.latest_revision(id, ArtifactKind::GateResult)?,
+                s.task_summaries(Some(id))?,
             ))
         })
         .await?;
+    let current = current_tasks(&tasks);
+    let mismatches = job
+        .job
+        .blocked
+        .as_ref()
+        .filter(|b| b.reason == turtle_workflow::BlockReason::TaskStateMismatch)
+        .and_then(|_| {
+            events
+                .iter()
+                .rfind(|e| e.kind == "task.mismatch_detected")
+                .map(|e| e.payload["mismatches"].clone())
+        });
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "key": job.key.to_string(),
+                "title": job.title,
+                "project": project.slug,
+                "state": job.job.state,
+                "profile": job.job.profile.name,
+                "blocked": job.job.blocked,
+                "holds": job.job.holds,
+                "tasks": current.iter().map(|t| task_json(t)).collect::<Vec<_>>(),
+                "superseded_tasks": tasks.len() - current.len(),
+                "task_mismatches": mismatches,
+            }))?
+        );
+        return Ok(());
+    }
     if let Some(revision) = gate_revision {
         let bytes = rt.blobs.get(&revision.sha256)?;
         let gates: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -629,6 +699,21 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
                 "  resolution   inspect the review findings, then run `turtle job resolve {}` to authorize a fix",
                 job.key
             );
+        } else if b.reason == turtle_workflow::BlockReason::TaskStateMismatch {
+            println!(
+                "  resolution   the tasks table and the branch's Turtle-Task trailers disagree; repair the branch or re-plan, then run `turtle job resolve {} [--target planning]`",
+                job.key
+            );
+            for m in mismatches
+                .iter()
+                .flat_map(|m| m.as_array().into_iter().flatten())
+            {
+                println!(
+                    "    mismatch   {} {}",
+                    m["kind"].as_str().unwrap_or("unknown"),
+                    m["task"].as_str().unwrap_or("")
+                );
+            }
         }
     }
     if !job.job.holds.is_empty() {
@@ -693,6 +778,31 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
             label(&a.status),
             a.subject_hash.short()
         );
+    }
+    if !current.is_empty() {
+        let done = current.iter().filter(|t| t.task.state.is_done()).count();
+        println!("  tasks        {done} of {} done", current.len());
+        for t in &current {
+            println!(
+                "    {:<6} {:<10} {:<8} {}",
+                t.task.plan_task_id,
+                t.task.state,
+                t.task
+                    .commit_sha
+                    .as_deref()
+                    .map_or("-", |sha| &sha[..sha.len().min(8)]),
+                t.task.title
+            );
+            if t.runs > 0 || !t.gates.is_empty() {
+                println!(
+                    "           runs {}, fix iterations {}, gates {} passed, {} failed",
+                    t.runs,
+                    t.task.fix_iterations,
+                    t.gates_passed(),
+                    t.gates_failed()
+                );
+            }
+        }
     }
     let denied: Vec<_> = events
         .iter()
