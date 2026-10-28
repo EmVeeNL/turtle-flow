@@ -19,7 +19,7 @@ pub use codex::local_offset;
 pub use codex_runner::{CodexConfig, CodexRunner};
 pub use discovery::{
     AuthStatus, CapabilityRegistry, CompatStatus, Discovered, ProviderCapabilities, ProviderId,
-    ProviderInfo, discover, discover_capabilities, discover_with_snapshot,
+    ProviderInfo, discover, discover_capabilities, discover_with_snapshot, verified_capabilities,
 };
 pub use runner::{
     AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, Independence,

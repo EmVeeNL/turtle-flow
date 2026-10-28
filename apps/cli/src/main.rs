@@ -2,6 +2,7 @@
 //! also hosts the dashboard API (`docs/MVP.md` §6).
 
 mod account_license;
+mod capabilities;
 mod cmd;
 mod doctor;
 mod export;
@@ -178,6 +179,8 @@ impl AgentArgs {
 enum ProvidersCommand {
     /// Show installation, login, compatibility and verified capabilities.
     List,
+    /// Re-discover every provider and record a capability snapshot when it changed.
+    Refresh,
 }
 
 #[derive(Debug, Subcommand)]
@@ -243,6 +246,9 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
         Command::Providers(ProvidersCommand::List) => {
             providers_list(&home).await?;
         }
+        Command::Providers(ProvidersCommand::Refresh) => {
+            capabilities::refresh(&Runtime::open(home)?.store).await?;
+        }
         Command::Up { agent } => cmd::daemon::up(&home, &agent.options()).await?,
         Command::Down => cmd::daemon::down(&home)?,
         Command::Status => cmd::daemon::status(&home).await?,
@@ -291,8 +297,8 @@ async fn dispatch(command: Command) -> Result<ExitCode> {
 }
 
 async fn providers_list(home: &Home) -> Result<ExitCode> {
-    let registry = turtle_agents::CapabilityRegistry::discover().await;
     let runtime = Runtime::open(home.clone())?;
+    let (registry, discoveries) = capabilities::discover(&runtime.store, false).await?;
     let (limits, snapshots) = runtime
         .store
         .with(|store| {
@@ -323,7 +329,7 @@ async fn providers_list(home: &Home) -> Result<ExitCode> {
                 },
             );
         println!(
-            "{}: version={}, compatibility={:?}, login={:?}, schema={}, quota={}, sandbox={}, effort={}; {}; {}",
+            "{}: version={}, compatibility={:?}, login={:?}, schema={}, quota={}, sandbox={}, effort={}, snapshot={}; {}; {}",
             provider.as_str(),
             version,
             caps.info.compat,
@@ -332,6 +338,11 @@ async fn providers_list(home: &Home) -> Result<ExitCode> {
             caps.quota_visibility,
             caps.sandbox_modes.join(","),
             caps.effort_levels.join(","),
+            discoveries
+                .iter()
+                .find(|d| d.provider == provider)
+                .and_then(|d| d.snapshot.as_ref())
+                .map_or_else(|| "none".into(), |s| format!("#{}", s.version)),
             limit_label,
             caps.info.detail
         );

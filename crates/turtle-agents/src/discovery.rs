@@ -121,7 +121,7 @@ impl CapabilityRegistry {
                     compat: CompatStatus::NotInstalled,
                     detail: "not discovered".into(),
                 };
-                let set = verified_set(id, info.compat);
+                let set = verified_capabilities(id, info.compat);
                 ProviderCapabilities::from_set(info, AuthStatus::Unknown, set)
             });
         }
@@ -197,7 +197,7 @@ impl ProviderCapabilities {
 pub async fn discover_capabilities(provider: ProviderId) -> ProviderCapabilities {
     let info = discover(provider).await;
     let auth = auth_status(provider, &info).await;
-    let set = verified_set(provider, info.compat);
+    let set = verified_capabilities(provider, info.compat);
     ProviderCapabilities::from_set(info, auth, set)
 }
 
@@ -226,7 +226,7 @@ pub async fn discover_with_snapshot(
         .and_then(|s| serde_json::from_value::<CapabilitySet>(s.capabilities.clone()).ok())
         .filter(|set| set.adapter_version == ADAPTER_VERSION && set.compat == info.compat);
     let reused = reusable.is_some();
-    let set = reusable.unwrap_or_else(|| verified_set(provider, info.compat));
+    let set = reusable.unwrap_or_else(|| verified_capabilities(provider, info.compat));
     Discovered {
         capabilities: ProviderCapabilities::from_set(info, auth, set),
         reused,
@@ -274,7 +274,7 @@ async fn auth_status(provider: ProviderId, info: &ProviderInfo) -> AuthStatus {
 }
 
 /// Capabilities verified against the supported CLI range (spike S-1/S-2).
-fn verified_set(provider: ProviderId, compat: CompatStatus) -> CapabilitySet {
+pub fn verified_capabilities(provider: ProviderId, compat: CompatStatus) -> CapabilitySet {
     let (quota_visibility, sandbox_modes, effort_levels): (_, &[&str], &[&str]) = match provider {
         ProviderId::ClaudeCode => (
             "partial",
