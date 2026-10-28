@@ -195,6 +195,7 @@ pub enum JobCommand {
     Resume,
     BudgetExhausted,
     BudgetRestored,
+    BudgetIncreaseApproved,
     RateLimited {
         provider: String,
     },
@@ -236,6 +237,7 @@ impl JobCommand {
             Self::Resume => "resume",
             Self::BudgetExhausted => "budget_exhausted",
             Self::BudgetRestored => "budget_restored",
+            Self::BudgetIncreaseApproved => "budget_increase_approved",
             Self::RateLimited { .. } => "rate_limited",
             Self::RateLimitCleared { .. } => "rate_limit_cleared",
         }

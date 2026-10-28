@@ -73,6 +73,13 @@ fn check_actor(cmd: &JobCommand, actor: &Actor) -> Result<(), &'static str> {
                 Err("user_only")
             }
         }
+        C::BudgetIncreaseApproved => {
+            if user {
+                Ok(())
+            } else {
+                Err("user_only")
+            }
+        }
         C::ApprovalGranted { gate } => {
             if user || (machine && gate.may_auto_approve()) {
                 Ok(())
@@ -367,6 +374,7 @@ fn apply(tx: &mut Tx<'_>, cmd: &JobCommand, actor: &Actor) -> Result<(), &'stati
             return Ok(());
         }
         C::BudgetRestored => return tx.remove_hold(|h| *h == Hold::AwaitingBudget),
+        C::BudgetIncreaseApproved => return tx.remove_hold(|h| *h == Hold::AwaitingBudget),
         C::RateLimited { provider } => {
             return tx.add_hold(Hold::RateLimited {
                 provider: provider.clone(),

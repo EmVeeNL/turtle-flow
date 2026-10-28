@@ -109,6 +109,13 @@ fn print_subject(rt: &Runtime, key: &str, title: &str, a: &ApprovalRecord) {
     println!("\n{key}  {title}");
     println!("Gate     {}", label(&a.gate));
     println!("Hash     {}", a.subject_hash.to_hex());
+    if let Some(b) = &a.binding.budget_increase {
+        println!(
+            "Budget   {} -> {} tokens",
+            b.current_tokens, b.requested_tokens
+        );
+        println!("Stage    {}", label(&b.stage));
+    }
     for (kind, r) in &a.binding.artifacts {
         println!("  {kind} rev {} sha256 {}", r.rev, r.sha256.short());
         if let Ok(bytes) = rt.blobs.get(&r.sha256) {

@@ -77,6 +77,13 @@ pub enum JobCommandLine {
     Resume {
         key: String,
     },
+    /// Approve a higher hard token budget and continue a held job.
+    ApproveBudget {
+        key: String,
+        /// New total token limit, e.g. 1.5M.
+        #[arg(long)]
+        budget: String,
+    },
     /// Continue a blocked conflict or authorize a fix after review findings.
     Resolve {
         key: String,
@@ -240,6 +247,15 @@ pub async fn run(rt: &Runtime, command: JobCommandLine) -> Result<()> {
             act(rt, &key, JobCommand::Pause { mode }, "Paused").await
         }
         JobCommandLine::Resume { key } => act(rt, &key, JobCommand::Resume, "Resumed").await,
+        JobCommandLine::ApproveBudget { key, budget } => {
+            let job = find(rt, &key).await?;
+            let requested = crate::cmd::budget::parse_tokens(&budget)?;
+            let approval = rt
+                .approvals
+                .request_budget_increase(job.job.id, requested)
+                .await?;
+            crate::cmd::approvals::decide(rt, &approval.id.to_string(), false, false, None).await
+        }
         JobCommandLine::Resolve { key, target } => resolve(rt, &key, target.as_deref()).await,
         JobCommandLine::Sync {
             key,
@@ -727,7 +743,7 @@ async fn show(rt: &Runtime, key: &str) -> Result<()> {
         .contains(&turtle_workflow::Hold::AwaitingBudget)
     {
         println!(
-            "  waiting      out of budget: turtle budget set <tokens> --job {}",
+            "  waiting      out of budget: turtle job approve-budget {} --budget <tokens>",
             job.key
         );
     }

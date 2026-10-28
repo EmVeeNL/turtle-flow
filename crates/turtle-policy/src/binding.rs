@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use turtle_domain::{GateKind, JobId, Sha256};
+use turtle_domain::{BudgetId, GateKind, JobId, JobState, Sha256};
 
 pub const BINDING_SCHEMA: &str = "turtle.approval-binding.v1";
 
@@ -33,6 +33,15 @@ pub struct BudgetEnvelope {
     pub tokens_max: u64,
 }
 
+/// The exact increase a human authorizes while a job is held.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetIncrease {
+    pub budget_id: BudgetId,
+    pub current_tokens: u64,
+    pub requested_tokens: u64,
+    pub stage: JobState,
+}
+
 /// The document whose hash an approval binds to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalBinding {
@@ -45,6 +54,8 @@ pub struct ApprovalBinding {
     pub artifacts: BTreeMap<String, ArtifactRef>,
     pub git: Option<GitBinding>,
     pub budget_envelope: Option<BudgetEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_increase: Option<BudgetIncrease>,
     /// Flags the approver explicitly acknowledged (e.g. `protected_path:Cargo.lock`), sorted.
     pub acknowledged_flags: Vec<String>,
 }
@@ -66,6 +77,7 @@ impl ApprovalBinding {
             artifacts: BTreeMap::new(),
             git: None,
             budget_envelope: None,
+            budget_increase: None,
             acknowledged_flags: Vec::new(),
         }
     }
@@ -169,5 +181,42 @@ mod tests {
         let mut flags = sample();
         flags.acknowledged_flags.pop();
         assert_ne!(flags.subject_hash(), base);
+    }
+
+    #[test]
+    fn budget_increase_hash_binds_amounts_stage_and_budget() {
+        let mut binding = sample();
+        binding.gate_kind = GateKind::BudgetIncrease;
+        binding.budget_increase = Some(BudgetIncrease {
+            budget_id: BudgetId::new(),
+            current_tokens: 100_000,
+            requested_tokens: 200_000,
+            stage: JobState::Planning,
+        });
+        let base = binding.subject_hash();
+        let mut changed = binding.clone();
+        changed
+            .budget_increase
+            .as_mut()
+            .expect("increase")
+            .requested_tokens += 1;
+        assert_ne!(changed.subject_hash(), base);
+        let mut changed = binding.clone();
+        changed
+            .budget_increase
+            .as_mut()
+            .expect("increase")
+            .current_tokens += 1;
+        assert_ne!(changed.subject_hash(), base);
+        let mut changed = binding.clone();
+        changed.budget_increase.as_mut().expect("increase").stage = JobState::Implementation;
+        assert_ne!(changed.subject_hash(), base);
+        let mut changed = binding;
+        changed
+            .budget_increase
+            .as_mut()
+            .expect("increase")
+            .budget_id = BudgetId::new();
+        assert_ne!(changed.subject_hash(), base);
     }
 }

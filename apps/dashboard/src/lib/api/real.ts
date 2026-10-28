@@ -28,6 +28,7 @@ export const realAdapter: DashboardAdapter = {
   job: key => optional<Job>(`/jobs/${encodeURIComponent(key)}?include=tasks,artifacts,approvals,usage,events`),
   approval: id => optional<Approval>(`/approvals/${encodeURIComponent(id)}`),
   run: id => optional<AgentRun>(`/runs/${encodeURIComponent(id)}`),
+  requestBudgetApproval: (key,budget) => request<{ok:boolean;approval_id:string;subject_hash:string}>(`/jobs/${encodeURIComponent(key)}/budget-approvals`,{method:'POST',body:JSON.stringify({budget})}),
   async decideApproval(id, decision, subject_hash, comment, acknowledged_flags = []) {
     try {
       return await request<{ok:boolean;error?:string}>(`/approvals/${encodeURIComponent(id)}/decisions`, { method:'POST', body:JSON.stringify({decision,subject_hash,comment,acknowledged_flags}) });

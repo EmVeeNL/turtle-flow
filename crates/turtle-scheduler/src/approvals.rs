@@ -5,10 +5,12 @@
 use std::sync::Arc;
 
 use turtle_domain::{Actor, ApprovalId, GateKind, Sha256};
-use turtle_store::{ApprovalRecord, Decision, JobRecord, StoreError};
-use turtle_workflow::JobCommand;
+use turtle_store::{ApprovalRecord, BudgetRecord, BudgetScope, Decision, JobRecord, StoreError};
+use turtle_workflow::{DecisionContext, JobCommand, decide};
 
-use crate::binding::{BindingError, GitFactsProvider, POLICY_VERSION, build_binding};
+use crate::binding::{
+    BindingError, GitFactsProvider, POLICY_VERSION, build_binding, build_budget_binding,
+};
 use crate::context::read_snapshot;
 use crate::engine::{ContextProvider, Engine, EngineError};
 
@@ -28,6 +30,55 @@ pub enum ApprovalError {
     MissingCurrent(GateKind),
     #[error("these flags must be acknowledged before approving: {}", .0.join(", "))]
     FlagsNotAcknowledged(Vec<String>),
+    #[error("{0}")]
+    InvalidBudget(String),
+}
+
+fn validate_budget(
+    budgets: &[BudgetRecord],
+    job: turtle_domain::JobId,
+    requested: u64,
+) -> Result<BudgetRecord, ApprovalError> {
+    let current = budgets
+        .iter()
+        .find(|b| b.scope == BudgetScope::Job(job) && b.hard)
+        .ok_or_else(|| ApprovalError::InvalidBudget("the job has no hard token budget".into()))?;
+    if requested <= current.limit_tokens {
+        return Err(ApprovalError::InvalidBudget(
+            "the new limit must exceed the current limit".into(),
+        ));
+    }
+    if requested > i64::MAX as u64 {
+        return Err(ApprovalError::InvalidBudget(
+            "the limit is too large".into(),
+        ));
+    }
+    if budgets
+        .iter()
+        .any(|b| b.hard && b.scope != BudgetScope::Job(job) && requested > b.limit_tokens)
+    {
+        return Err(ApprovalError::InvalidBudget(
+            "the requested limit exceeds a configured hard project or global ceiling".into(),
+        ));
+    }
+    if budgets.iter().any(|b| {
+        b.hard && b.scope != BudgetScope::Job(job) && b.headroom() < crate::budget::MIN_HEADROOM
+    }) {
+        return Err(ApprovalError::InvalidBudget(
+            "a project or global hard budget also needs more headroom".into(),
+        ));
+    }
+    if requested.saturating_sub(
+        current
+            .settled_tokens
+            .saturating_add(current.reserved_tokens),
+    ) < crate::budget::MIN_HEADROOM
+    {
+        return Err(ApprovalError::InvalidBudget(
+            "the new limit needs at least 10,000 tokens of headroom".into(),
+        ));
+    }
+    Ok(current.clone())
 }
 
 pub struct ApprovalService<C, G> {
@@ -77,6 +128,34 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
             self.policy_version,
             snap.job_budget_tokens,
         )?)
+    }
+
+    /// Creates a pending approval for the exact increase the user selected.
+    pub async fn request_budget_increase(
+        &self,
+        job_id: turtle_domain::JobId,
+        requested: u64,
+    ) -> Result<ApprovalRecord, ApprovalError> {
+        let version = self.policy_version;
+        let result = self
+            .engine
+            .store()
+            .with(move |s| {
+                s.transaction(|tx| {
+                    let job = tx.load_job(job_id)?;
+                    let budgets = tx.budgets_for_job(job_id)?;
+                    let budget = validate_budget(&budgets, job_id, requested)
+                        .map_err(|e| StoreError::Forbidden(e.to_string()))?;
+                    let binding = build_budget_binding(&job, &budget, requested, version)
+                        .map_err(|e| StoreError::Forbidden(e.to_string()))?;
+                    tx.request_approval(&binding).map(|(approval, _)| approval)
+                })
+            })
+            .await;
+        result.map_err(|e| match e {
+            StoreError::Forbidden(message) => ApprovalError::InvalidBudget(message),
+            other => other.into(),
+        })
     }
 
     /// Rechecks the approval against current artifacts and Git immediately before delivery.
@@ -156,7 +235,31 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
                 .store()
                 .with(move |s| s.load_job(job_id))
                 .await?;
-            let current = self.current_binding(&job, gate).await;
+            let current = if gate == GateKind::BudgetIncrease {
+                let requested = approval
+                    .binding
+                    .budget_increase
+                    .as_ref()
+                    .map(|b| b.requested_tokens);
+                let budget = self
+                    .engine
+                    .store()
+                    .with(move |s| s.transaction(|tx| tx.budgets_for_job(job_id)))
+                    .await?;
+                match requested.and_then(|requested| {
+                    validate_budget(&budget, job_id, requested)
+                        .ok()
+                        .map(|budget| (requested, budget))
+                }) {
+                    Some((requested, budget)) => {
+                        build_budget_binding(&job, &budget, requested, self.policy_version)
+                            .map_err(ApprovalError::from)
+                    }
+                    None => Err(ApprovalError::Stale),
+                }
+            } else {
+                self.current_binding(&job, gate).await
+            };
             if current.map(|b| b.subject_hash()).ok() != Some(approval.subject_hash) {
                 self.engine
                     .store()
@@ -180,6 +283,72 @@ impl<C: ContextProvider, G: GitFactsProvider> ApprovalService<C, G> {
             if !missing.is_empty() {
                 return Err(ApprovalError::FlagsNotAcknowledged(missing));
             }
+        }
+
+        if gate == GateKind::BudgetIncrease {
+            if decision != Decision::Approve {
+                return Err(ApprovalError::InvalidBudget(
+                    "budget increases can only be approved; choose a new amount instead".into(),
+                ));
+            }
+            let bound = approval
+                .binding
+                .budget_increase
+                .as_ref()
+                .ok_or(ApprovalError::Stale)?;
+            let requested = bound.requested_tokens;
+            let policy_version = self.policy_version;
+            let who = actor.clone();
+            let ch = channel.to_owned();
+            let result = self
+                .engine
+                .store()
+                .with(move |s| {
+                    s.transaction(|tx| {
+                        let job = tx.load_job(job_id)?;
+                        let budgets = tx.budgets_for_job(job_id)?;
+                        let budget = validate_budget(&budgets, job_id, requested)
+                            .map_err(|_| StoreError::Forbidden("stale budget approval".into()))?;
+                        let expected =
+                            build_budget_binding(&job, &budget, requested, policy_version)
+                                .map_err(|_| {
+                                    StoreError::Forbidden("stale budget approval".into())
+                                })?;
+                        if expected.subject_hash() != echoed_hash
+                            || approval.binding.subject_hash() != echoed_hash
+                        {
+                            return Err(StoreError::Forbidden("stale budget approval".into()));
+                        }
+                        let command = JobCommand::BudgetIncreaseApproved;
+                        let transition =
+                            decide(&job.job, &command, &who, &DecisionContext::default())
+                                .map_err(|e| StoreError::Forbidden(e.to_string()))?;
+                        tx.decide_approval(
+                            id,
+                            Decision::Approve,
+                            &echoed_hash,
+                            &who,
+                            &ch,
+                            comment.as_deref(),
+                        )?;
+                        tx.set_budget(
+                            BudgetScope::Job(job_id),
+                            requested,
+                            true,
+                            Some(job_id),
+                            &who,
+                        )?;
+                        tx.apply_decision(job.job.version, &transition, &command, &who)?;
+                        tx.load_job(job_id)
+                    })
+                })
+                .await;
+            return result.map_err(|e| match e {
+                StoreError::Forbidden(message) if message == "stale budget approval" => {
+                    ApprovalError::Stale
+                }
+                other => other.into(),
+            });
         }
 
         let (who, ch) = (actor.clone(), channel.to_owned());
