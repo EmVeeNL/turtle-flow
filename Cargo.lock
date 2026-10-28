@@ -3029,7 +3029,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "turtle-agents"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "semver",
  "serde",
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-api"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-artifacts"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3085,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-context"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "globset",
  "serde",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-domain"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-exec"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "nix",
  "tempfile",
@@ -3119,7 +3119,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-flow"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -3154,7 +3154,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-git"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "semver",
  "sha2 0.11.1",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-policy"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-scheduler"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3200,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-store"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "rusqlite",
@@ -3219,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-tokens"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "turtle-domain",
@@ -3228,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "turtle-workflow"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "insta",
  "proptest",
