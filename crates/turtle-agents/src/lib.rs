@@ -11,18 +11,22 @@ pub mod discovery;
 pub mod prompts;
 pub mod runner;
 pub mod schemas;
+pub mod snapshot;
 
 pub use claude::PermissionDenial;
 pub use claude_runner::{ClaudeConfig, ClaudeRunner};
 pub use codex::local_offset;
 pub use codex_runner::{CodexConfig, CodexRunner};
 pub use discovery::{
-    AuthStatus, CapabilityRegistry, CompatStatus, ProviderCapabilities, ProviderId, ProviderInfo,
-    discover, discover_capabilities,
+    AuthStatus, CapabilityRegistry, CompatStatus, Discovered, ProviderCapabilities, ProviderId,
+    ProviderInfo, discover, discover_capabilities, discover_with_snapshot,
 };
 pub use runner::{
     AgentContext, AgentError, AgentOutput, AgentRequest, AgentRunner, FakeRunner, Independence,
     RecordedCall, RouteContext, RouteSelection, Step,
+};
+pub use snapshot::{
+    ADAPTER_VERSION, CapabilityChange, CapabilityDiff, CapabilitySet, StoredSnapshot, VersionChange,
 };
 pub mod routing;
 pub use routing::{ProviderSlot, RoutingRunner};
