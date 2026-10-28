@@ -28,9 +28,12 @@ export const mockData: DashboardData = {
     {id:'ap-8',job_id:'j4',gate_kind:'budget_increase',subject_hash:sha('ba451d22'),status:'pending',requested_at:'2026-10-25T09:09:00Z',binding:{artifacts:[],budget_increase:{budget_id:'job-budget-8',current_tokens:1200000,requested_tokens:1500000,stage:'implementation'},profile:'strict'},flags:[],invalidated_if:['Current budget or held stage changes']}
   ],
   tasks: [
-    {id:'t1',job_id:'j1',ordinal:1,title:'Add per-key rate limiter',state:'succeeded',commit_sha:'6b3e9af',gate_summary:'build · test · lint passed'},
-    {id:'t2',job_id:'j1',ordinal:2,title:'Expose Retry-After and metrics',state:'succeeded',commit_sha:'a81d77e',gate_summary:'412 tests passed'},
-    {id:'t3',job_id:'j1',ordinal:3,title:'Acceptance verification',state:'succeeded',gate_summary:'6/6 criteria met'}
+    {id:'rev-p42/T1',job_id:'j1',plan_revision_id:'rev-p42',plan_task_id:'T1',ordinal:1,title:'Add per-key rate limiter',state:'succeeded',depends_on:[],fix_iterations:0,runs:1,commit_sha:'6b3e9af',gates:[{gate:'build',outcome:'passed'},{gate:'test',outcome:'passed'},{gate:'lint',outcome:'passed'}],gate_summary:'build passed · test passed · lint passed'},
+    {id:'rev-p42/T2',job_id:'j1',plan_revision_id:'rev-p42',plan_task_id:'T2',ordinal:2,title:'Expose Retry-After and metrics',state:'succeeded',depends_on:['rev-p42/T1'],fix_iterations:1,runs:2,commit_sha:'a81d77e',gates:[{gate:'build',outcome:'passed'},{gate:'test',outcome:'passed'}],gate_summary:'build passed · test passed'},
+    {id:'rev-p42/T3',job_id:'j1',plan_revision_id:'rev-p42',plan_task_id:'T3',ordinal:3,title:'Document the limits',state:'succeeded',depends_on:['rev-p42/T2'],fix_iterations:0,runs:1,commit_sha:null,gates:[],gate_summary:null},
+    {id:'rev-c8/T1',job_id:'j4',plan_revision_id:'rev-c8',plan_task_id:'T1',ordinal:1,title:'Retry transient upload errors',state:'succeeded',depends_on:[],fix_iterations:0,runs:1,commit_sha:'4c19d02',gates:[{gate:'build',outcome:'passed'},{gate:'test',outcome:'passed'},{gate:'lint',outcome:'passed'}],gate_summary:'build passed · test passed · lint passed'},
+    {id:'rev-c8/T2',job_id:'j4',plan_revision_id:'rev-c8',plan_task_id:'T2',ordinal:2,title:'Upload chunks in parallel',state:'fixing',depends_on:['rev-c8/T1'],fix_iterations:2,runs:3,commit_sha:null,gates:[{gate:'build',outcome:'passed'},{gate:'test',outcome:'failed'},{gate:'lint',outcome:'passed'}],gate_summary:'build passed · test failed · lint passed'},
+    {id:'rev-c8/T3',job_id:'j4',plan_revision_id:'rev-c8',plan_task_id:'T3',ordinal:3,title:'Report upload progress',state:'pending',depends_on:['rev-c8/T2'],fix_iterations:0,runs:0,commit_sha:null,gates:[],gate_summary:null}
   ],
   runs: [
     {id:'run-105',job_id:'j1',role:'verifier',provider:'claude-code',model:'sonnet-4.5',cli_version:'2.0.31',routing_reason:'Independent provider for verification',status:'succeeded',duration:'8m 42s',usage:{total:97000,provenance:'reported',input:71000,cached:12000,output:11000,reasoning:3000},cost_usd:0.42},
@@ -62,7 +65,7 @@ export const mockAdapter: DashboardAdapter = {
   async me() { return {readonly:false}; },
   async overview(){ return mockData; },
   async project(slug){ return mockData.projects.find(p=>p.slug===slug) ?? null; },
-  async job(key){ return mockData.jobs.find(j=>j.key===key) ?? null; },
+  async job(key){ const job=mockData.jobs.find(j=>j.key===key); return job ? {...job,tasks:mockData.tasks.filter(t=>t.job_id===job.id)} : null; },
   async approval(id){ return mockData.approvals.find(a=>a.id===id) ?? null; },
   async run(id){ return mockData.runs.find(r=>r.id===id) ?? null; },
   async requestBudgetApproval(key,budget){

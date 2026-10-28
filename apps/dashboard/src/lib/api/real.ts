@@ -1,4 +1,4 @@
-import type { DashboardAdapter, DashboardData, Job, Project, Approval, AgentRun } from './types';
+import type { DashboardAdapter, DashboardData, JobDetail, Project, Approval, AgentRun } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); this.name = 'ApiError'; }
@@ -25,7 +25,7 @@ export const realAdapter: DashboardAdapter = {
   me: () => request<{readonly:boolean}>('/me'),
   overview: () => request<DashboardData>('/overview'),
   project: slug => optional<Project>(`/projects/${encodeURIComponent(slug)}`),
-  job: key => optional<Job>(`/jobs/${encodeURIComponent(key)}?include=tasks,artifacts,approvals,usage,events`),
+  job: key => optional<JobDetail>(`/jobs/${encodeURIComponent(key)}?include=tasks,artifacts,approvals,usage,events`),
   approval: id => optional<Approval>(`/approvals/${encodeURIComponent(id)}`),
   run: id => optional<AgentRun>(`/runs/${encodeURIComponent(id)}`),
   requestBudgetApproval: (key,budget) => request<{ok:boolean;approval_id:string;subject_hash:string}>(`/jobs/${encodeURIComponent(key)}/budget-approvals`,{method:'POST',body:JSON.stringify({budget})}),
