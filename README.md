@@ -116,3 +116,13 @@ The architecture and product documentation package is in [`docs/`](docs/README.m
 ## License
 
 Proprietary: the source is private and all rights are reserved ([OQ-02](docs/PRD.md#26-open-questions) was decided on 2026-10-25, see [docs/LICENSING.md §8](docs/LICENSING.md#8-open-source--source-availability-strategy-oq-02)). There will be a free tier, shipped as a free binary; its end-user license terms are still to be written.
+
+### Optional Longplay account-access pilot
+
+The account portal can display a fresh Longplay Team-access observation after the existing session and passkey/MFA checks. Set `LONGPLAY_TEAM_FEATURE_ID` (an access Feature UUID), server-only `LONGPLAY_SECRET_KEY`, `LONGPLAY_BASE_URL`, `LONGPLAY_APP_ID` and explicit `LONGPLAY_ENVIRONMENT` (`sandbox` or `live`) to opt in. Without the Feature, no billing client or network call is initialized. The SDK is pinned to 0.10.15.
+
+The server maps `turtle-flow:user:<verified-portal-user-id>`; the browser cannot select a Customer. Only the opaque account reference and Feature go to billing, not names, email, source code or agent prompts. Denial and unavailable status remain distinct.
+
+This reader does not issue, extend or revoke license files, and does not gate the free local workflow, free-license generation or owned-license download. An access observation provides no signed lease, paid-through date or validated seat count. Paid license issuance, checkout/management, team ownership and reconciliation remain separate decisions under #73 and the existing licensing design. Confirm public SDK usage/distribution terms before adopting the pilot.
+
+Offline helper checks use Node 24: `node --test apps/portal/src/server/longplay-access.test.ts`.
